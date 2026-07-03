@@ -1,0 +1,553 @@
+const express = require("express");
+const http = require("http");
+const path = require("path");
+const { Server } = require("socket.io");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*"
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || "0.0.0.0";
+const rooms = new Map();
+
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, rooms: rooms.size });
+});
+
+app.get("/api/rooms/:code/export/results.csv", (req, res) => {
+  const room = rooms.get(normalizeCode(req.params.code));
+  if (!room) {
+    res.status(404).send("Room not found");
+    return;
+  }
+
+  res.setHeader("content-type", "text/csv; charset=utf-8");
+  res.setHeader("content-disposition", `attachment; filename="quizlive-${room.code}-results.csv"`);
+  res.send(resultsToCsv(room));
+});
+
+app.get("/api/rooms/:code/export/results.json", (req, res) => {
+  const room = rooms.get(normalizeCode(req.params.code));
+  if (!room) {
+    res.status(404).json({ error: "Room not found" });
+    return;
+  }
+
+  res.setHeader("content-disposition", `attachment; filename="quizlive-${room.code}-results.json"`);
+  res.json(resultsToJson(room));
+});
+
+io.on("connection", (socket) => {
+  socket.on("host:create", (payload, ack) => {
+    try {
+      const quiz = normalizeQuiz(payload && payload.quiz);
+      const room = createRoom(quiz, socket.id);
+      socket.data.role = "host";
+      socket.data.roomCode = room.code;
+      socket.join(roomChannel(room.code));
+      sendAck(ack, { ok: true, code: room.code });
+      emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("host:start", (_payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+    startQuestion(room, 0);
+    sendAck(ack, { ok: true });
+  });
+
+  socket.on("host:next", (_payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+    const nextIndex = room.currentIndex + 1;
+    if (nextIndex >= room.quiz.questions.length) {
+      endGame(room);
+    } else {
+      startQuestion(room, nextIndex);
+    }
+    sendAck(ack, { ok: true });
+  });
+
+  socket.on("host:reveal", (_payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+    revealQuestion(room);
+    sendAck(ack, { ok: true });
+  });
+
+  socket.on("host:reset", (_payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+    resetRoom(room);
+    sendAck(ack, { ok: true });
+  });
+
+  socket.on("player:join", (payload, ack) => {
+    const code = normalizeCode(payload && payload.code);
+    const room = rooms.get(code);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Partita non trovata" });
+      return;
+    }
+    if (room.status !== "lobby") {
+      sendAck(ack, { ok: false, error: "Partita gia iniziata" });
+      return;
+    }
+
+    const nickname = normalizeNickname(payload && payload.nickname);
+    const player = {
+      id: socket.id,
+      nickname,
+      score: 0,
+      streak: 0,
+      connected: true,
+      joinedAt: Date.now()
+    };
+
+    room.players.set(socket.id, player);
+    socket.data.role = "player";
+    socket.data.roomCode = code;
+    socket.data.playerId = socket.id;
+    socket.join(roomChannel(code));
+    sendAck(ack, { ok: true, code, playerId: socket.id });
+    emitRoom(room);
+  });
+
+  socket.on("player:answer", (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+    const result = submitAnswer(room, player, Number(payload && payload.answerIndex));
+    sendAck(ack, result);
+    emitRoom(room);
+  });
+
+  socket.on("disconnect", () => {
+    const code = socket.data.roomCode;
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room) return;
+
+    if (socket.data.role === "host") {
+      room.hostConnected = false;
+    }
+    if (socket.data.role === "player") {
+      const player = room.players.get(socket.data.playerId);
+      if (player) player.connected = false;
+    }
+    emitRoom(room);
+  });
+});
+
+let usedHost = HOST;
+let triedLocalhostFallback = false;
+
+server.on("error", (error) => {
+  if (error.code === "EPERM" && usedHost === "0.0.0.0" && !triedLocalhostFallback) {
+    triedLocalhostFallback = true;
+    usedHost = "127.0.0.1";
+    server.listen(PORT, usedHost);
+    return;
+  }
+  throw error;
+});
+
+server.listen(PORT, usedHost, () => {
+  console.log(`QuizLive running on http://${usedHost === "0.0.0.0" ? "localhost" : usedHost}:${PORT}`);
+});
+
+function createRoom(quiz, hostSocketId) {
+  const code = createRoomCode();
+  const room = {
+    code,
+    quiz,
+    hostSocketId,
+    hostConnected: true,
+    status: "lobby",
+    currentIndex: -1,
+    questionStartedAt: null,
+    questionEndsAt: null,
+    players: new Map(),
+    answers: new Map(),
+    timer: null,
+    createdAt: Date.now()
+  };
+  rooms.set(code, room);
+  return room;
+}
+
+function startQuestion(room, index) {
+  clearRoomTimer(room);
+  room.status = "question";
+  room.currentIndex = index;
+  room.questionStartedAt = Date.now();
+  room.questionEndsAt = room.questionStartedAt + room.quiz.questions[index].timeLimit * 1000;
+  room.answers.set(index, new Map());
+  room.timer = setTimeout(() => revealQuestion(room), room.quiz.questions[index].timeLimit * 1000 + 250);
+  emitRoom(room);
+}
+
+function revealQuestion(room) {
+  if (!room || room.status !== "question") return;
+  clearRoomTimer(room);
+  room.status = "reveal";
+  room.questionEndsAt = null;
+  emitRoom(room);
+}
+
+function endGame(room) {
+  clearRoomTimer(room);
+  room.status = "ended";
+  room.questionEndsAt = null;
+  emitRoom(room);
+}
+
+function resetRoom(room) {
+  clearRoomTimer(room);
+  room.status = "lobby";
+  room.currentIndex = -1;
+  room.questionStartedAt = null;
+  room.questionEndsAt = null;
+  room.answers.clear();
+  for (const player of room.players.values()) {
+    player.score = 0;
+    player.streak = 0;
+  }
+  emitRoom(room);
+}
+
+function submitAnswer(room, player, answerIndex) {
+  if (room.status !== "question") {
+    return { ok: false, error: "Domanda non attiva" };
+  }
+  if (!Number.isInteger(answerIndex)) {
+    return { ok: false, error: "Risposta non valida" };
+  }
+  const question = room.quiz.questions[room.currentIndex];
+  if (!question || answerIndex < 0 || answerIndex >= question.answers.length) {
+    return { ok: false, error: "Risposta non valida" };
+  }
+  if (Date.now() > room.questionEndsAt) {
+    return { ok: false, error: "Tempo scaduto" };
+  }
+
+  const answerMap = room.answers.get(room.currentIndex);
+  if (answerMap.has(player.id)) {
+    return { ok: false, error: "Risposta gia inviata" };
+  }
+
+  const answeredAt = Date.now();
+  const isCorrect = answerIndex === question.correctIndex;
+  const elapsed = Math.max(0, answeredAt - room.questionStartedAt);
+  const duration = Math.max(1, question.timeLimit * 1000);
+  const speedBonus = isCorrect ? Math.max(0, Math.round(500 * (1 - elapsed / duration))) : 0;
+
+  if (isCorrect) {
+    player.streak += 1;
+  } else {
+    player.streak = 0;
+  }
+
+  const streakBonus = isCorrect ? Math.min(250, Math.max(0, (player.streak - 1) * 50)) : 0;
+  const points = isCorrect ? 500 + speedBonus + streakBonus : 0;
+  player.score += points;
+
+  answerMap.set(player.id, {
+    answerIndex,
+    answeredAt,
+    correct: isCorrect,
+    points,
+    speedBonus,
+    streakBonus
+  });
+
+  return { ok: true, correct: isCorrect, points };
+}
+
+async function emitRoom(room) {
+  const sockets = await io.in(roomChannel(room.code)).fetchSockets();
+  for (const target of sockets) {
+    target.emit("room:state", serializeRoom(room, target));
+  }
+}
+
+function serializeRoom(room, socket) {
+  const role = socket.data.role === "host" ? "host" : "player";
+  const question = room.currentIndex >= 0 ? room.quiz.questions[room.currentIndex] : null;
+  const answerMap = room.currentIndex >= 0 ? room.answers.get(room.currentIndex) || new Map() : new Map();
+  const playerId = socket.data.playerId;
+  const playerAnswer = playerId && answerMap.get(playerId);
+  const revealMode = room.status === "reveal" || room.status === "ended" || role === "host";
+
+  return {
+    code: room.code,
+    role,
+    status: room.status,
+    title: room.quiz.title,
+    totalQuestions: room.quiz.questions.length,
+    currentIndex: room.currentIndex,
+    questionEndsAt: room.questionEndsAt,
+    player: playerId ? serializePlayer(room.players.get(playerId), room) : null,
+    question: question
+      ? {
+          text: question.text,
+          answers: question.answers.map((answer, index) => ({
+            text: answer,
+            index,
+            correct: revealMode ? index === question.correctIndex : undefined,
+            count: role === "host" || room.status === "reveal" ? countAnswers(answerMap, index) : undefined
+          })),
+          timeLimit: question.timeLimit,
+          correctIndex: revealMode ? question.correctIndex : undefined,
+          answered: Boolean(playerAnswer),
+          playerAnswer: playerAnswer || null
+        }
+      : null,
+    players: role === "host" ? hostPlayers(room, answerMap) : undefined,
+    leaderboard: leaderboard(room).slice(0, 10),
+    answerCount: answerMap.size,
+    playerCount: room.players.size,
+    exports: role === "host"
+      ? {
+          csv: `/api/rooms/${room.code}/export/results.csv`,
+          json: `/api/rooms/${room.code}/export/results.json`
+        }
+      : undefined
+  };
+}
+
+function hostPlayers(room, answerMap) {
+  return Array.from(room.players.values())
+    .map((player) => ({
+      ...serializePlayer(player, room),
+      answered: answerMap.has(player.id)
+    }))
+    .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+}
+
+function serializePlayer(player, room) {
+  if (!player) return null;
+  const board = leaderboard(room);
+  return {
+    id: player.id,
+    nickname: player.nickname,
+    score: player.score,
+    streak: player.streak,
+    connected: player.connected,
+    rank: board.findIndex((item) => item.id === player.id) + 1
+  };
+}
+
+function leaderboard(room) {
+  return Array.from(room.players.values())
+    .map((player) => ({
+      id: player.id,
+      nickname: player.nickname,
+      score: player.score,
+      streak: player.streak,
+      connected: player.connected
+    }))
+    .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+}
+
+function countAnswers(answerMap, answerIndex) {
+  let total = 0;
+  for (const answer of answerMap.values()) {
+    if (answer.answerIndex === answerIndex) total += 1;
+  }
+  return total;
+}
+
+function resultsToJson(room) {
+  return {
+    code: room.code,
+    title: room.quiz.title,
+    exportedAt: new Date().toISOString(),
+    questions: room.quiz.questions.map((question, questionIndex) => ({
+      text: question.text,
+      answers: question.answers,
+      correctIndex: question.correctIndex,
+      responses: Array.from(room.answers.get(questionIndex) || new Map()).map(([playerId, answer]) => {
+        const player = room.players.get(playerId);
+        return {
+          playerId,
+          nickname: player ? player.nickname : "Unknown",
+          answerIndex: answer.answerIndex,
+          answerText: question.answers[answer.answerIndex],
+          correct: answer.correct,
+          points: answer.points,
+          answeredAt: new Date(answer.answeredAt).toISOString()
+        };
+      })
+    })),
+    leaderboard: leaderboard(room)
+  };
+}
+
+function resultsToCsv(room) {
+  const rows = [
+    ["Rank", "Nickname", "Score", "Streak", ...room.quiz.questions.flatMap((_question, index) => [
+      `Q${index + 1} Answer`,
+      `Q${index + 1} Correct`,
+      `Q${index + 1} Points`
+    ])]
+  ];
+
+  leaderboard(room).forEach((player, playerIndex) => {
+    const row = [
+      playerIndex + 1,
+      player.nickname,
+      player.score,
+      player.streak
+    ];
+    room.quiz.questions.forEach((question, questionIndex) => {
+      const answer = room.answers.get(questionIndex) && room.answers.get(questionIndex).get(player.id);
+      row.push(
+        answer ? question.answers[answer.answerIndex] : "",
+        answer ? (answer.correct ? "yes" : "no") : "",
+        answer ? answer.points : 0
+      );
+    });
+    rows.push(row);
+  });
+
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function csvCell(value) {
+  const text = String(value == null ? "" : value);
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function getHostRoom(socket) {
+  const code = socket.data.role === "host" && socket.data.roomCode;
+  return code ? rooms.get(code) : null;
+}
+
+function getPlayerRoom(socket) {
+  const code = socket.data.role === "player" && socket.data.roomCode;
+  return code ? rooms.get(code) : null;
+}
+
+function normalizeQuiz(input) {
+  const source = input && typeof input === "object" ? input : defaultQuiz();
+  const title = String(source.title || "QuizLive").trim().slice(0, 80) || "QuizLive";
+  const questions = Array.isArray(source.questions) ? source.questions : [];
+  const normalizedQuestions = questions.slice(0, 50).map((item, index) => normalizeQuestion(item, index));
+
+  if (!normalizedQuestions.length) {
+    throw new Error("Il quiz deve avere almeno una domanda");
+  }
+
+  return { title, questions: normalizedQuestions };
+}
+
+function normalizeQuestion(item, index) {
+  const text = String(item && item.text ? item.text : `Domanda ${index + 1}`).trim().slice(0, 240);
+  const answers = Array.isArray(item && item.answers) ? item.answers : [];
+  const normalizedAnswers = answers
+    .map((answer) => String(answer || "").trim().slice(0, 160))
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (normalizedAnswers.length < 2) {
+    throw new Error(`La domanda ${index + 1} deve avere almeno due risposte`);
+  }
+
+  const rawCorrect = Number(item && item.correctIndex);
+  const correctIndex = Number.isInteger(rawCorrect) && rawCorrect >= 0 && rawCorrect < normalizedAnswers.length ? rawCorrect : 0;
+  const rawTime = Number(item && item.timeLimit);
+  const timeLimit = Number.isFinite(rawTime) ? Math.min(90, Math.max(5, Math.round(rawTime))) : 20;
+
+  return {
+    text,
+    answers: normalizedAnswers,
+    correctIndex,
+    timeLimit
+  };
+}
+
+function normalizeNickname(value) {
+  const nickname = String(value || "").trim().replace(/\s+/g, " ").slice(0, 24);
+  return nickname || `Player ${Math.floor(100 + Math.random() * 900)}`;
+}
+
+function normalizeCode(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 6);
+}
+
+function createRoomCode() {
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    if (!rooms.has(code)) return code;
+  }
+  throw new Error("Impossibile creare un codice stanza");
+}
+
+function roomChannel(code) {
+  return `room:${code}`;
+}
+
+function clearRoomTimer(room) {
+  if (room.timer) {
+    clearTimeout(room.timer);
+    room.timer = null;
+  }
+}
+
+function sendAck(ack, payload) {
+  if (typeof ack === "function") ack(payload);
+}
+
+function defaultQuiz() {
+  return {
+    title: "Demo QuizLive",
+    questions: [
+      {
+        text: "Quale tecnologia permette risposte live tra host e telefoni?",
+        answers: ["WebSocket", "Solo email", "PDF", "Bluetooth spento"],
+        correctIndex: 0,
+        timeLimit: 20
+      },
+      {
+        text: "Quale formato e comodo per esportare risultati in un foglio di calcolo?",
+        answers: ["CSV", "PNG", "MP3", "MOV"],
+        correctIndex: 0,
+        timeLimit: 18
+      },
+      {
+        text: "Cosa serve ai giocatori per entrare nella partita?",
+        answers: ["Codice stanza e nickname", "App store", "Cavo USB", "Account admin"],
+        correctIndex: 0,
+        timeLimit: 20
+      }
+    ]
+  };
+}

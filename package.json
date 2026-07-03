@@ -1,0 +1,22 @@
+{
+  "name": "quizlive",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A portable live quiz app with host/player rooms, realtime scoring, and exports.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
