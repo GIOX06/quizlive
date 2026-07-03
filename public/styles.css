@@ -144,6 +144,18 @@ textarea {
   letter-spacing: 0;
 }
 
+.status-pill.local {
+  color: #8a4f00;
+  border-color: rgba(230, 184, 75, 0.6);
+  background: rgba(230, 184, 75, 0.16);
+}
+
+.status-pill.public {
+  color: #137a6c;
+  border-color: rgba(31, 157, 138, 0.45);
+  background: rgba(31, 157, 138, 0.12);
+}
+
 .room-code {
   font-size: clamp(1.05rem, 3vw, 1.45rem);
   color: var(--red);
@@ -266,6 +278,20 @@ textarea {
   flex-wrap: wrap;
   gap: 0.65rem;
   width: 100%;
+}
+
+.qr-note {
+  margin: 0;
+  font-weight: 800;
+  text-align: center;
+}
+
+.qr-note.local {
+  color: #8a4f00;
+}
+
+.qr-note.public {
+  color: #137a6c;
 }
 
 .btn {

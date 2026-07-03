@@ -47,6 +47,14 @@ http://192.168.1.20:3000/#join=123456
 
 When the host opens the app on `localhost`, QuizLive automatically prefers the Mac LAN address for the QR code so phones do not scan a `localhost` link.
 
+Local/LAN links only work for phones on the same Wi-Fi. For players outside the local network, run QuizLive on a public hosting service or expose it through a tunnel, then set:
+
+```bash
+PUBLIC_BASE_URL=https://your-public-url.example npm run dev
+```
+
+With `PUBLIC_BASE_URL`, the QR code and copied player link use the public URL.
+
 ## Online deployment
 
 This app is intentionally small and portable. It can run on platforms that support a persistent Node server and WebSocket connections, such as Render, Railway, Fly.io, Replit, or a VPS.

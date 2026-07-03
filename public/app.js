@@ -11,7 +11,8 @@ let local = {
   importText: "",
   joinCode: initialJoinCode(),
   nickname: "",
-  playerBaseUrl: window.location.origin
+  playerBaseUrl: window.location.origin,
+  playerAccessMode: "same-origin"
 };
 
 const app = document.getElementById("app");
@@ -230,9 +231,10 @@ function renderHostLobby(room) {
         <img class="qr-code" src="${escapeAttr(qrCodeSrc(room.code))}" alt="QR code ingresso giocatori" />
         <div class="qr-meta">
           <span class="status-pill">Codice ${escapeHtml(room.code)}</span>
-          <span class="status-pill">${escapeHtml(playerBaseLabel())}</span>
+          <span class="status-pill ${playerAccessClass()}">${escapeHtml(playerBaseLabel())}</span>
           <button class="btn ghost" data-action="copy-player-link">Copia link</button>
         </div>
+        <p class="qr-note ${playerAccessClass()}">${escapeHtml(playerAccessNotice())}</p>
       </div>
       <div class="toolbar">
         <button class="btn primary" data-action="start-game" ${room.totalQuestions < 1 ? "disabled" : ""}>Avvia quiz</button>
@@ -565,12 +567,13 @@ function switchMode(mode, silent = false) {
 
 async function copyPlayerLink() {
   const link = playerLink(local.room && local.room.code);
+  const message = local.playerAccessMode === "local" ? "Link locale copiato" : "Link copiato";
   try {
     await navigator.clipboard.writeText(link);
-    showToast("Link copiato");
+    showToast(message);
   } catch (error) {
     const copied = fallbackCopy(link);
-    showToast(copied ? "Link copiato" : "Copia non riuscita");
+    showToast(copied ? message : "Copia non riuscita");
   }
 }
 
@@ -580,9 +583,11 @@ async function loadNetworkConfig() {
     if (!response.ok) return;
     const config = await response.json();
     local.playerBaseUrl = choosePlayerBaseUrl(config);
+    local.playerAccessMode = choosePlayerAccessMode(config);
     render();
   } catch (error) {
     local.playerBaseUrl = window.location.origin;
+    local.playerAccessMode = accessModeForOrigin(window.location.origin);
   }
 }
 
@@ -674,21 +679,59 @@ function playerBaseUrl() {
 function playerBaseLabel() {
   try {
     const url = new URL(playerBaseUrl());
-    return `Telefono: ${url.host}`;
+    const prefix = local.playerAccessMode === "public" ? "Pubblico" : "Solo Wi-Fi";
+    return `${prefix}: ${url.host}`;
   } catch (error) {
     return "Telefono";
   }
 }
 
+function playerAccessNotice() {
+  if (local.playerAccessMode === "public") {
+    return "Questo QR usa un URL pubblico.";
+  }
+  return "Questo QR funziona solo sulla stessa Wi-Fi.";
+}
+
+function playerAccessClass() {
+  return local.playerAccessMode === "public" ? "public" : "local";
+}
+
 function choosePlayerBaseUrl(config) {
+  if (config && config.publicOrigin) {
+    return config.publicOrigin;
+  }
   if (isLoopbackHost(window.location.hostname) && config && config.preferredOrigin) {
     return config.preferredOrigin;
   }
   return window.location.origin;
 }
 
+function choosePlayerAccessMode(config) {
+  if (config && config.accessMode) return config.accessMode;
+  return accessModeForOrigin(playerBaseUrl());
+}
+
+function accessModeForOrigin(origin) {
+  try {
+    const hostname = new URL(origin).hostname;
+    if (isLoopbackHost(hostname) || isPrivateIPv4(hostname) || hostname.endsWith(".local")) {
+      return "local";
+    }
+    return "public";
+  } catch (error) {
+    return "same-origin";
+  }
+}
+
 function isLoopbackHost(hostname) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function isPrivateIPv4(address) {
+  return /^10\./.test(address) ||
+    /^192\.168\./.test(address) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address);
 }
 
 function fallbackCopy(text) {

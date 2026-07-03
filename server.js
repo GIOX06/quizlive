@@ -15,6 +15,7 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
+const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
 const rooms = new Map();
 
 app.use(express.json({ limit: "1mb" }));
@@ -33,10 +34,13 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/network", (req, res) => {
   const currentOrigin = requestOrigin(req);
   const localOrigins = localNetworkOrigins();
+  const preferredOrigin = preferredPlayerOrigin(currentOrigin, localOrigins, PUBLIC_BASE_URL);
   res.json({
     currentOrigin,
+    publicOrigin: PUBLIC_BASE_URL,
     localOrigins,
-    preferredOrigin: preferredPlayerOrigin(currentOrigin, localOrigins)
+    preferredOrigin,
+    accessMode: playerAccessMode(currentOrigin, preferredOrigin, PUBLIC_BASE_URL)
   });
 });
 
@@ -555,8 +559,16 @@ function normalizeQrUrl(value) {
   return url;
 }
 
+function normalizePublicBaseUrl(value) {
+  const url = String(value || "").trim().replace(/\/+$/, "");
+  if (!url) return "";
+  if (!/^https?:\/\/[^\s]+$/i.test(url)) return "";
+  return url;
+}
+
 function requestOrigin(req) {
-  const host = req.get("host");
+  const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
+  const host = forwardedHost || req.get("host");
   if (!host) return "";
   const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
   const proto = forwardedProto || req.protocol || "http";
@@ -585,17 +597,38 @@ function localNetworkOrigins() {
   });
 }
 
-function preferredPlayerOrigin(currentOrigin, localOrigins) {
+function preferredPlayerOrigin(currentOrigin, localOrigins, publicOrigin) {
+  if (publicOrigin) return publicOrigin;
   if (isLoopbackOrigin(currentOrigin) && localOrigins.length) {
     return localOrigins[0].origin;
   }
   return currentOrigin || (localOrigins[0] && localOrigins[0].origin) || "";
 }
 
+function playerAccessMode(currentOrigin, preferredOrigin, publicOrigin) {
+  if (publicOrigin) return "public";
+  if (preferredOrigin && !isLoopbackOrigin(preferredOrigin) && !isPrivateOrigin(preferredOrigin)) {
+    return "public";
+  }
+  if (isLoopbackOrigin(currentOrigin) || isPrivateOrigin(preferredOrigin) || isPrivateOrigin(currentOrigin)) {
+    return "local";
+  }
+  return "unknown";
+}
+
 function isLoopbackOrigin(origin) {
   try {
     const hostname = new URL(origin).hostname;
     return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function isPrivateOrigin(origin) {
+  try {
+    const hostname = new URL(origin).hostname;
+    return isPrivateIPv4(hostname) || hostname.endsWith(".local");
   } catch (error) {
     return false;
   }
