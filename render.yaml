@@ -13,8 +13,6 @@ services:
         value: production
       - key: DATA_DIR
         value: /var/data
-      - key: PUBLIC_BASE_URL
-        sync: false
     disk:
       name: quizlive-data
       mountPath: /var/data

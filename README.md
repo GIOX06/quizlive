@@ -84,15 +84,16 @@ The repository includes `render.yaml` for a Render web service:
 - `npm start` start command
 - `/api/health` health check
 - persistent disk mounted at `/var/data`
-- `PUBLIC_BASE_URL` prompted in the Render Dashboard
 
-After the service is created and Render gives you the public URL, set `PUBLIC_BASE_URL` to that exact origin, for example:
+After the service is created, Render gives you a stable public URL. QuizLive automatically uses that URL for player QR codes and copied links.
+
+If you later add a custom domain, set `PUBLIC_BASE_URL` to that exact origin, for example:
 
 ```text
-https://quizlive.onrender.com
+https://quiz.example.com
 ```
 
-Then redeploy. QR codes and copied player links will use the stable public URL.
+Then redeploy. QR codes and copied player links will use the custom public URL.
 
 For a production version, the next useful upgrades are:
 
