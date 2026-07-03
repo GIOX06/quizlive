@@ -223,13 +223,13 @@ function renderHostLobby(room) {
         <h1 class="section-title">Codice ${escapeHtml(room.code)}</h1>
         <p class="subtle">Pronto per ${room.totalQuestions} domande.</p>
       </div>
-      <label class="stack">
-        <span>Link giocatori</span>
-        <div class="link-field">
-          <input readonly data-field="player-link" value="${escapeAttr(playerLink(room.code))}" />
-          <button class="btn ghost" data-action="copy-player-link">Copia</button>
+      <div class="qr-panel">
+        <img class="qr-code" src="${escapeAttr(qrCodeSrc(room.code))}" alt="QR code ingresso giocatori" />
+        <div class="qr-meta">
+          <span class="status-pill">Codice ${escapeHtml(room.code)}</span>
+          <button class="btn ghost" data-action="copy-player-link">Copia link</button>
         </div>
-      </label>
+      </div>
       <div class="toolbar">
         <button class="btn primary" data-action="start-game" ${room.totalQuestions < 1 ? "disabled" : ""}>Avvia quiz</button>
       </div>
@@ -561,16 +561,12 @@ function switchMode(mode, silent = false) {
 
 async function copyPlayerLink() {
   const link = playerLink(local.room && local.room.code);
-  const field = document.querySelector("[data-field='player-link']");
   try {
     await navigator.clipboard.writeText(link);
     showToast("Link copiato");
   } catch (error) {
-    if (field) {
-      field.focus();
-      field.select();
-    }
-    showToast("Link selezionato");
+    const copied = fallbackCopy(link);
+    showToast(copied ? "Link copiato" : "Copia non riuscita");
   }
 }
 
@@ -649,6 +645,28 @@ function initialJoinCode() {
 
 function playerLink(code) {
   return `${window.location.origin}/#join=${encodeURIComponent(code || "")}`;
+}
+
+function qrCodeSrc(code) {
+  return `/api/qr.svg?url=${encodeURIComponent(playerLink(code))}`;
+}
+
+function fallbackCopy(text) {
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.setAttribute("readonly", "readonly");
+  field.style.position = "fixed";
+  field.style.left = "-9999px";
+  document.body.appendChild(field);
+  field.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (error) {
+    copied = false;
+  }
+  document.body.removeChild(field);
+  return copied;
 }
 
 function letterClass(index) {

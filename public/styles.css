@@ -239,6 +239,35 @@ textarea {
   align-items: center;
 }
 
+.qr-panel {
+  display: grid;
+  justify-items: center;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.qr-code {
+  display: block;
+  width: min(100%, 18rem);
+  aspect-ratio: 1;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 0.65rem;
+}
+
+.qr-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  width: 100%;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

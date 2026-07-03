@@ -1,6 +1,7 @@
 const express = require("express");
 const http = require("http");
 const path = require("path");
+const QRCode = require("qrcode");
 const { Server } = require("socket.io");
 
 const app = express();
@@ -16,10 +17,43 @@ const HOST = process.env.HOST || "0.0.0.0";
 const rooms = new Map();
 
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "public"), {
+  setHeaders(res, filePath) {
+    if (/\.(html|css|js)$/i.test(filePath)) {
+      res.setHeader("cache-control", "no-store");
+    }
+  }
+}));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, rooms: rooms.size });
+});
+
+app.get("/api/qr.svg", async (req, res) => {
+  const url = normalizeQrUrl(req.query.url);
+  if (!url) {
+    res.status(400).send("Invalid QR URL");
+    return;
+  }
+
+  try {
+    const svg = await QRCode.toString(url, {
+      type: "svg",
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 512,
+      color: {
+        dark: "#172026",
+        light: "#ffffff"
+      }
+    });
+
+    res.setHeader("content-type", "image/svg+xml; charset=utf-8");
+    res.setHeader("cache-control", "no-store");
+    res.send(svg);
+  } catch (error) {
+    res.status(500).send("QR generation failed");
+  }
 });
 
 app.get("/api/rooms/:code/export/results.csv", (req, res) => {
@@ -501,6 +535,13 @@ function normalizeNickname(value) {
 
 function normalizeCode(value) {
   return String(value || "").replace(/\D/g, "").slice(0, 6);
+}
+
+function normalizeQrUrl(value) {
+  const url = String(value || "").trim();
+  if (url.length < 8 || url.length > 500) return "";
+  if (!/^https?:\/\/[^\s]+$/i.test(url)) return "";
+  return url;
 }
 
 function createRoomCode() {
