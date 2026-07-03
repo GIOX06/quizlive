@@ -65,7 +65,9 @@ QuizLive stores saved quizzes and historical results in a small JSON store. By d
 .data/quizlive-store.json
 ```
 
-For hosted deployments, set `DATA_DIR` to a persistent directory. On Render, the included `render.yaml` mounts a persistent disk at `/var/data` and sets:
+On Render Free, this local store is temporary because free web services use an ephemeral filesystem. Saved quizzes and historical results can be lost when the service sleeps, restarts, or redeploys.
+
+For durable hosted storage, move the archive to an external database such as Neon Postgres, or use a paid Render service with a persistent disk and set `DATA_DIR` to the disk mount path, for example:
 
 ```text
 DATA_DIR=/var/data
@@ -80,10 +82,12 @@ This app is intentionally small and portable. It can run on platforms that suppo
 The repository includes `render.yaml` for a Render web service:
 
 - Node runtime
+- free instance
 - `npm install` build command
 - `npm start` start command
 - `/api/health` health check
-- persistent disk mounted at `/var/data`
+
+Render Free is enough to test the live quiz online with phones and QR codes. The archive UI still works, but saved data is temporary on the free instance.
 
 After the service is created, Render gives you a stable public URL. QuizLive automatically uses that URL for player QR codes and copied links.
 

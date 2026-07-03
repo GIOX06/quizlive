@@ -3,7 +3,7 @@ services:
     name: quizlive
     runtime: node
     region: frankfurt
-    plan: starter
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
@@ -11,9 +11,3 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATA_DIR
-        value: /var/data
-    disk:
-      name: quizlive-data
-      mountPath: /var/data
-      sizeGB: 1
