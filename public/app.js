@@ -8,7 +8,12 @@ let local = {
   quiz: defaultQuiz(),
   selectedAnswer: null,
   importOpen: false,
+  archiveOpen: false,
+  archiveLoading: false,
   importText: "",
+  savedQuizzes: [],
+  savedResults: [],
+  currentQuizId: null,
   joinCode: initialJoinCode(),
   nickname: "",
   playerBaseUrl: window.location.origin,
@@ -125,11 +130,14 @@ function renderHostHome() {
         ${renderQuizBuilder()}
         <div class="toolbar">
           <button class="btn primary" data-action="create-room">Crea stanza</button>
+          <button class="btn teal" data-action="save-quiz">Salva quiz</button>
           <button class="btn ghost" data-action="add-question">Aggiungi domanda</button>
           <button class="btn ghost" data-action="toggle-import">Import JSON</button>
           <button class="btn ghost" data-action="download-quiz">Export quiz</button>
+          <button class="btn ghost" data-action="toggle-archive">Archivio</button>
         </div>
         ${local.importOpen ? renderImportBox() : ""}
+        ${local.archiveOpen ? renderArchiveBox() : ""}
       </div>
     </section>
   `;
@@ -195,6 +203,73 @@ function renderImportBox() {
         <button class="btn teal" data-action="apply-import">Importa</button>
         <button class="btn ghost" data-action="toggle-import">Chiudi</button>
       </div>
+    </div>
+  `;
+}
+
+function renderArchiveBox() {
+  return `
+    <div class="panel flat stack archive-panel">
+      <div class="archive-head">
+        <div>
+          <h2 class="section-title">Archivio</h2>
+          <p class="subtle">Quiz salvati e risultati storici.</p>
+        </div>
+        <button class="btn small ghost" data-action="refresh-archive" ${local.archiveLoading ? "disabled" : ""}>Aggiorna</button>
+      </div>
+      ${local.archiveLoading ? `<div class="empty compact">Caricamento archivio...</div>` : `
+        <div class="archive-grid">
+          <section class="stack">
+            <h3 class="mini-title">Quiz salvati</h3>
+            ${renderSavedQuizzes()}
+          </section>
+          <section class="stack">
+            <h3 class="mini-title">Risultati</h3>
+            ${renderSavedResults()}
+          </section>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function renderSavedQuizzes() {
+  if (!local.savedQuizzes.length) return `<div class="empty compact">Nessun quiz salvato</div>`;
+  return `
+    <div class="archive-list">
+      ${local.savedQuizzes.map((item) => `
+        <article class="archive-item">
+          <div>
+            <strong>${escapeHtml(item.title)}</strong>
+            <p class="subtle">${item.questionCount} domande - ${formatDate(item.updatedAt)}</p>
+          </div>
+          <div class="toolbar">
+            <button class="btn small ghost" data-action="load-saved-quiz" data-quiz-id="${escapeAttr(item.id)}">Carica</button>
+            <button class="btn small ghost danger" data-action="delete-saved-quiz" data-quiz-id="${escapeAttr(item.id)}">Elimina</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderSavedResults() {
+  if (!local.savedResults.length) return `<div class="empty compact">Nessun risultato salvato</div>`;
+  return `
+    <div class="archive-list">
+      ${local.savedResults.map((item) => `
+        <article class="archive-item">
+          <div>
+            <strong>${escapeHtml(item.title)}</strong>
+            <p class="subtle">Stanza ${escapeHtml(item.code)} - ${item.playerCount} giocatori - ${formatDate(item.endedAt)}</p>
+          </div>
+          <div class="toolbar">
+            <a class="btn small ghost" href="/api/archive/results/${escapeAttr(item.id)}.csv">CSV</a>
+            <a class="btn small ghost" href="/api/archive/results/${escapeAttr(item.id)}.json">JSON</a>
+            <button class="btn small ghost danger" data-action="delete-saved-result" data-result-id="${escapeAttr(item.id)}">Elimina</button>
+          </div>
+        </article>
+      `).join("")}
     </div>
   `;
 }
@@ -524,7 +599,13 @@ function handleAction(event) {
     local.importText = local.importText || JSON.stringify(local.quiz, null, 2);
     render();
   }
+  if (action === "toggle-archive") toggleArchive();
+  if (action === "refresh-archive") loadArchive();
   if (action === "apply-import") applyImport();
+  if (action === "save-quiz") saveQuiz();
+  if (action === "load-saved-quiz") loadSavedQuiz(target.dataset.quizId);
+  if (action === "delete-saved-quiz") deleteSavedQuiz(target.dataset.quizId);
+  if (action === "delete-saved-result") deleteSavedResult(target.dataset.resultId);
   if (action === "download-quiz") downloadJson("quizlive-quiz.json", cleanQuiz(local.quiz));
   if (action === "switch-host") switchMode("host");
   if (action === "switch-join") switchMode("join");
@@ -561,11 +642,102 @@ function applyImport() {
   try {
     const parsed = JSON.parse(local.importText);
     local.quiz = cleanQuiz(parsed);
+    local.currentQuizId = null;
     local.importOpen = false;
     showToast("Quiz importato");
     render();
   } catch (error) {
     showToast("JSON non valido");
+  }
+}
+
+function toggleArchive() {
+  local.archiveOpen = !local.archiveOpen;
+  render();
+  if (local.archiveOpen) loadArchive();
+}
+
+async function loadArchive() {
+  local.archiveLoading = true;
+  render();
+  try {
+    const [quizResponse, resultResponse] = await Promise.all([
+      fetch("/api/archive/quizzes", { cache: "no-store" }),
+      fetch("/api/archive/results", { cache: "no-store" })
+    ]);
+    if (!quizResponse.ok || !resultResponse.ok) throw new Error("Archivio non disponibile");
+    const quizData = await quizResponse.json();
+    const resultData = await resultResponse.json();
+    local.savedQuizzes = Array.isArray(quizData.quizzes) ? quizData.quizzes : [];
+    local.savedResults = Array.isArray(resultData.results) ? resultData.results : [];
+  } catch (error) {
+    showToast("Archivio non disponibile");
+  } finally {
+    local.archiveLoading = false;
+    render();
+  }
+}
+
+async function saveQuiz() {
+  const quiz = cleanQuiz(local.quiz);
+  if (!quiz.questions.length) {
+    showToast("Aggiungi almeno una domanda");
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/archive/quizzes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: local.currentQuizId, quiz })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Salvataggio non riuscito");
+    local.currentQuizId = data.quiz.id;
+    local.quiz = cleanQuiz(data.quiz.quiz);
+    showToast("Quiz salvato");
+    if (local.archiveOpen) loadArchive();
+  } catch (error) {
+    showToast(error.message || "Salvataggio non riuscito");
+  }
+}
+
+function loadSavedQuiz(id) {
+  const item = local.savedQuizzes.find((quiz) => quiz.id === id);
+  if (!item || !item.quiz) {
+    showToast("Quiz non trovato");
+    return;
+  }
+  local.quiz = cleanQuiz(item.quiz);
+  local.currentQuizId = item.id;
+  showToast("Quiz caricato");
+  render();
+}
+
+async function deleteSavedQuiz(id) {
+  if (!id) return;
+  try {
+    const response = await fetch(`/api/archive/quizzes/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Eliminazione non riuscita");
+    if (local.currentQuizId === id) local.currentQuizId = null;
+    showToast("Quiz eliminato");
+    loadArchive();
+  } catch (error) {
+    showToast(error.message || "Eliminazione non riuscita");
+  }
+}
+
+async function deleteSavedResult(id) {
+  if (!id) return;
+  try {
+    const response = await fetch(`/api/archive/results/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Eliminazione non riuscita");
+    showToast("Risultato eliminato");
+    loadArchive();
+  } catch (error) {
+    showToast(error.message || "Eliminazione non riuscita");
   }
 }
 
@@ -764,6 +936,20 @@ function playerAccessNotice() {
 
 function playerAccessClass() {
   return local.playerAccessMode === "public" ? "public" : "local";
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  try {
+    return new Intl.DateTimeFormat("it-IT", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(new Date(value));
+  } catch (error) {
+    return "-";
+  }
 }
 
 function choosePlayerBaseUrl(config) {

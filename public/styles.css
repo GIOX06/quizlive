@@ -343,6 +343,50 @@ textarea {
   box-shadow: none;
 }
 
+.archive-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.archive-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.archive-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.archive-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.archive-item {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.mini-title {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.btn.danger {
+  color: #9f2f2f;
+  border-color: rgba(239, 91, 91, 0.36);
+}
+
 .question-head {
   display: flex;
   align-items: center;
@@ -670,6 +714,10 @@ textarea {
   padding: 1rem;
 }
 
+.empty.compact {
+  min-height: 5rem;
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -723,6 +771,7 @@ textarea {
 
   .grid-2,
   .answers-grid,
+  .archive-grid,
   .podium {
     grid-template-columns: 1fr;
   }

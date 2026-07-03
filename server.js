@@ -1,4 +1,5 @@
 const express = require("express");
+const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
@@ -16,7 +17,10 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, ".data");
+const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
 const rooms = new Map();
+const store = loadStore();
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public"), {
@@ -92,6 +96,92 @@ app.get("/api/rooms/:code/export/results.json", (req, res) => {
 
   res.setHeader("content-disposition", `attachment; filename="quizlive-${room.code}-results.json"`);
   res.json(resultsToJson(room));
+});
+
+app.get("/api/archive/quizzes", (_req, res) => {
+  res.json({
+    quizzes: store.quizzes
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        questionCount: item.questionCount,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        quiz: item.quiz
+      }))
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+  });
+});
+
+app.post("/api/archive/quizzes", (req, res) => {
+  try {
+    const quiz = normalizeQuiz(req.body && req.body.quiz);
+    const id = normalizeArchiveId(req.body && req.body.id) || createArchiveId("quiz");
+    const saved = saveQuizToStore(id, quiz);
+    res.json({ ok: true, quiz: saved });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
+
+app.delete("/api/archive/quizzes/:id", (req, res) => {
+  const id = normalizeArchiveId(req.params.id);
+  const index = store.quizzes.findIndex((item) => item.id === id);
+  if (index < 0) {
+    res.status(404).json({ ok: false, error: "Quiz non trovato" });
+    return;
+  }
+  store.quizzes.splice(index, 1);
+  persistStore();
+  res.json({ ok: true });
+});
+
+app.get("/api/archive/results", (_req, res) => {
+  res.json({
+    results: store.results
+      .map((item) => ({
+        id: item.id,
+        code: item.code,
+        title: item.title,
+        endedAt: item.endedAt,
+        playerCount: item.leaderboard.length,
+        winner: item.leaderboard[0] || null
+      }))
+      .sort((a, b) => String(b.endedAt).localeCompare(String(a.endedAt)))
+  });
+});
+
+app.get("/api/archive/results/:id.json", (req, res) => {
+  const result = findResult(req.params.id);
+  if (!result) {
+    res.status(404).json({ error: "Result not found" });
+    return;
+  }
+  res.setHeader("content-disposition", `attachment; filename="quizlive-${result.code}-saved-results.json"`);
+  res.json(result);
+});
+
+app.get("/api/archive/results/:id.csv", (req, res) => {
+  const result = findResult(req.params.id);
+  if (!result) {
+    res.status(404).send("Result not found");
+    return;
+  }
+  res.setHeader("content-type", "text/csv; charset=utf-8");
+  res.setHeader("content-disposition", `attachment; filename="quizlive-${result.code}-saved-results.csv"`);
+  res.send(resultToCsv(result));
+});
+
+app.delete("/api/archive/results/:id", (req, res) => {
+  const id = normalizeArchiveId(req.params.id);
+  const index = store.results.findIndex((item) => item.id === id);
+  if (index < 0) {
+    res.status(404).json({ ok: false, error: "Risultato non trovato" });
+    return;
+  }
+  store.results.splice(index, 1);
+  persistStore();
+  res.json({ ok: true });
 });
 
 io.on("connection", (socket) => {
@@ -274,6 +364,7 @@ function createRoom(quiz, hostSocketId) {
     players: new Map(),
     answers: new Map(),
     timer: null,
+    resultId: null,
     createdAt: Date.now()
   };
   rooms.set(code, room);
@@ -304,6 +395,10 @@ function endGame(room) {
   clearRoomTimer(room);
   room.status = "ended";
   room.questionEndsAt = null;
+  if (!room.resultId) {
+    const saved = saveResultToStore(room);
+    room.resultId = saved.id;
+  }
   emitRoom(room);
 }
 
@@ -314,6 +409,7 @@ function resetRoom(room) {
   room.currentIndex = -1;
   room.questionStartedAt = null;
   room.questionEndsAt = null;
+  room.resultId = null;
   room.answers.clear();
 
   if (invitePreviousPlayers) {
@@ -574,6 +670,173 @@ function resultsToCsv(room) {
   });
 
   return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function saveQuizToStore(id, quiz) {
+  const now = new Date().toISOString();
+  const existing = store.quizzes.find((item) => item.id === id);
+  const saved = {
+    id,
+    title: quiz.title,
+    questionCount: quiz.questions.length,
+    createdAt: existing ? existing.createdAt : now,
+    updatedAt: now,
+    quiz
+  };
+
+  if (existing) {
+    Object.assign(existing, saved);
+  } else {
+    store.quizzes.unshift(saved);
+  }
+
+  store.quizzes = store.quizzes
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    .slice(0, 100);
+  persistStore();
+  return saved;
+}
+
+function saveResultToStore(room) {
+  const result = resultFromRoom(room);
+  store.results.unshift(result);
+  store.results = store.results
+    .sort((a, b) => String(b.endedAt).localeCompare(String(a.endedAt)))
+    .slice(0, 200);
+  persistStore();
+  return result;
+}
+
+function resultFromRoom(room) {
+  const endedAt = new Date().toISOString();
+  const board = leaderboard(room).map((player, index) => ({
+    ...player,
+    rank: index + 1
+  }));
+
+  return {
+    id: createArchiveId("result"),
+    code: room.code,
+    title: room.quiz.title,
+    createdAt: new Date(room.createdAt).toISOString(),
+    endedAt,
+    quiz: room.quiz,
+    questions: room.quiz.questions.map((question, questionIndex) => {
+      const answerMap = room.answers.get(questionIndex) || new Map();
+      return {
+        text: question.text,
+        answers: question.answers,
+        correctIndex: question.correctIndex,
+        responses: Array.from(answerMap).map(([playerId, answer]) => {
+          const player = room.players.get(playerId);
+          return {
+            playerId,
+            nickname: player ? player.nickname : "Unknown",
+            answerIndex: answer.answerIndex,
+            answerText: question.answers[answer.answerIndex],
+            correct: answer.correct,
+            points: answer.points,
+            answeredAt: new Date(answer.answeredAt).toISOString()
+          };
+        })
+      };
+    }),
+    leaderboard: board
+  };
+}
+
+function findResult(id) {
+  const normalizedId = normalizeArchiveId(id);
+  return store.results.find((item) => item.id === normalizedId) || null;
+}
+
+function resultToCsv(result) {
+  const rows = [
+    ["Rank", "Nickname", "Score", "Streak", ...result.questions.flatMap((_question, index) => [
+      `Q${index + 1} Answer`,
+      `Q${index + 1} Correct`,
+      `Q${index + 1} Points`
+    ])]
+  ];
+
+  result.leaderboard.forEach((player, playerIndex) => {
+    const row = [
+      player.rank || playerIndex + 1,
+      player.nickname,
+      player.score,
+      player.streak
+    ];
+
+    result.questions.forEach((question) => {
+      const answer = question.responses.find((item) => item.playerId === player.id);
+      row.push(
+        answer ? answer.answerText : "",
+        answer ? (answer.correct ? "yes" : "no") : "",
+        answer ? answer.points : 0
+      );
+    });
+
+    rows.push(row);
+  });
+
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function loadStore() {
+  try {
+    const raw = fs.readFileSync(STORE_FILE, "utf8");
+    return normalizeStore(JSON.parse(raw));
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error(`Could not load store from ${STORE_FILE}:`, error.message);
+    }
+    return normalizeStore(null);
+  }
+}
+
+function persistStore() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tempFile = `${STORE_FILE}.tmp-${process.pid}`;
+    fs.writeFileSync(tempFile, JSON.stringify(store, null, 2));
+    fs.renameSync(tempFile, STORE_FILE);
+  } catch (error) {
+    console.error(`Could not persist store to ${STORE_FILE}:`, error.message);
+  }
+}
+
+function normalizeStore(input) {
+  const source = input && typeof input === "object" ? input : {};
+  return {
+    version: 1,
+    quizzes: Array.isArray(source.quizzes) ? source.quizzes.filter(isStoredQuiz).slice(0, 100) : [],
+    results: Array.isArray(source.results) ? source.results.filter(isStoredResult).slice(0, 200) : []
+  };
+}
+
+function isStoredQuiz(item) {
+  return item &&
+    typeof item.id === "string" &&
+    item.quiz &&
+    Array.isArray(item.quiz.questions);
+}
+
+function isStoredResult(item) {
+  return item &&
+    typeof item.id === "string" &&
+    typeof item.code === "string" &&
+    Array.isArray(item.questions) &&
+    Array.isArray(item.leaderboard);
+}
+
+function createArchiveId(prefix) {
+  const stamp = Date.now().toString(36);
+  const random = Math.random().toString(36).slice(2, 8);
+  return `${prefix}-${stamp}-${random}`;
+}
+
+function normalizeArchiveId(value) {
+  return String(value || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
 }
 
 function csvCell(value) {

@@ -37,6 +37,13 @@ async function main() {
       decliningPlayer.latestState = state;
     });
 
+    const savedQuiz = await postJson("/api/archive/quizzes", { quiz });
+    assert.equal(savedQuiz.ok, true);
+    assert.equal(savedQuiz.quiz.title, quiz.title);
+
+    const archive = await getJson("/api/archive/quizzes");
+    assert.ok(archive.quizzes.some((item) => item.id === savedQuiz.quiz.id));
+
     const created = await emitAck(host, "host:create", { quiz });
     assert.equal(created.ok, true);
     assert.match(created.code, /^\d{6}$/);
@@ -130,6 +137,23 @@ async function main() {
       !state.players.some((item) => item.nickname === "Smoke Decliner")
     );
 
+    const resultArchive = await getJson("/api/archive/results");
+    const savedResult = resultArchive.results.find((item) => item.code === created.code);
+    assert.ok(savedResult);
+
+    const savedResultJson = await getJson(`/api/archive/results/${savedResult.id}.json`);
+    assert.equal(savedResultJson.code, created.code);
+    assert.ok(savedResultJson.leaderboard.some((item) => item.nickname === "Smoke Player"));
+
+    const savedResultCsv = await getText(`/api/archive/results/${savedResult.id}.csv`);
+    assert.match(savedResultCsv, /Smoke Player/);
+
+    const deletedResult = await deleteJson(`/api/archive/results/${savedResult.id}`);
+    assert.equal(deletedResult.ok, true);
+
+    const deletedQuiz = await deleteJson(`/api/archive/quizzes/${savedQuiz.quiz.id}`);
+    assert.equal(deletedQuiz.ok, true);
+
     console.log(JSON.stringify({
       ok: true,
       code: created.code,
@@ -150,6 +174,34 @@ function emitAck(socket, eventName, payload) {
       resolve(response);
     });
   });
+}
+
+async function getJson(path) {
+  const response = await fetch(new URL(path, serverUrl));
+  assert.equal(response.ok, true);
+  return response.json();
+}
+
+async function getText(path) {
+  const response = await fetch(new URL(path, serverUrl));
+  assert.equal(response.ok, true);
+  return response.text();
+}
+
+async function postJson(path, payload) {
+  const response = await fetch(new URL(path, serverUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  assert.equal(response.ok, true);
+  return response.json();
+}
+
+async function deleteJson(path) {
+  const response = await fetch(new URL(path, serverUrl), { method: "DELETE" });
+  assert.equal(response.ok, true);
+  return response.json();
 }
 
 function waitForConnect(socket) {

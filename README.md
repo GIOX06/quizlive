@@ -13,6 +13,8 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 - Players see answer buttons, feedback, score, and ranking.
 - Results export as CSV or JSON while the room is active.
 - Quiz export/import works as JSON from the host builder.
+- Host can save quizzes to the archive and load them later.
+- Finished games are saved to historical results with CSV/JSON export.
 
 ## Local setup
 
@@ -55,13 +57,45 @@ PUBLIC_BASE_URL=https://your-public-url.example npm run dev
 
 With `PUBLIC_BASE_URL`, the QR code and copied player link use the public URL.
 
+## Persistence
+
+QuizLive stores saved quizzes and historical results in a small JSON store. By default, local data is written to:
+
+```text
+.data/quizlive-store.json
+```
+
+For hosted deployments, set `DATA_DIR` to a persistent directory. On Render, the included `render.yaml` mounts a persistent disk at `/var/data` and sets:
+
+```text
+DATA_DIR=/var/data
+```
+
 ## Online deployment
 
 This app is intentionally small and portable. It can run on platforms that support a persistent Node server and WebSocket connections, such as Render, Railway, Fly.io, Replit, or a VPS.
 
+### Render Blueprint
+
+The repository includes `render.yaml` for a Render web service:
+
+- Node runtime
+- `npm install` build command
+- `npm start` start command
+- `/api/health` health check
+- persistent disk mounted at `/var/data`
+- `PUBLIC_BASE_URL` prompted in the Render Dashboard
+
+After the service is created and Render gives you the public URL, set `PUBLIC_BASE_URL` to that exact origin, for example:
+
+```text
+https://quizlive.onrender.com
+```
+
+Then redeploy. QR codes and copied player links will use the stable public URL.
+
 For a production version, the next useful upgrades are:
 
-- persistent database for quizzes and historical results
 - user accounts for hosts
 - room reconnection by session token
 - media uploads for questions
