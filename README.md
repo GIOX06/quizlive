@@ -59,7 +59,26 @@ With `PUBLIC_BASE_URL`, the QR code and copied player link use the public URL.
 
 ## Persistence
 
-QuizLive stores saved quizzes and historical results in a small JSON store. By default, local data is written to:
+QuizLive can store saved quizzes and historical results in either Neon Postgres or a small local JSON store.
+
+When `DATABASE_URL` is set, QuizLive uses Postgres and creates the archive tables automatically on startup. This is the recommended setup for Render Free because the database survives sleeps, restarts, and redeploys.
+
+To use Neon Free with Render:
+
+1. Create a free project on Neon.
+2. Copy the Postgres connection string from Neon.
+3. In Render, open the `quizlive` web service.
+4. Go to Environment and add a secret variable named `DATABASE_URL`.
+5. Paste the Neon connection string as the value.
+6. Save and redeploy the Render service.
+
+After redeploy, this URL should report `"archive":"postgres"`:
+
+```text
+https://your-render-url.onrender.com/api/health
+```
+
+Without `DATABASE_URL`, QuizLive falls back to the local JSON store. By default, local data is written to:
 
 ```text
 .data/quizlive-store.json
@@ -67,7 +86,7 @@ QuizLive stores saved quizzes and historical results in a small JSON store. By d
 
 On Render Free, this local store is temporary because free web services use an ephemeral filesystem. Saved quizzes and historical results can be lost when the service sleeps, restarts, or redeploys.
 
-For durable hosted storage, move the archive to an external database such as Neon Postgres, or use a paid Render service with a persistent disk and set `DATA_DIR` to the disk mount path, for example:
+As another option, a paid Render service can use a persistent disk by setting `DATA_DIR` to the disk mount path, for example:
 
 ```text
 DATA_DIR=/var/data

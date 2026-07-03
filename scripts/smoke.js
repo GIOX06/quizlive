@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { io } = require("socket.io-client");
 
 const serverUrl = process.env.SERVER_URL || "http://127.0.0.1:3000";
+const expectedArchive = process.env.EXPECTED_ARCHIVE || "";
 
 const quiz = {
   title: "Smoke Test",
@@ -36,6 +37,10 @@ async function main() {
     decliningPlayer.on("room:state", (state) => {
       decliningPlayer.latestState = state;
     });
+
+    const health = await getJson("/api/health");
+    assert.equal(health.ok, true);
+    if (expectedArchive) assert.equal(health.archive, expectedArchive);
 
     const savedQuiz = await postJson("/api/archive/quizzes", { quiz });
     assert.equal(savedQuiz.ok, true);

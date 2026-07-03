@@ -3,6 +3,7 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const { Pool } = require("pg");
 const QRCode = require("qrcode");
 const { Server } = require("socket.io");
 
@@ -17,10 +18,19 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
+const DATABASE_URL = process.env.DATABASE_URL || "";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, ".data");
 const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
 const rooms = new Map();
 const store = loadStore();
+const pgPool = createPgPool(DATABASE_URL);
+let archiveInitError = null;
+const archiveReady = pgPool
+  ? initPostgresArchive().catch((error) => {
+      archiveInitError = error;
+      console.error("Could not initialize Postgres archive:", error.message);
+    })
+  : Promise.resolve();
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public"), {
@@ -32,7 +42,7 @@ app.use(express.static(path.join(__dirname, "public"), {
 }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, rooms: rooms.size });
+  res.json({ ok: true, rooms: rooms.size, archive: pgPool ? "postgres" : "file" });
 });
 
 app.get("/api/network", (req, res) => {
@@ -98,90 +108,92 @@ app.get("/api/rooms/:code/export/results.json", (req, res) => {
   res.json(resultsToJson(room));
 });
 
-app.get("/api/archive/quizzes", (_req, res) => {
-  res.json({
-    quizzes: store.quizzes
-      .map((item) => ({
-        id: item.id,
-        title: item.title,
-        questionCount: item.questionCount,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-        quiz: item.quiz
-      }))
-      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
-  });
+app.get("/api/archive/quizzes", async (_req, res) => {
+  try {
+    const quizzes = await listQuizzesFromStore();
+    res.json({ quizzes });
+  } catch (error) {
+    sendArchiveError(res, error);
+  }
 });
 
-app.post("/api/archive/quizzes", (req, res) => {
+app.post("/api/archive/quizzes", async (req, res) => {
   try {
     const quiz = normalizeQuiz(req.body && req.body.quiz);
     const id = normalizeArchiveId(req.body && req.body.id) || createArchiveId("quiz");
-    const saved = saveQuizToStore(id, quiz);
+    const saved = await saveQuizToStore(id, quiz);
     res.json({ ok: true, quiz: saved });
   } catch (error) {
+    if (isArchiveFailure(error)) {
+      sendArchiveError(res, error);
+      return;
+    }
     res.status(400).json({ ok: false, error: error.message });
   }
 });
 
-app.delete("/api/archive/quizzes/:id", (req, res) => {
-  const id = normalizeArchiveId(req.params.id);
-  const index = store.quizzes.findIndex((item) => item.id === id);
-  if (index < 0) {
-    res.status(404).json({ ok: false, error: "Quiz non trovato" });
-    return;
+app.delete("/api/archive/quizzes/:id", async (req, res) => {
+  try {
+    const deleted = await deleteQuizFromStore(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ ok: false, error: "Quiz non trovato" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    sendArchiveError(res, error);
   }
-  store.quizzes.splice(index, 1);
-  persistStore();
-  res.json({ ok: true });
 });
 
-app.get("/api/archive/results", (_req, res) => {
-  res.json({
-    results: store.results
-      .map((item) => ({
-        id: item.id,
-        code: item.code,
-        title: item.title,
-        endedAt: item.endedAt,
-        playerCount: item.leaderboard.length,
-        winner: item.leaderboard[0] || null
-      }))
-      .sort((a, b) => String(b.endedAt).localeCompare(String(a.endedAt)))
-  });
+app.get("/api/archive/results", async (_req, res) => {
+  try {
+    const results = await listResultsFromStore();
+    res.json({ results });
+  } catch (error) {
+    sendArchiveError(res, error);
+  }
 });
 
-app.get("/api/archive/results/:id.json", (req, res) => {
-  const result = findResult(req.params.id);
-  if (!result) {
-    res.status(404).json({ error: "Result not found" });
-    return;
+app.get("/api/archive/results/:id.json", async (req, res) => {
+  try {
+    const result = await findResult(req.params.id);
+    if (!result) {
+      res.status(404).json({ error: "Result not found" });
+      return;
+    }
+    res.setHeader("content-disposition", `attachment; filename="quizlive-${result.code}-saved-results.json"`);
+    res.json(result);
+  } catch (error) {
+    sendArchiveError(res, error);
   }
-  res.setHeader("content-disposition", `attachment; filename="quizlive-${result.code}-saved-results.json"`);
-  res.json(result);
 });
 
-app.get("/api/archive/results/:id.csv", (req, res) => {
-  const result = findResult(req.params.id);
-  if (!result) {
-    res.status(404).send("Result not found");
-    return;
+app.get("/api/archive/results/:id.csv", async (req, res) => {
+  try {
+    const result = await findResult(req.params.id);
+    if (!result) {
+      res.status(404).send("Result not found");
+      return;
+    }
+    res.setHeader("content-type", "text/csv; charset=utf-8");
+    res.setHeader("content-disposition", `attachment; filename="quizlive-${result.code}-saved-results.csv"`);
+    res.send(resultToCsv(result));
+  } catch (error) {
+    sendArchiveError(res, error);
   }
-  res.setHeader("content-type", "text/csv; charset=utf-8");
-  res.setHeader("content-disposition", `attachment; filename="quizlive-${result.code}-saved-results.csv"`);
-  res.send(resultToCsv(result));
 });
 
-app.delete("/api/archive/results/:id", (req, res) => {
-  const id = normalizeArchiveId(req.params.id);
-  const index = store.results.findIndex((item) => item.id === id);
-  if (index < 0) {
-    res.status(404).json({ ok: false, error: "Risultato non trovato" });
-    return;
+app.delete("/api/archive/results/:id", async (req, res) => {
+  try {
+    const deleted = await deleteResultFromStore(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ ok: false, error: "Risultato non trovato" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    sendArchiveError(res, error);
   }
-  store.results.splice(index, 1);
-  persistStore();
-  res.json({ ok: true });
 });
 
 io.on("connection", (socket) => {
@@ -209,19 +221,23 @@ io.on("connection", (socket) => {
     sendAck(ack, { ok: true });
   });
 
-  socket.on("host:next", (_payload, ack) => {
+  socket.on("host:next", async (_payload, ack) => {
     const room = getHostRoom(socket);
     if (!room) {
       sendAck(ack, { ok: false, error: "Host room not found" });
       return;
     }
-    const nextIndex = room.currentIndex + 1;
-    if (nextIndex >= room.quiz.questions.length) {
-      endGame(room);
-    } else {
-      startQuestion(room, nextIndex);
+    try {
+      const nextIndex = room.currentIndex + 1;
+      if (nextIndex >= room.quiz.questions.length) {
+        await endGame(room);
+      } else {
+        startQuestion(room, nextIndex);
+      }
+      sendAck(ack, { ok: true });
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
     }
-    sendAck(ack, { ok: true });
   });
 
   socket.on("host:reveal", (_payload, ack) => {
@@ -391,15 +407,19 @@ function revealQuestion(room) {
   emitRoom(room);
 }
 
-function endGame(room) {
+async function endGame(room) {
   clearRoomTimer(room);
   room.status = "ended";
   room.questionEndsAt = null;
   if (!room.resultId) {
-    const saved = saveResultToStore(room);
-    room.resultId = saved.id;
+    try {
+      const saved = await saveResultToStore(room);
+      room.resultId = saved.id;
+    } catch (error) {
+      console.error(`Could not save result for room ${room.code}:`, error.message);
+    }
   }
-  emitRoom(room);
+  await emitRoom(room);
 }
 
 function resetRoom(room) {
@@ -672,7 +692,25 @@ function resultsToCsv(room) {
   return rows.map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
-function saveQuizToStore(id, quiz) {
+async function listQuizzesFromStore() {
+  await ensureArchiveReady();
+  if (pgPool) return listQuizzesFromPostgres();
+  return store.quizzes
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      questionCount: item.questionCount,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      quiz: item.quiz
+    }))
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+}
+
+async function saveQuizToStore(id, quiz) {
+  await ensureArchiveReady();
+  if (pgPool) return saveQuizToPostgres(id, quiz);
+
   const now = new Date().toISOString();
   const existing = store.quizzes.find((item) => item.id === id);
   const saved = {
@@ -697,14 +735,56 @@ function saveQuizToStore(id, quiz) {
   return saved;
 }
 
-function saveResultToStore(room) {
+async function deleteQuizFromStore(id) {
+  await ensureArchiveReady();
+  const normalizedId = normalizeArchiveId(id);
+  if (pgPool) return deleteQuizFromPostgres(normalizedId);
+
+  const index = store.quizzes.findIndex((item) => item.id === normalizedId);
+  if (index < 0) return false;
+  store.quizzes.splice(index, 1);
+  persistStore();
+  return true;
+}
+
+async function listResultsFromStore() {
+  await ensureArchiveReady();
+  if (pgPool) return listResultsFromPostgres();
+  return store.results
+    .map(resultSummary)
+    .sort((a, b) => String(b.endedAt).localeCompare(String(a.endedAt)));
+}
+
+async function saveResultToStore(room) {
+  await ensureArchiveReady();
   const result = resultFromRoom(room);
+  if (pgPool) return saveResultToPostgres(result);
+
   store.results.unshift(result);
   store.results = store.results
     .sort((a, b) => String(b.endedAt).localeCompare(String(a.endedAt)))
     .slice(0, 200);
   persistStore();
   return result;
+}
+
+async function findResult(id) {
+  await ensureArchiveReady();
+  const normalizedId = normalizeArchiveId(id);
+  if (pgPool) return findResultFromPostgres(normalizedId);
+  return store.results.find((item) => item.id === normalizedId) || null;
+}
+
+async function deleteResultFromStore(id) {
+  await ensureArchiveReady();
+  const normalizedId = normalizeArchiveId(id);
+  if (pgPool) return deleteResultFromPostgres(normalizedId);
+
+  const index = store.results.findIndex((item) => item.id === normalizedId);
+  if (index < 0) return false;
+  store.results.splice(index, 1);
+  persistStore();
+  return true;
 }
 
 function resultFromRoom(room) {
@@ -745,11 +825,6 @@ function resultFromRoom(room) {
   };
 }
 
-function findResult(id) {
-  const normalizedId = normalizeArchiveId(id);
-  return store.results.find((item) => item.id === normalizedId) || null;
-}
-
 function resultToCsv(result) {
   const rows = [
     ["Rank", "Nickname", "Score", "Streak", ...result.questions.flatMap((_question, index) => [
@@ -780,6 +855,166 @@ function resultToCsv(result) {
   });
 
   return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+async function ensureArchiveReady() {
+  await archiveReady;
+  if (archiveInitError) throw archiveInitError;
+}
+
+function createPgPool(databaseUrl) {
+  if (!databaseUrl) return null;
+  return new Pool({
+    connectionString: databaseUrl,
+    ssl: postgresSslConfig(databaseUrl)
+  });
+}
+
+function postgresSslConfig(databaseUrl) {
+  try {
+    const hostname = new URL(databaseUrl).hostname;
+    if (hostname === "localhost" || hostname === "127.0.0.1") return false;
+  } catch (error) {
+    return { rejectUnauthorized: false };
+  }
+  return { rejectUnauthorized: false };
+}
+
+async function initPostgresArchive() {
+  await pgPool.query(`
+    create table if not exists quizlive_quizzes (
+      id text primary key,
+      title text not null,
+      question_count integer not null,
+      created_at timestamptz not null,
+      updated_at timestamptz not null,
+      quiz jsonb not null
+    )
+  `);
+  await pgPool.query(`
+    create table if not exists quizlive_results (
+      id text primary key,
+      code text not null,
+      title text not null,
+      created_at timestamptz not null,
+      ended_at timestamptz not null,
+      result jsonb not null
+    )
+  `);
+  await pgPool.query("create index if not exists quizlive_quizzes_updated_at_idx on quizlive_quizzes (updated_at desc)");
+  await pgPool.query("create index if not exists quizlive_results_ended_at_idx on quizlive_results (ended_at desc)");
+}
+
+async function listQuizzesFromPostgres() {
+  const response = await pgPool.query(`
+    select id, title, question_count, created_at, updated_at, quiz
+    from quizlive_quizzes
+    order by updated_at desc
+    limit 100
+  `);
+  return response.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    questionCount: row.question_count,
+    createdAt: isoDate(row.created_at),
+    updatedAt: isoDate(row.updated_at),
+    quiz: row.quiz
+  }));
+}
+
+async function saveQuizToPostgres(id, quiz) {
+  const now = new Date();
+  const response = await pgPool.query(`
+    insert into quizlive_quizzes (id, title, question_count, created_at, updated_at, quiz)
+    values ($1, $2, $3, $4, $4, $5::jsonb)
+    on conflict (id) do update set
+      title = excluded.title,
+      question_count = excluded.question_count,
+      updated_at = excluded.updated_at,
+      quiz = excluded.quiz
+    returning id, title, question_count, created_at, updated_at, quiz
+  `, [id, quiz.title, quiz.questions.length, now, JSON.stringify(quiz)]);
+  const row = response.rows[0];
+  return {
+    id: row.id,
+    title: row.title,
+    questionCount: row.question_count,
+    createdAt: isoDate(row.created_at),
+    updatedAt: isoDate(row.updated_at),
+    quiz: row.quiz
+  };
+}
+
+async function deleteQuizFromPostgres(id) {
+  const response = await pgPool.query("delete from quizlive_quizzes where id = $1", [id]);
+  return response.rowCount > 0;
+}
+
+async function listResultsFromPostgres() {
+  const response = await pgPool.query(`
+    select result
+    from quizlive_results
+    order by ended_at desc
+    limit 200
+  `);
+  return response.rows.map((row) => resultSummary(row.result));
+}
+
+async function saveResultToPostgres(result) {
+  await pgPool.query(`
+    insert into quizlive_results (id, code, title, created_at, ended_at, result)
+    values ($1, $2, $3, $4, $5, $6::jsonb)
+    on conflict (id) do update set
+      code = excluded.code,
+      title = excluded.title,
+      created_at = excluded.created_at,
+      ended_at = excluded.ended_at,
+      result = excluded.result
+  `, [
+    result.id,
+    result.code,
+    result.title,
+    result.createdAt,
+    result.endedAt,
+    JSON.stringify(result)
+  ]);
+  return result;
+}
+
+async function findResultFromPostgres(id) {
+  const response = await pgPool.query("select result from quizlive_results where id = $1", [id]);
+  return response.rows[0] ? response.rows[0].result : null;
+}
+
+async function deleteResultFromPostgres(id) {
+  const response = await pgPool.query("delete from quizlive_results where id = $1", [id]);
+  return response.rowCount > 0;
+}
+
+function resultSummary(result) {
+  const leaderboardItems = Array.isArray(result.leaderboard) ? result.leaderboard : [];
+  return {
+    id: result.id,
+    code: result.code,
+    title: result.title,
+    endedAt: result.endedAt,
+    playerCount: leaderboardItems.length,
+    winner: leaderboardItems[0] || null
+  };
+}
+
+function isoDate(value) {
+  if (value instanceof Date) return value.toISOString();
+  return String(value || "");
+}
+
+function isArchiveFailure(error) {
+  return Boolean(pgPool && (error === archiveInitError || error.code || error.severity));
+}
+
+function sendArchiveError(res, error) {
+  console.error("Archive error:", error.message);
+  res.status(500).json({ ok: false, error: "Archivio non disponibile" });
 }
 
 function loadStore() {
