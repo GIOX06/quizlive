@@ -10,7 +10,8 @@ let local = {
   importOpen: false,
   importText: "",
   joinCode: initialJoinCode(),
-  nickname: ""
+  nickname: "",
+  playerBaseUrl: window.location.origin
 };
 
 const app = document.getElementById("app");
@@ -33,6 +34,8 @@ socket.on("room:state", (room) => {
   }
   render();
 });
+
+loadNetworkConfig();
 
 window.addEventListener("hashchange", () => {
   if (local.room) return;
@@ -227,6 +230,7 @@ function renderHostLobby(room) {
         <img class="qr-code" src="${escapeAttr(qrCodeSrc(room.code))}" alt="QR code ingresso giocatori" />
         <div class="qr-meta">
           <span class="status-pill">Codice ${escapeHtml(room.code)}</span>
+          <span class="status-pill">${escapeHtml(playerBaseLabel())}</span>
           <button class="btn ghost" data-action="copy-player-link">Copia link</button>
         </div>
       </div>
@@ -570,6 +574,18 @@ async function copyPlayerLink() {
   }
 }
 
+async function loadNetworkConfig() {
+  try {
+    const response = await fetch("/api/network", { cache: "no-store" });
+    if (!response.ok) return;
+    const config = await response.json();
+    local.playerBaseUrl = choosePlayerBaseUrl(config);
+    render();
+  } catch (error) {
+    local.playerBaseUrl = window.location.origin;
+  }
+}
+
 function emitHost(eventName) {
   socket.emit(eventName, {}, (response) => {
     if (!response || !response.ok) {
@@ -644,11 +660,35 @@ function initialJoinCode() {
 }
 
 function playerLink(code) {
-  return `${window.location.origin}/#join=${encodeURIComponent(code || "")}`;
+  return `${playerBaseUrl()}/#join=${encodeURIComponent(code || "")}`;
 }
 
 function qrCodeSrc(code) {
   return `/api/qr.svg?url=${encodeURIComponent(playerLink(code))}`;
+}
+
+function playerBaseUrl() {
+  return local.playerBaseUrl || window.location.origin;
+}
+
+function playerBaseLabel() {
+  try {
+    const url = new URL(playerBaseUrl());
+    return `Telefono: ${url.host}`;
+  } catch (error) {
+    return "Telefono";
+  }
+}
+
+function choosePlayerBaseUrl(config) {
+  if (isLoopbackHost(window.location.hostname) && config && config.preferredOrigin) {
+    return config.preferredOrigin;
+  }
+  return window.location.origin;
+}
+
+function isLoopbackHost(hostname) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function fallbackCopy(text) {

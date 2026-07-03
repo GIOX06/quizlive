@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const os = require("os");
 const path = require("path");
 const QRCode = require("qrcode");
 const { Server } = require("socket.io");
@@ -27,6 +28,16 @@ app.use(express.static(path.join(__dirname, "public"), {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, rooms: rooms.size });
+});
+
+app.get("/api/network", (req, res) => {
+  const currentOrigin = requestOrigin(req);
+  const localOrigins = localNetworkOrigins();
+  res.json({
+    currentOrigin,
+    localOrigins,
+    preferredOrigin: preferredPlayerOrigin(currentOrigin, localOrigins)
+  });
 });
 
 app.get("/api/qr.svg", async (req, res) => {
@@ -542,6 +553,58 @@ function normalizeQrUrl(value) {
   if (url.length < 8 || url.length > 500) return "";
   if (!/^https?:\/\/[^\s]+$/i.test(url)) return "";
   return url;
+}
+
+function requestOrigin(req) {
+  const host = req.get("host");
+  if (!host) return "";
+  const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+  const proto = forwardedProto || req.protocol || "http";
+  return `${proto}://${host}`;
+}
+
+function localNetworkOrigins() {
+  const origins = [];
+  const interfaces = os.networkInterfaces();
+  for (const [name, addresses] of Object.entries(interfaces)) {
+    for (const address of addresses || []) {
+      if (address.family !== "IPv4" || address.internal) continue;
+      if (address.address.startsWith("169.254.")) continue;
+      origins.push({
+        name,
+        address: address.address,
+        origin: `http://${address.address}:${PORT}`,
+        private: isPrivateIPv4(address.address)
+      });
+    }
+  }
+
+  return origins.sort((a, b) => {
+    if (a.private !== b.private) return a.private ? -1 : 1;
+    return a.name.localeCompare(b.name) || a.address.localeCompare(b.address);
+  });
+}
+
+function preferredPlayerOrigin(currentOrigin, localOrigins) {
+  if (isLoopbackOrigin(currentOrigin) && localOrigins.length) {
+    return localOrigins[0].origin;
+  }
+  return currentOrigin || (localOrigins[0] && localOrigins[0].origin) || "";
+}
+
+function isLoopbackOrigin(origin) {
+  try {
+    const hostname = new URL(origin).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function isPrivateIPv4(address) {
+  return /^10\./.test(address) ||
+    /^192\.168\./.test(address) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address);
 }
 
 function createRoomCode() {
