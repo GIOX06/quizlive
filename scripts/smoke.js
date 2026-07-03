@@ -23,14 +23,18 @@ main().catch((error) => {
 async function main() {
   const host = io(serverUrl, { transports: ["websocket"], forceNew: true });
   const player = io(serverUrl, { transports: ["websocket"], forceNew: true });
+  const decliningPlayer = io(serverUrl, { transports: ["websocket"], forceNew: true });
 
   try {
-    await Promise.all([waitForConnect(host), waitForConnect(player)]);
+    await Promise.all([waitForConnect(host), waitForConnect(player), waitForConnect(decliningPlayer)]);
     host.on("room:state", (state) => {
       host.latestState = state;
     });
     player.on("room:state", (state) => {
       player.latestState = state;
+    });
+    decliningPlayer.on("room:state", (state) => {
+      decliningPlayer.latestState = state;
     });
 
     const created = await emitAck(host, "host:create", { quiz });
@@ -45,10 +49,17 @@ async function main() {
     });
     assert.equal(joined.ok, true);
 
+    const decliningJoined = await emitAck(decliningPlayer, "player:join", {
+      code: created.code,
+      nickname: "Smoke Decliner"
+    });
+    assert.equal(decliningJoined.ok, true);
+
     await waitForState(host, (state) =>
       state.role === "host" &&
       Array.isArray(state.players) &&
-      state.players.some((item) => item.nickname === "Smoke Player")
+      state.players.some((item) => item.nickname === "Smoke Player") &&
+      state.players.some((item) => item.nickname === "Smoke Decliner")
     );
 
     const started = await emitAck(host, "host:start", {});
@@ -83,6 +94,42 @@ async function main() {
 
     await waitForState(host, (state) => state.status === "ended");
 
+    const reset = await emitAck(host, "host:reset", {});
+    assert.equal(reset.ok, true);
+
+    await waitForState(player, (state) =>
+      state.status === "lobby" &&
+      state.player &&
+      state.player.rematch === "pending" &&
+      state.player.active === false
+    );
+    await waitForState(decliningPlayer, (state) =>
+      state.status === "lobby" &&
+      state.player &&
+      state.player.rematch === "pending" &&
+      state.player.active === false
+    );
+    await waitForState(host, (state) =>
+      state.status === "lobby" &&
+      state.playerCount === 0 &&
+      state.pendingInviteCount === 2
+    );
+
+    const accepted = await emitAck(player, "player:rematch", { accept: true });
+    assert.equal(accepted.ok, true);
+
+    const declined = await emitAck(decliningPlayer, "player:rematch", { accept: false });
+    assert.equal(declined.ok, true);
+    assert.equal(declined.left, true);
+
+    await waitForState(host, (state) =>
+      state.status === "lobby" &&
+      state.playerCount === 1 &&
+      state.pendingInviteCount === 0 &&
+      state.players.some((item) => item.nickname === "Smoke Player") &&
+      !state.players.some((item) => item.nickname === "Smoke Decliner")
+    );
+
     console.log(JSON.stringify({
       ok: true,
       code: created.code,
@@ -91,6 +138,7 @@ async function main() {
   } finally {
     host.close();
     player.close();
+    decliningPlayer.close();
   }
 }
 

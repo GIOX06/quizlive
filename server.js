@@ -173,6 +173,8 @@ io.on("connection", (socket) => {
       score: 0,
       streak: 0,
       connected: true,
+      active: true,
+      rematch: null,
       joinedAt: Date.now()
     };
 
@@ -194,6 +196,33 @@ io.on("connection", (socket) => {
     }
     const result = submitAnswer(room, player, Number(payload && payload.answerIndex));
     sendAck(ack, result);
+    emitRoom(room);
+  });
+
+  socket.on("player:rematch", (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+    if (room.status !== "lobby" || player.rematch !== "pending") {
+      sendAck(ack, { ok: false, error: "Invito non attivo" });
+      return;
+    }
+
+    if (payload && payload.accept) {
+      player.active = true;
+      player.rematch = "accepted";
+      player.connected = true;
+      player.joinedAt = Date.now();
+      sendAck(ack, { ok: true });
+      emitRoom(room);
+      return;
+    }
+
+    removePlayer(room, player.id);
+    sendAck(ack, { ok: true, left: true });
     emitRoom(room);
   });
 
@@ -253,6 +282,7 @@ function createRoom(quiz, hostSocketId) {
 
 function startQuestion(room, index) {
   clearRoomTimer(room);
+  removeInactivePlayers(room, "Invito scaduto");
   room.status = "question";
   room.currentIndex = index;
   room.questionStartedAt = Date.now();
@@ -278,22 +308,75 @@ function endGame(room) {
 }
 
 function resetRoom(room) {
+  const invitePreviousPlayers = room.status === "ended";
   clearRoomTimer(room);
   room.status = "lobby";
   room.currentIndex = -1;
   room.questionStartedAt = null;
   room.questionEndsAt = null;
   room.answers.clear();
-  for (const player of room.players.values()) {
-    player.score = 0;
-    player.streak = 0;
+
+  if (invitePreviousPlayers) {
+    inviteRematchPlayers(room);
+  } else {
+    removeInactivePlayers(room, "Sei stato escluso dalla nuova partita");
+    for (const player of activePlayers(room)) {
+      resetPlayerForNewGame(player);
+    }
   }
+
   emitRoom(room);
+}
+
+function inviteRematchPlayers(room) {
+  for (const player of Array.from(room.players.values())) {
+    resetPlayerForNewGame(player);
+    if (!player.connected) {
+      removePlayer(room, player.id);
+      continue;
+    }
+    player.active = false;
+    player.rematch = "pending";
+    player.invitedAt = Date.now();
+  }
+}
+
+function resetPlayerForNewGame(player) {
+  player.score = 0;
+  player.streak = 0;
+}
+
+function activePlayers(room) {
+  return Array.from(room.players.values()).filter((player) => player.active);
+}
+
+function pendingInviteCount(room) {
+  return Array.from(room.players.values()).filter((player) => player.rematch === "pending").length;
+}
+
+function removeInactivePlayers(room, message) {
+  for (const player of Array.from(room.players.values())) {
+    if (!player.active) removePlayer(room, player.id, message);
+  }
+}
+
+function removePlayer(room, playerId, message) {
+  room.players.delete(playerId);
+  const target = io.sockets.sockets.get(playerId);
+  if (!target) return;
+  if (message) target.emit("player:removed", { message, code: room.code });
+  target.leave(roomChannel(room.code));
+  target.data.role = null;
+  target.data.roomCode = null;
+  target.data.playerId = null;
 }
 
 function submitAnswer(room, player, answerIndex) {
   if (room.status !== "question") {
     return { ok: false, error: "Domanda non attiva" };
+  }
+  if (!player.active) {
+    return { ok: false, error: "Non sei in questa partita" };
   }
   if (!Number.isInteger(answerIndex)) {
     return { ok: false, error: "Risposta non valida" };
@@ -381,7 +464,8 @@ function serializeRoom(room, socket) {
     players: role === "host" ? hostPlayers(room, answerMap) : undefined,
     leaderboard: leaderboard(room).slice(0, 10),
     answerCount: answerMap.size,
-    playerCount: room.players.size,
+    playerCount: activePlayers(room).length,
+    pendingInviteCount: role === "host" ? pendingInviteCount(room) : undefined,
     exports: role === "host"
       ? {
           csv: `/api/rooms/${room.code}/export/results.csv`,
@@ -392,7 +476,7 @@ function serializeRoom(room, socket) {
 }
 
 function hostPlayers(room, answerMap) {
-  return Array.from(room.players.values())
+  return activePlayers(room)
     .map((player) => ({
       ...serializePlayer(player, room),
       answered: answerMap.has(player.id)
@@ -409,18 +493,21 @@ function serializePlayer(player, room) {
     score: player.score,
     streak: player.streak,
     connected: player.connected,
+    active: player.active,
+    rematch: player.rematch,
     rank: board.findIndex((item) => item.id === player.id) + 1
   };
 }
 
 function leaderboard(room) {
-  return Array.from(room.players.values())
+  return activePlayers(room)
     .map((player) => ({
       id: player.id,
       nickname: player.nickname,
       score: player.score,
       streak: player.streak,
-      connected: player.connected
+      connected: player.connected,
+      active: player.active
     }))
     .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
 }

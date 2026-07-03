@@ -36,6 +36,10 @@ socket.on("room:state", (room) => {
   render();
 });
 
+socket.on("player:removed", (payload) => {
+  leaveRoomLocally(payload && payload.message ? payload.message : "Sei fuori dalla nuova partita");
+});
+
 loadNetworkConfig();
 
 window.addEventListener("hashchange", () => {
@@ -197,6 +201,9 @@ function renderImportBox() {
 
 function renderHostGame(room) {
   const question = room.question;
+  const pendingText = room.pendingInviteCount
+    ? `${room.playerCount} in lobby - ${room.pendingInviteCount} inviti in attesa`
+    : `${room.playerCount} in lobby o partita`;
   return `
     <section class="game-layout">
       <div class="stage">
@@ -212,7 +219,7 @@ function renderHostGame(room) {
         </div>
         <div>
           <h2 class="section-title">Giocatori</h2>
-          <p class="subtle">${room.playerCount} in lobby o partita</p>
+          <p class="subtle">${escapeHtml(pendingText)}</p>
         </div>
         ${renderHostPlayers(room)}
       </aside>
@@ -225,7 +232,7 @@ function renderHostLobby(room) {
     <div class="panel stack">
       <div>
         <h1 class="section-title">Codice ${escapeHtml(room.code)}</h1>
-        <p class="subtle">Pronto per ${room.totalQuestions} domande.</p>
+        <p class="subtle">${room.pendingInviteCount ? `Inviti inviati: ${room.pendingInviteCount} in attesa.` : `Pronto per ${room.totalQuestions} domande.`}</p>
       </div>
       <div class="qr-panel">
         <img class="qr-code" src="${escapeAttr(qrCodeSrc(room.code))}" alt="QR code ingresso giocatori" />
@@ -267,6 +274,8 @@ function renderHostQuestion(room) {
 
 function renderPlayerGame(room) {
   const question = room.question;
+  if (room.player && room.player.rematch === "pending") return renderPlayerRematch(room);
+  if (room.player && room.player.active === false) return renderPlayerExcluded(room);
   return `
     <section class="game-layout">
       <div class="stage">
@@ -282,6 +291,39 @@ function renderPlayerGame(room) {
         </div>
         ${renderLeaderboard(room)}
       </aside>
+    </section>
+  `;
+}
+
+function renderPlayerRematch(room) {
+  return `
+    <section class="join-shell">
+      <div class="panel join-panel stack">
+        <div>
+          <h1 class="section-title">Giochi un'altra?</h1>
+          <p class="subtle">L'host ha preparato una nuova partita. Conferma per rientrare in lobby.</p>
+        </div>
+        <div class="toolbar">
+          <button class="btn primary" data-action="accept-rematch">Partecipo</button>
+          <button class="btn ghost" data-action="decline-rematch">Salto</button>
+        </div>
+        <p class="subtle">Codice ${escapeHtml(room.code)}</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderPlayerExcluded(room) {
+  return `
+    <section class="join-shell">
+      <div class="panel join-panel stack">
+        <div>
+          <h1 class="section-title">Non sei in questa partita</h1>
+          <p class="subtle">La nuova lobby include solo chi ha accettato l'invito.</p>
+        </div>
+        <button class="btn teal" data-action="leave-room">Torna all'ingresso</button>
+        <p class="subtle">Codice ${escapeHtml(room.code)}</p>
+      </div>
     </section>
   `;
 }
@@ -494,6 +536,9 @@ function handleAction(event) {
   if (action === "next-question") emitHost("host:next");
   if (action === "reset-room") emitHost("host:reset");
   if (action === "answer") answer(Number(target.dataset.answerIndex));
+  if (action === "accept-rematch") respondRematch(true);
+  if (action === "decline-rematch") respondRematch(false);
+  if (action === "leave-room") leaveRoomLocally("Puoi rientrare con codice e nickname");
 }
 
 function addQuestion() {
@@ -607,6 +652,30 @@ function answer(answerIndex) {
       showToast(response && response.error ? response.error : "Risposta non inviata");
     }
   });
+}
+
+function respondRematch(accept) {
+  socket.emit("player:rematch", { accept }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Invito non valido");
+      return;
+    }
+    if (response.left) {
+      leaveRoomLocally("Hai saltato la nuova partita");
+      return;
+    }
+    showToast("Confermato");
+  });
+}
+
+function leaveRoomLocally(message) {
+  const code = local.room && local.room.code;
+  local.room = null;
+  local.selectedAnswer = null;
+  if (code) local.joinCode = code;
+  switchMode("join", true);
+  showToast(message);
+  render();
 }
 
 function cleanQuiz(input) {
