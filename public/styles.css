@@ -529,7 +529,7 @@ textarea {
 
 .screen-code-entry {
   display: grid;
-  grid-template-columns: minmax(12rem, 18rem) auto;
+  grid-template-columns: minmax(12rem, 18rem) auto auto;
   gap: 0.65rem;
   align-items: center;
   justify-content: center;

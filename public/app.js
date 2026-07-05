@@ -30,6 +30,8 @@ let local = {
   playerAccessMode: "same-origin"
 };
 let reconnectingForHostAuth = false;
+let screenPresentationRequest = null;
+let screenPresentationUrl = "";
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -85,6 +87,7 @@ setInterval(() => {
 function render() {
   app.innerHTML = shell(renderMain(), renderTopbar());
   bindEvents();
+  updateScreenPresentationRequest();
 }
 
 function renderTopbar() {
@@ -161,6 +164,7 @@ function renderScreenHome() {
         <div class="screen-code-entry">
           <input data-field="screen-code" inputmode="numeric" maxlength="6" placeholder="Codice stanza" value="${escapeAttr(local.screenCode)}" />
           <button class="btn ghost" data-action="join-screen" ${local.screenJoining ? "disabled" : ""}>Collega codice</button>
+          <button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>
         </div>
       </div>
     </section>
@@ -177,6 +181,7 @@ function renderHostHome() {
         </div>
         <div class="toolbar">
           <button class="btn ghost" data-action="open-waiting-screen">Apri monitor</button>
+          <button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>
           ${local.hostAuth.enabled ? `<button class="btn ghost" data-action="host-logout">Blocca host</button>` : ""}
           <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
         </div>
@@ -409,6 +414,7 @@ function renderHostLobby(room) {
           <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
           <button class="btn ghost" data-action="copy-screen-link">Copia monitor</button>
           <button class="btn ghost" data-action="open-screen-link">Apri monitor</button>
+          <button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>
         </div>
         <p class="qr-note ${playerAccessClass()}">${escapeHtml(playerAccessNotice())}</p>
       </div>
@@ -845,6 +851,7 @@ function handleAction(event) {
   if (action === "open-waiting-screen") openWaitingScreen();
   if (action === "copy-screen-link") copyScreenLink();
   if (action === "open-screen-link") openScreenLink();
+  if (action === "cast-screen") castScreenToTv();
   if (action === "join-screen") joinScreen();
   if (action === "create-room") createRoom();
   if (action === "join-room") joinRoom();
@@ -1118,8 +1125,51 @@ function openScreenLink() {
   window.open(link, "_blank", "noopener,noreferrer");
 }
 
+async function castScreenToTv() {
+  const link = screenLink(local.room && local.room.code);
+  if (!supportsScreenPresentation()) {
+    showToast("Usa Chrome: menu Trasmetti");
+    return;
+  }
+
+  try {
+    const request = createScreenPresentationRequest(link);
+    await request.start();
+    showToast("Monitor inviato alla TV");
+  } catch (error) {
+    const name = error && error.name;
+    if (name === "NotAllowedError" || name === "AbortError") {
+      showToast("Trasmissione annullata");
+      return;
+    }
+    showToast("TV non trovata o non supportata");
+  }
+}
+
 function openWaitingScreen() {
   window.open(`${playerBaseUrl()}/#screen`, "_blank", "noopener,noreferrer");
+}
+
+function updateScreenPresentationRequest() {
+  if (!supportsScreenPresentation()) return;
+  try {
+    const link = screenLink(local.room && local.room.code);
+    if (link === screenPresentationUrl) return;
+    screenPresentationRequest = createScreenPresentationRequest(link);
+    screenPresentationUrl = link;
+    navigator.presentation.defaultRequest = screenPresentationRequest;
+  } catch (error) {
+    screenPresentationRequest = null;
+    screenPresentationUrl = "";
+  }
+}
+
+function createScreenPresentationRequest(link) {
+  return new PresentationRequest([link]);
+}
+
+function supportsScreenPresentation() {
+  return typeof window.PresentationRequest === "function" && Boolean(navigator.presentation);
 }
 
 async function loadNetworkConfig() {

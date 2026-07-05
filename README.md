@@ -66,6 +66,8 @@ The host lobby also has a monitor link for a shared screen:
 http://192.168.1.20:3000/#screen=123456
 ```
 
+On browsers that support the Presentation API, the host can use `Trasmetti TV` to open the native nearby display picker and send the public monitor URL to a Chromecast or compatible display. If the browser does not support this, use Chrome's built-in Cast menu or open the monitor URL directly on the TV browser.
+
 When the host opens the app on `localhost`, QuizLive automatically prefers the Mac LAN address for the QR code so phones do not scan a `localhost` link.
 
 Local/LAN links only work for phones on the same Wi-Fi. For players outside the local network, run QuizLive on a public hosting service or expose it through a tunnel, then set:
