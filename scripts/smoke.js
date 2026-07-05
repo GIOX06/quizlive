@@ -8,10 +8,16 @@ let authCookie = "";
 
 const quiz = {
   title: "Smoke Test",
+  subject: "Science",
+  level: "Grade 7",
+  language: "English",
+  tags: ["smoke", "team"],
+  teamMode: true,
   questions: [
     {
       type: "speed",
       text: "Ready?",
+      imageUrl: "https://example.com/ready.png",
       answers: ["Yes", "No", "Maybe", "Later"],
       correctIndex: 0,
       timeLimit: 8
@@ -76,8 +82,14 @@ async function main() {
     });
     assert.equal(importedQuiz.ok, true);
     assert.equal(importedQuiz.quiz.title, quiz.title);
+    assert.equal(importedQuiz.quiz.subject, "Science");
+    assert.equal(importedQuiz.quiz.level, "Grade 7");
+    assert.equal(importedQuiz.quiz.language, "English");
+    assert.deepEqual(importedQuiz.quiz.tags, ["smoke", "team"]);
+    assert.equal(importedQuiz.quiz.teamMode, true);
     assert.equal(importedQuiz.quiz.questions[0].type, "speed");
     assert.equal(importedQuiz.quiz.questions[0].answers[0], "Yes");
+    assert.equal(importedQuiz.quiz.questions[0].imageUrl, "https://example.com/ready.png");
     assert.equal(importedQuiz.quiz.questions[1].type, "multiple_select");
     assert.deepEqual(importedQuiz.quiz.questions[1].correctIndexes, [0, 1, 3]);
 
@@ -117,7 +129,10 @@ async function main() {
       state.role === "host" &&
       Array.isArray(state.players) &&
       state.players.some((item) => item.nickname === "Smoke Player") &&
-      state.players.some((item) => item.nickname === "Smoke Decliner")
+      state.players.some((item) => item.nickname === "Smoke Decliner") &&
+      state.players.every((item) => item.team) &&
+      Array.isArray(state.teamLeaderboard) &&
+      state.teamLeaderboard.length === 2
     );
 
     const started = await emitAck(host, "host:start", {});
@@ -182,6 +197,8 @@ async function main() {
     const wrongMultiAnswered = await emitAck(decliningPlayer, "player:answer", { answerIndexes: [0, 2, 3] });
     assert.equal(wrongMultiAnswered.ok, true);
     assert.equal(wrongMultiAnswered.correct, false);
+    assert.equal(wrongMultiAnswered.partial, true);
+    assert.ok(wrongMultiAnswered.points > 0);
 
     const multiReveal = await emitAck(host, "host:reveal", {});
     assert.equal(multiReveal.ok, true);

@@ -245,6 +245,24 @@ textarea {
   gap: 0.75rem;
 }
 
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 800;
+}
+
+.toggle-row input {
+  width: auto;
+  accent-color: var(--teal);
+}
+
 .readonly-field {
   min-height: 2.95rem;
   display: flex;
@@ -269,6 +287,21 @@ textarea {
 
 .answer-submit {
   padding: 0 clamp(1rem, 3vw, 1.6rem) clamp(1rem, 3vw, 1.6rem);
+}
+
+.multi-helper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.multi-helper strong {
+  color: var(--teal);
 }
 
 .link-field {
@@ -658,6 +691,28 @@ textarea {
   padding: clamp(1rem, 3vw, 1.6rem);
 }
 
+.question-media {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 clamp(1rem, 3vw, 1.6rem) clamp(1rem, 3vw, 1.6rem);
+}
+
+.question-media img,
+.question-media video,
+.question-media iframe {
+  width: min(100%, 44rem);
+  max-height: 38vh;
+  justify-self: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.question-media iframe {
+  aspect-ratio: 16 / 9;
+}
+
 .question-title {
   margin: 0;
   font-size: clamp(1.55rem, 4vw, 2.6rem);
@@ -770,6 +825,7 @@ textarea {
 }
 
 .answer-btn.selected {
+  grid-template-columns: 2.7rem minmax(0, 1fr) auto;
   outline: 4px solid rgba(23, 32, 38, 0.2);
 }
 
@@ -806,6 +862,18 @@ textarea {
   font-weight: 850;
   line-height: 1.12;
   font-size: clamp(1rem, 3vw, 1.35rem);
+}
+
+.answer-selected-label {
+  min-height: 2rem;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  padding: 0.25rem 0.55rem;
+  background: rgba(255, 255, 255, 0.24);
+  font-size: 0.82rem;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .answer-mark {
@@ -875,6 +943,34 @@ textarea {
 .side-list {
   display: grid;
   gap: 0.6rem;
+}
+
+.team-board {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.team-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid rgba(31, 157, 138, 0.28);
+  border-radius: 8px;
+  background: rgba(31, 157, 138, 0.08);
+}
+
+.team-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.55rem;
+  border-radius: 8px;
+  padding: 0.15rem 0.45rem;
+  background: rgba(31, 157, 138, 0.13);
+  color: #137a6c;
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .player-row,
@@ -1063,6 +1159,7 @@ textarea {
 
   .grid-2,
   .grid-3,
+  .grid-4,
   .answers-grid,
   .archive-grid,
   .podium {

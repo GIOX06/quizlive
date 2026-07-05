@@ -418,6 +418,7 @@ io.on("connection", (socket) => {
     const player = {
       id: socket.id,
       nickname,
+      team: room.quiz.teamMode ? assignTeam(room) : "",
       score: 0,
       streak: 0,
       connected: true,
@@ -697,11 +698,13 @@ function submitAnswer(room, player, payload) {
   }
 
   const answeredAt = Date.now();
-  const isCorrect = sameAnswerSet(answerIndexes, correctIndexes(question));
+  const scoreResult = scoreAnswer(question, answerIndexes);
+  const isCorrect = scoreResult.correct;
+  const isPartial = scoreResult.partial;
   const elapsed = Math.max(0, answeredAt - room.questionStartedAt);
   const duration = Math.max(1, question.timeLimit * 1000);
   const scoreProfile = questionScoreProfile(question.type);
-  const speedBonus = isCorrect ? Math.max(0, Math.round(scoreProfile.speedBonus * (1 - elapsed / duration))) : 0;
+  const speedBonus = scoreResult.ratio > 0 ? Math.max(0, Math.round(scoreProfile.speedBonus * (1 - elapsed / duration))) : 0;
 
   if (isCorrect) {
     player.streak += 1;
@@ -710,7 +713,7 @@ function submitAnswer(room, player, payload) {
   }
 
   const streakBonus = isCorrect ? Math.min(scoreProfile.maxStreakBonus, Math.max(0, (player.streak - 1) * scoreProfile.streakStep)) : 0;
-  const points = isCorrect ? scoreProfile.base + speedBonus + streakBonus : 0;
+  const points = Math.round((scoreProfile.base + speedBonus + streakBonus) * scoreResult.ratio);
   player.score += points;
 
   answerMap.set(player.id, {
@@ -718,12 +721,14 @@ function submitAnswer(room, player, payload) {
     answerIndexes,
     answeredAt,
     correct: isCorrect,
+    partial: isPartial,
+    scoreRatio: scoreResult.ratio,
     points,
     speedBonus,
     streakBonus
   });
 
-  return { ok: true, correct: isCorrect, points };
+  return { ok: true, correct: isCorrect, partial: isPartial, points };
 }
 
 async function emitRoom(room) {
@@ -747,6 +752,11 @@ function serializeRoom(room, socket) {
     role,
     status: room.status,
     title: room.quiz.title,
+    subject: room.quiz.subject,
+    level: room.quiz.level,
+    language: room.quiz.language,
+    tags: room.quiz.tags,
+    teamMode: Boolean(room.quiz.teamMode),
     totalQuestions: room.quiz.questions.length,
     currentIndex: room.currentIndex,
     questionEndsAt: room.questionEndsAt,
@@ -756,6 +766,8 @@ function serializeRoom(room, socket) {
           type: question.type,
           typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
           text: question.text,
+          imageUrl: question.imageUrl,
+          videoUrl: question.videoUrl,
           answers: question.answers.map((answer, index) => ({
             text: answer,
             index,
@@ -772,6 +784,7 @@ function serializeRoom(room, socket) {
       : null,
     players: role === "host" ? hostPlayers(room, answerMap) : undefined,
     leaderboard: leaderboard(room).slice(0, 10),
+    teamLeaderboard: room.quiz.teamMode ? teamLeaderboard(room) : undefined,
     answerCount: answerMap.size,
     playerCount: activePlayers(room).length,
     pendingInviteCount: role === "host" ? pendingInviteCount(room) : undefined,
@@ -799,6 +812,7 @@ function serializePlayer(player, room) {
   return {
     id: player.id,
     nickname: player.nickname,
+    team: player.team || "",
     score: player.score,
     streak: player.streak,
     connected: player.connected,
@@ -813,12 +827,36 @@ function leaderboard(room) {
     .map((player) => ({
       id: player.id,
       nickname: player.nickname,
+      team: player.team || "",
       score: player.score,
       streak: player.streak,
       connected: player.connected,
       active: player.active
     }))
     .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+}
+
+function assignTeam(room) {
+  const teams = ["Rosso", "Blu", "Verde", "Giallo"];
+  const counts = Object.fromEntries(teams.map((team) => [team, 0]));
+  for (const player of activePlayers(room)) {
+    if (player.team && counts[player.team] != null) counts[player.team] += 1;
+  }
+  return teams
+    .slice()
+    .sort((a, b) => counts[a] - counts[b] || teams.indexOf(a) - teams.indexOf(b))[0];
+}
+
+function teamLeaderboard(room) {
+  const teams = new Map();
+  for (const player of activePlayers(room)) {
+    const team = player.team || "Senza team";
+    const current = teams.get(team) || { team, score: 0, playerCount: 0 };
+    current.score += player.score;
+    current.playerCount += 1;
+    teams.set(team, current);
+  }
+  return Array.from(teams.values()).sort((a, b) => b.score - a.score || a.team.localeCompare(b.team));
 }
 
 function countAnswers(answerMap, answerIndex) {
@@ -860,6 +898,21 @@ function sameAnswerSet(left, right) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
+function scoreAnswer(question, answerIndexes) {
+  const selected = uniqueAnswerIndexes(answerIndexes);
+  const correct = correctIndexes(question);
+  if (sameAnswerSet(selected, correct)) {
+    return { correct: true, partial: false, ratio: 1 };
+  }
+  if (question.type === "multiple_select") {
+    const selectedCorrect = selected.filter((index) => correct.includes(index)).length;
+    if (selectedCorrect > 0) {
+      return { correct: false, partial: true, ratio: 0.5 };
+    }
+  }
+  return { correct: false, partial: false, ratio: 0 };
+}
+
 function questionScoreProfile(type) {
   if (type === "speed") {
     return { base: 250, speedBonus: 1000, streakStep: 30, maxStreakBonus: 150 };
@@ -877,13 +930,21 @@ function resultsToJson(room) {
   return {
     code: room.code,
     title: room.quiz.title,
+    subject: room.quiz.subject,
+    level: room.quiz.level,
+    language: room.quiz.language,
+    tags: room.quiz.tags,
+    teamMode: Boolean(room.quiz.teamMode),
     exportedAt: new Date().toISOString(),
     questions: room.quiz.questions.map((question, questionIndex) => ({
       type: question.type,
       text: question.text,
+      imageUrl: question.imageUrl,
+      videoUrl: question.videoUrl,
       answers: question.answers,
       correctIndex: question.correctIndex,
       correctIndexes: correctIndexes(question),
+      stats: questionStats(question, room.answers.get(questionIndex) || new Map(), activePlayers(room).length),
       responses: Array.from(room.answers.get(questionIndex) || new Map()).map(([playerId, answer]) => {
         const player = room.players.get(playerId);
         return {
@@ -893,18 +954,21 @@ function resultsToJson(room) {
           answerIndexes: answer.answerIndexes || [answer.answerIndex],
           answerText: answerTextForIndexes(question, answer.answerIndexes || [answer.answerIndex]),
           correct: answer.correct,
+          partial: Boolean(answer.partial),
+          scoreRatio: Number(answer.scoreRatio || 0),
           points: answer.points,
           answeredAt: new Date(answer.answeredAt).toISOString()
         };
       })
     })),
-    leaderboard: leaderboard(room)
+    leaderboard: leaderboard(room),
+    teamLeaderboard: room.quiz.teamMode ? teamLeaderboard(room) : []
   };
 }
 
 function resultsToCsv(room) {
   const rows = [
-    ["Rank", "Nickname", "Score", "Streak", ...room.quiz.questions.flatMap((_question, index) => [
+    ["Rank", "Nickname", "Team", "Score", "Streak", ...room.quiz.questions.flatMap((_question, index) => [
       `Q${index + 1} Answer`,
       `Q${index + 1} Correct`,
       `Q${index + 1} Points`
@@ -915,6 +979,7 @@ function resultsToCsv(room) {
     const row = [
       playerIndex + 1,
       player.nickname,
+      player.team || "",
       player.score,
       player.streak
     ];
@@ -922,7 +987,7 @@ function resultsToCsv(room) {
       const answer = room.answers.get(questionIndex) && room.answers.get(questionIndex).get(player.id);
       row.push(
         answer ? answerTextForIndexes(question, answer.answerIndexes || [answer.answerIndex]) : "",
-        answer ? (answer.correct ? "yes" : "no") : "",
+        answer ? answerOutcome(answer) : "",
         answer ? answer.points : 0
       );
     });
@@ -1038,6 +1103,11 @@ function resultFromRoom(room) {
     id: createArchiveId("result"),
     code: room.code,
     title: room.quiz.title,
+    subject: room.quiz.subject,
+    level: room.quiz.level,
+    language: room.quiz.language,
+    tags: room.quiz.tags,
+    teamMode: Boolean(room.quiz.teamMode),
     createdAt: new Date(room.createdAt).toISOString(),
     endedAt,
     quiz: room.quiz,
@@ -1046,9 +1116,12 @@ function resultFromRoom(room) {
       return {
         type: question.type,
         text: question.text,
+        imageUrl: question.imageUrl,
+        videoUrl: question.videoUrl,
         answers: question.answers,
         correctIndex: question.correctIndex,
         correctIndexes: correctIndexes(question),
+        stats: questionStats(question, answerMap, board.length),
         responses: Array.from(answerMap).map(([playerId, answer]) => {
           const player = room.players.get(playerId);
           return {
@@ -1058,19 +1131,22 @@ function resultFromRoom(room) {
             answerIndexes: answer.answerIndexes || [answer.answerIndex],
             answerText: answerTextForIndexes(question, answer.answerIndexes || [answer.answerIndex]),
             correct: answer.correct,
+            partial: Boolean(answer.partial),
+            scoreRatio: Number(answer.scoreRatio || 0),
             points: answer.points,
             answeredAt: new Date(answer.answeredAt).toISOString()
           };
         })
       };
     }),
-    leaderboard: board
+    leaderboard: board,
+    teamLeaderboard: room.quiz.teamMode ? teamLeaderboard(room) : []
   };
 }
 
 function resultToCsv(result) {
   const rows = [
-    ["Rank", "Nickname", "Score", "Streak", ...result.questions.flatMap((_question, index) => [
+    ["Rank", "Nickname", "Team", "Score", "Streak", ...result.questions.flatMap((_question, index) => [
       `Q${index + 1} Answer`,
       `Q${index + 1} Correct`,
       `Q${index + 1} Points`
@@ -1081,6 +1157,7 @@ function resultToCsv(result) {
     const row = [
       player.rank || playerIndex + 1,
       player.nickname,
+      player.team || "",
       player.score,
       player.streak
     ];
@@ -1089,7 +1166,7 @@ function resultToCsv(result) {
       const answer = question.responses.find((item) => item.playerId === player.id);
       row.push(
         answer ? answer.answerText : "",
-        answer ? (answer.correct ? "yes" : "no") : "",
+        answer ? answerOutcome(answer) : "",
         answer ? answer.points : 0
       );
     });
@@ -1107,13 +1184,41 @@ function answerTextForIndexes(question, indexes) {
     .join("; ");
 }
 
+function questionStats(question, answerMap, playerCount) {
+  const answers = Array.from(answerMap.values());
+  const correct = answers.filter((answer) => answer.correct).length;
+  const partial = answers.filter((answer) => answer.partial).length;
+  const responseCount = answers.length;
+  return {
+    responseCount,
+    correctCount: correct,
+    partialCount: partial,
+    wrongCount: Math.max(0, responseCount - correct - partial),
+    answerRate: playerCount ? Math.round((responseCount / playerCount) * 100) : 0,
+    accuracy: responseCount ? Math.round(((correct + partial * 0.5) / responseCount) * 100) : 0,
+    selectionCount: selectionCount(question)
+  };
+}
+
+function answerOutcome(answer) {
+  if (!answer) return "";
+  if (answer.correct) return "yes";
+  if (answer.partial) return "partial";
+  return "no";
+}
+
 function quizToWorkbook(quiz, isTemplate) {
   const normalizedQuiz = normalizeQuiz(isTemplate ? templateQuiz() : quiz);
   const rows = [
     ["QuizLive - quiz"],
     ["Titolo", normalizedQuiz.title],
+    ["Materia", normalizedQuiz.subject],
+    ["Livello", normalizedQuiz.level],
+    ["Lingua", normalizedQuiz.language],
+    ["Tag", normalizedQuiz.tags.join(", ")],
+    ["Team mode", normalizedQuiz.teamMode ? "si" : "no"],
     [],
-    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Corretta", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
+    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Corretta", "Immagine URL", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
   ];
 
   normalizedQuiz.questions.forEach((question, index) => {
@@ -1123,6 +1228,8 @@ function quizToWorkbook(quiz, isTemplate) {
       question.text,
       question.timeLimit,
       correctIndexes(question).map((answerIndex) => answerLetters[answerIndex] || "A").join(","),
+      question.imageUrl || "",
+      question.videoUrl || "",
       ...Array.from({ length: 6 }, (_item, answerIndex) => question.answers[answerIndex] || "")
     ]);
   });
@@ -1135,6 +1242,8 @@ function quizToWorkbook(quiz, isTemplate) {
     { wch: 44 },
     { wch: 14 },
     { wch: 10 },
+    { wch: 34 },
+    { wch: 34 },
     { wch: 22 },
     { wch: 22 },
     { wch: 22 },
@@ -1147,8 +1256,11 @@ function quizToWorkbook(quiz, isTemplate) {
   const instructions = XLSX.utils.aoa_to_sheet([
     ["Come compilare"],
     ["Titolo", "Scrivi il titolo nella cella B2 del foglio QuizLive."],
+    ["Materia/Livello/Lingua/Tag", "Usa questi campi per ordinare la libreria quiz."],
+    ["Team mode", "Scrivi si per dividere automaticamente i giocatori in squadre."],
     ["Tipo", "Usa multipla, vero_falso, veloce oppure risposte_multiple."],
     ["Corretta", "Scrivi A, B, C, D, E o F. Per risposte_multiple usa piu lettere, ad esempio A,C."],
+    ["Media", "Immagine URL e Video URL accettano link http/https pubblici."],
     ["Vero/Falso", "Per vero_falso usa A per Vero oppure B per Falso. Le risposte verranno normalizzate."],
     ["Limiti", "Massimo 50 domande, 2-6 risposte, tempo da 5 a 90 secondi."]
   ]);
@@ -1162,6 +1274,11 @@ function workbookToQuiz(workbook) {
   if (!sheetName) throw new Error("Il file XLSX non contiene fogli");
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
   const titleRow = rows.find((row) => normalizeCell(row[0]) === "titolo");
+  const subjectRow = rows.find((row) => normalizeCell(row[0]) === "materia");
+  const levelRow = rows.find((row) => normalizeCell(row[0]) === "livello");
+  const languageRow = rows.find((row) => normalizeCell(row[0]) === "lingua");
+  const tagsRow = rows.find((row) => normalizeCell(row[0]) === "tag");
+  const teamModeRow = rows.find((row) => normalizeCell(row[0]) === "team_mode");
   const title = String(titleRow && titleRow[1] || "QuizLive").trim().slice(0, 80) || "QuizLive";
   const headerIndex = rows.findIndex((row) =>
     row.some((cell) => normalizeCell(cell) === "domanda") &&
@@ -1175,6 +1292,8 @@ function workbookToQuiz(workbook) {
   const textIndex = indexFor("domanda", "testo_domanda");
   const timeIndex = indexFor("tempo_secondi", "tempo", "secondi");
   const correctIndex = indexFor("corretta", "risposta_corretta");
+  const imageIndex = indexFor("immagine_url", "image_url", "immagine");
+  const videoIndex = indexFor("video_url", "video");
   const answerIndexes = ["risposta_a", "risposta_b", "risposta_c", "risposta_d", "risposta_e", "risposta_f"].map((name) => indexFor(name));
 
   const questions = rows.slice(headerIndex + 1).map((row, index) => {
@@ -1188,13 +1307,23 @@ function workbookToQuiz(workbook) {
     return {
       type,
       text,
+      imageUrl: row[imageIndex] || "",
+      videoUrl: row[videoIndex] || "",
       answers: normalizedAnswers,
       correctIndexes: parseCorrectIndexes(row[correctIndex], normalizedAnswers, type),
       timeLimit: Number(row[timeIndex]) || 20
     };
   }).filter(Boolean);
 
-  return normalizeQuiz({ title, questions });
+  return normalizeQuiz({
+    title,
+    subject: subjectRow && subjectRow[1],
+    level: levelRow && levelRow[1],
+    language: languageRow && languageRow[1],
+    tags: tagsRow && tagsRow[1],
+    teamMode: yesValue(teamModeRow && teamModeRow[1]),
+    questions
+  });
 }
 
 function questionTypeForWorkbook(type) {
@@ -1247,6 +1376,11 @@ function normalizeCell(value) {
     .replace(/-/g, "_");
 }
 
+function yesValue(value) {
+  const key = normalizeCell(value);
+  return key === "si" || key === "sì" || key === "yes" || key === "true" || key === "1";
+}
+
 function sendWorkbook(res, workbook, filename) {
   const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
   res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -1267,6 +1401,11 @@ function safeWorkbookName(title) {
 function templateQuiz() {
   return {
     title: "QuizLive modello",
+    subject: "Materia",
+    level: "Classe o livello",
+    language: "Italiano",
+    tags: ["modello", "ripasso"],
+    teamMode: false,
     questions: [
       {
         type: "multiple",
@@ -1634,6 +1773,11 @@ function getPlayerRoom(socket) {
 function normalizeQuiz(input) {
   const source = input && typeof input === "object" ? input : defaultQuiz();
   const title = String(source.title || "QuizLive").trim().slice(0, 80) || "QuizLive";
+  const subject = normalizeShortText(source.subject, 40);
+  const level = normalizeShortText(source.level, 40);
+  const language = normalizeShortText(source.language || "Italiano", 32) || "Italiano";
+  const tags = normalizeTags(source.tags);
+  const teamMode = Boolean(source.teamMode);
   const questions = Array.isArray(source.questions) ? source.questions : [];
   const normalizedQuestions = questions.slice(0, 50).map((item, index) => normalizeQuestion(item, index));
 
@@ -1641,7 +1785,7 @@ function normalizeQuiz(input) {
     throw new Error("Il quiz deve avere almeno una domanda");
   }
 
-  return { title, questions: normalizedQuestions };
+  return { title, subject, level, language, tags, teamMode, questions: normalizedQuestions };
 }
 
 function normalizeQuestion(item, index) {
@@ -1669,11 +1813,36 @@ function normalizeQuestion(item, index) {
   return {
     type,
     text,
+    imageUrl: normalizeMediaUrl(item && item.imageUrl),
+    videoUrl: normalizeMediaUrl(item && item.videoUrl),
     answers: normalizedAnswers,
     correctIndex,
     correctIndexes: normalizedCorrectIndexes,
     timeLimit
   };
+}
+
+function normalizeShortText(value, maxLength) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function normalizeTags(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,;]+/);
+  return Array.from(new Set(raw
+    .map((tag) => normalizeShortText(tag, 24))
+    .filter(Boolean)))
+    .slice(0, 8);
+}
+
+function normalizeMediaUrl(value) {
+  const raw = normalizeShortText(value, 500);
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch (error) {
+    return "";
+  }
 }
 
 function normalizeCorrectIndexes(item, answers, type) {
@@ -1825,6 +1994,11 @@ function sendAck(ack, payload) {
 function defaultQuiz() {
   return {
     title: "Demo QuizLive",
+    subject: "Tecnologia",
+    level: "Demo",
+    language: "Italiano",
+    tags: ["demo", "live"],
+    teamMode: false,
     questions: [
       {
         type: "multiple",

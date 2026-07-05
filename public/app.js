@@ -27,6 +27,7 @@ let local = {
   importText: "",
   savedQuizzes: [],
   savedResults: [],
+  archiveSearch: "",
   currentQuizId: null,
   joinCode: initialJoinCode(),
   screenCode: initialScreenCode(),
@@ -207,6 +208,7 @@ function renderHostHome() {
         ${renderQuizBuilder()}
         <div class="toolbar">
           <button class="btn primary" data-action="create-room">Crea stanza</button>
+          <button class="btn gold" data-action="quick-start-room">Avvia subito</button>
           <button class="btn teal" data-action="save-quiz">Salva quiz</button>
           <button class="btn ghost" data-action="add-question">Aggiungi domanda</button>
           <button class="btn ghost" data-action="toggle-import">Import XLSX</button>
@@ -263,6 +265,28 @@ function renderQuizBuilder() {
         <span>Titolo</span>
         <input data-quiz-title value="${escapeAttr(local.quiz.title)}" maxlength="80" />
       </label>
+      <div class="grid-4">
+        <label class="stack">
+          <span>Materia</span>
+          <input data-quiz-meta="subject" value="${escapeAttr(local.quiz.subject || "")}" maxlength="40" placeholder="Es. Matematica" />
+        </label>
+        <label class="stack">
+          <span>Livello/Classe</span>
+          <input data-quiz-meta="level" value="${escapeAttr(local.quiz.level || "")}" maxlength="40" placeholder="Es. 2 media" />
+        </label>
+        <label class="stack">
+          <span>Lingua</span>
+          <input data-quiz-meta="language" value="${escapeAttr(local.quiz.language || "Italiano")}" maxlength="32" />
+        </label>
+        <label class="stack">
+          <span>Tag</span>
+          <input data-quiz-tags value="${escapeAttr((local.quiz.tags || []).join(", "))}" maxlength="160" placeholder="ripasso, verifica" />
+        </label>
+      </div>
+      <label class="toggle-row">
+        <input data-quiz-team-mode type="checkbox" ${local.quiz.teamMode ? "checked" : ""} />
+        <span>Team mode: dividi automaticamente i giocatori in squadre</span>
+      </label>
       ${local.quiz.questions.map(renderQuestionEditor).join("")}
     </div>
   `;
@@ -284,6 +308,16 @@ function renderQuestionEditor(question, questionIndex) {
         <span>Testo domanda</span>
         <textarea data-question-text data-question-index="${questionIndex}" maxlength="240">${escapeHtml(question.text)}</textarea>
       </label>
+      <div class="grid-2">
+        <label class="stack">
+          <span>Immagine URL</span>
+          <input data-question-media="imageUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.imageUrl || "")}" maxlength="500" placeholder="https://..." />
+        </label>
+        <label class="stack">
+          <span>Video URL</span>
+          <input data-question-media="videoUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.videoUrl || "")}" maxlength="500" placeholder="https://..." />
+        </label>
+      </div>
       <div class="grid-3">
         <label class="stack">
           <span>Tipo</span>
@@ -349,6 +383,7 @@ function renderArchiveBox() {
         </div>
         <button class="btn small ghost" data-action="refresh-archive" ${local.archiveLoading ? "disabled" : ""}>Aggiorna</button>
       </div>
+      <input data-archive-search value="${escapeAttr(local.archiveSearch)}" placeholder="Cerca titolo, materia, livello, lingua o tag" />
       ${local.archiveLoading ? `<div class="empty compact">Caricamento archivio...</div>` : `
         <div class="archive-grid">
           <section class="stack">
@@ -366,17 +401,19 @@ function renderArchiveBox() {
 }
 
 function renderSavedQuizzes() {
-  if (!local.savedQuizzes.length) return `<div class="empty compact">Nessun quiz salvato</div>`;
+  const quizzes = filteredSavedQuizzes();
+  if (!quizzes.length) return `<div class="empty compact">Nessun quiz salvato</div>`;
   return `
     <div class="archive-list">
-      ${local.savedQuizzes.map((item) => `
+      ${quizzes.map((item) => `
         <article class="archive-item">
           <div>
             <strong>${escapeHtml(item.title)}</strong>
-            <p class="subtle">${item.questionCount} domande - ${formatDate(item.updatedAt)}</p>
+            <p class="subtle">${renderQuizMetaLine(item.quiz)}${item.questionCount} domande - ${formatDate(item.updatedAt)}</p>
           </div>
           <div class="toolbar">
             <button class="btn small ghost" data-action="load-saved-quiz" data-quiz-id="${escapeAttr(item.id)}">Carica</button>
+            <button class="btn small ghost" data-action="duplicate-saved-quiz" data-quiz-id="${escapeAttr(item.id)}">Duplica</button>
             <button class="btn small ghost danger" data-action="delete-saved-quiz" data-quiz-id="${escapeAttr(item.id)}">Elimina</button>
           </div>
         </article>
@@ -406,6 +443,29 @@ function renderSavedResults() {
   `;
 }
 
+function filteredSavedQuizzes() {
+  const query = normalizeSearch(local.archiveSearch);
+  if (!query) return local.savedQuizzes;
+  return local.savedQuizzes.filter((item) => normalizeSearch([
+    item.title,
+    item.quiz && item.quiz.subject,
+    item.quiz && item.quiz.level,
+    item.quiz && item.quiz.language,
+    item.quiz && Array.isArray(item.quiz.tags) ? item.quiz.tags.join(" ") : ""
+  ].join(" ")).includes(query));
+}
+
+function renderQuizMetaLine(quiz) {
+  const parts = [
+    quiz && quiz.subject,
+    quiz && quiz.level,
+    quiz && quiz.language,
+    quiz && quiz.teamMode ? "Team mode" : ""
+  ].filter(Boolean);
+  const tags = quiz && Array.isArray(quiz.tags) ? quiz.tags : [];
+  return `${[...parts, ...tags.map((tag) => `#${tag}`)].map(escapeHtml).join(" - ")}${parts.length || tags.length ? " - " : ""}`;
+}
+
 function renderHostGame(room) {
   const question = room.question;
   const pendingText = room.pendingInviteCount
@@ -429,6 +489,7 @@ function renderHostGame(room) {
           <h2 class="section-title">Giocatori</h2>
           <p class="subtle">${escapeHtml(pendingText)}</p>
         </div>
+        ${renderTeamLeaderboard(room)}
         ${renderHostPlayers(room)}
       </aside>
     </section>
@@ -488,6 +549,7 @@ function renderScreenLobby(room) {
           <span class="status-pill ${playerAccessClass()}">${escapeHtml(playerBaseLabel())}</span>
           <span class="status-pill">${room.playerCount} giocatori</span>
           <span class="status-pill">${room.totalQuestions} domande</span>
+          ${room.teamMode ? `<span class="status-pill">Team mode</span>` : ""}
         </div>
       </div>
     </div>
@@ -508,6 +570,7 @@ function renderScreenQuestion(room) {
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
+      ${renderQuestionMedia(question)}
       <div class="answers-grid screen-answers">
         ${question.answers.map(renderAnswerDisplay).join("")}
       </div>
@@ -528,6 +591,7 @@ function renderScreenReveal(room) {
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
+      ${renderQuestionMedia(question)}
       <div class="answers-grid screen-answers">
         ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
       </div>
@@ -547,10 +611,43 @@ function renderScreenEnded(room) {
         ${renderPodium(room)}
       </div>
       <div class="screen-final-board">
+        ${renderTeamLeaderboard(room)}
         ${renderLeaderboard(room)}
       </div>
     </div>
   `;
+}
+
+function renderQuestionMedia(question) {
+  const imageUrl = question && question.imageUrl ? String(question.imageUrl) : "";
+  const videoUrl = question && question.videoUrl ? String(question.videoUrl) : "";
+  if (!imageUrl && !videoUrl) return "";
+  const videoEmbed = videoUrl ? videoEmbedUrl(videoUrl) : "";
+  return `
+    <div class="question-media">
+      ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="" loading="lazy" />` : ""}
+      ${videoUrl ? videoEmbed
+        ? `<iframe src="${escapeAttr(videoEmbed)}" title="Video domanda" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`
+        : `<video src="${escapeAttr(videoUrl)}" controls playsinline></video>` : ""}
+    </div>
+  `;
+}
+
+function videoEmbedUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.includes("youtube.com")) {
+      const id = parsed.searchParams.get("v");
+      return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}` : "";
+    }
+    if (parsed.hostname === "youtu.be") {
+      const id = parsed.pathname.replace(/^\//, "");
+      return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}` : "";
+    }
+  } catch (error) {
+    return "";
+  }
+  return "";
 }
 
 function renderTimer(room) {
@@ -573,10 +670,17 @@ function renderSelectionPill(question) {
 function renderSubmitMultiple(question) {
   const required = selectionCount(question);
   const selected = local.selectedAnswers.length;
+  const missing = Math.max(0, required - selected);
   return `
-    <div class="toolbar answer-submit">
-      <button class="btn primary" data-action="submit-multiple-answer" ${selected !== required ? "disabled" : ""}>Invia risposte</button>
-      <span class="subtle">${selected}/${required} selezionate</span>
+    <div class="answer-submit stack">
+      <div class="multi-helper">
+        <strong>${selected}/${required} selezionate</strong>
+        <span>${missing ? `Scegline ancora ${missing}` : "Puoi inviare adesso"}</span>
+      </div>
+      <div class="toolbar">
+        <button class="btn primary" data-action="submit-multiple-answer" ${selected !== required ? "disabled" : ""}>Invia risposte</button>
+        <span class="subtle">Tocca una risposta selezionata per deselezionarla.</span>
+      </div>
     </div>
   `;
 }
@@ -595,6 +699,7 @@ function renderHostQuestion(room) {
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
+      ${renderQuestionMedia(question)}
       <div class="answers-grid">
         ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
       </div>
@@ -666,6 +771,7 @@ function renderPlayerWaiting(room) {
     <div class="panel stack">
       <h1 class="section-title">Sei dentro</h1>
       <p class="subtle">Codice ${escapeHtml(room.code)} - in attesa dell'host.</p>
+      ${room.player && room.player.team ? `<span class="team-pill">${escapeHtml(room.player.team)}</span>` : ""}
     </div>
   `;
 }
@@ -684,6 +790,7 @@ function renderPlayerQuestion(room) {
           ${question.answered ? `<span class="status-pill">Risposta inviata</span>` : ""}
         </div>
       </div>
+      ${renderQuestionMedia(question)}
       <div class="answers-grid">
         ${question.answers.map((answer) => renderAnswerButton(answer, question)).join("")}
       </div>
@@ -696,18 +803,20 @@ function renderReveal(room, isHost) {
   const question = room.question;
   const playerAnswer = question.playerAnswer;
   const correct = playerAnswer && playerAnswer.correct;
+  const partial = playerAnswer && playerAnswer.partial;
   return `
     <article class="question-card">
       <div class="question-main">
         <h1 class="question-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
-          <span class="status-pill">${correct ? "Corretta" : isHost ? "Risultati" : "Risposta mostrata"}</span>
+          <span class="status-pill">${correct ? "Corretta" : partial ? "Parziale" : isHost ? "Risultati" : "Risposta mostrata"}</span>
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           ${renderSelectionPill(question)}
           ${playerAnswer ? `<span class="status-pill">+${playerAnswer.points} punti</span>` : ""}
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
+      ${renderQuestionMedia(question)}
       <div class="answers-grid">
         ${question.answers.map((answer) => isHost ? renderAnswerStat(answer, room.playerCount) : renderAnswerButton(answer, question, true)).join("")}
       </div>
@@ -723,6 +832,7 @@ function renderEnded(room, isHost) {
         <h1 class="section-title">Classifica finale</h1>
         <p class="subtle">${escapeHtml(room.title)}</p>
       </div>
+      ${renderTeamLeaderboard(room)}
       ${renderPodium(room)}
       ${renderLeaderboard(room)}
       ${isHost ? `<div class="toolbar"><button class="btn ghost" data-action="reset-room">Nuova partita</button></div>` : ""}
@@ -769,7 +879,7 @@ function renderHostPlayers(room) {
       ${room.players.map((player) => `
         <div class="player-row">
           <span class="dot ${player.answered ? "answered" : player.connected ? "on" : ""}"></span>
-          <span class="name">${escapeHtml(player.nickname)}</span>
+          <span class="name">${escapeHtml(player.nickname)} ${player.team ? `<span class="team-pill">${escapeHtml(player.team)}</span>` : ""}</span>
           <span class="score">${player.score}</span>
         </div>
       `).join("")}
@@ -785,8 +895,23 @@ function renderLeaderboard(room) {
       ${room.leaderboard.map((player, index) => `
         <div class="leader-row ${player.id === selfId ? "self" : ""}">
           <span class="rank">${index + 1}</span>
-          <span class="name">${escapeHtml(player.nickname)}</span>
+          <span class="name">${escapeHtml(player.nickname)} ${player.team ? `<span class="team-pill">${escapeHtml(player.team)}</span>` : ""}</span>
           <span class="score">${player.score}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderTeamLeaderboard(room) {
+  if (!room.teamLeaderboard || !room.teamLeaderboard.length) return "";
+  return `
+    <div class="team-board">
+      ${room.teamLeaderboard.map((item, index) => `
+        <div class="team-row">
+          <span class="rank">${index + 1}</span>
+          <span class="name">${escapeHtml(item.team)} <span class="subtle">${item.playerCount} giocatori</span></span>
+          <span class="score">${item.score}</span>
         </div>
       `).join("")}
     </div>
@@ -812,6 +937,7 @@ function renderAnswerButton(answer, question, reveal = false) {
       ${question.answered || reveal ? "disabled" : ""}>
       <span class="letter">${answerLetters[answer.index]}</span>
       <span class="answer-text">${escapeHtml(answer.text)}</span>
+      ${question.type === "multiple_select" && selected && !reveal ? `<span class="answer-selected-label">Selezionata</span>` : ""}
       ${renderAnswerMark(answer.correct, hasMark)}
     </button>
   `;
@@ -853,14 +979,41 @@ function bindEvents() {
       local.quiz.title = element.value;
     });
   });
+  document.querySelectorAll("[data-quiz-meta]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.quiz[element.dataset.quizMeta] = element.value;
+    });
+  });
+  document.querySelectorAll("[data-quiz-tags]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.quiz.tags = parseTags(element.value);
+    });
+  });
+  document.querySelectorAll("[data-quiz-team-mode]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.quiz.teamMode = element.checked;
+    });
+  });
   document.querySelectorAll("[data-question-text]").forEach((element) => {
     element.addEventListener("input", () => {
       local.quiz.questions[Number(element.dataset.questionIndex)].text = element.value;
     });
   });
+  document.querySelectorAll("[data-question-media]").forEach((element) => {
+    element.addEventListener("input", () => {
+      const question = local.quiz.questions[Number(element.dataset.questionIndex)];
+      question[element.dataset.questionMedia] = element.value;
+    });
+  });
   document.querySelectorAll("[data-question-time]").forEach((element) => {
     element.addEventListener("input", () => {
       local.quiz.questions[Number(element.dataset.questionIndex)].timeLimit = Number(element.value);
+    });
+  });
+  document.querySelectorAll("[data-archive-search]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.archiveSearch = element.value;
+      render();
     });
   });
   document.querySelectorAll("[data-question-type]").forEach((element) => {
@@ -968,6 +1121,7 @@ function handleAction(event) {
   if (action === "apply-import-xlsx") importQuizXlsx();
   if (action === "save-quiz") saveQuiz();
   if (action === "load-saved-quiz") loadSavedQuiz(target.dataset.quizId);
+  if (action === "duplicate-saved-quiz") duplicateSavedQuiz(target.dataset.quizId);
   if (action === "delete-saved-quiz") deleteSavedQuiz(target.dataset.quizId);
   if (action === "delete-saved-result") deleteSavedResult(target.dataset.resultId);
   if (action === "download-quiz") downloadJson("quizlive-quiz.json", cleanQuiz(local.quiz));
@@ -989,6 +1143,7 @@ function handleAction(event) {
   if (action === "disconnect-screen-cast") disconnectScreenFromTv();
   if (action === "join-screen") joinScreen();
   if (action === "create-room") createRoom();
+  if (action === "quick-start-room") createRoom(true);
   if (action === "join-room") joinRoom();
   if (action === "start-game") emitHost("host:start");
   if (action === "reveal-question") emitHost("host:reveal");
@@ -1188,6 +1343,21 @@ function loadSavedQuiz(id) {
   render();
 }
 
+function duplicateSavedQuiz(id) {
+  const item = local.savedQuizzes.find((quiz) => quiz.id === id);
+  if (!item || !item.quiz) {
+    showToast("Quiz non trovato");
+    return;
+  }
+  local.quiz = cleanQuiz({
+    ...item.quiz,
+    title: `${item.quiz.title || item.title} copia`
+  });
+  local.currentQuizId = null;
+  showToast("Quiz duplicato come bozza");
+  render();
+}
+
 async function deleteSavedQuiz(id) {
   if (!id) return;
   try {
@@ -1221,7 +1391,7 @@ async function deleteSavedResult(id) {
   }
 }
 
-function createRoom() {
+function createRoom(quickStart = false) {
   if (!hostAccessGranted()) {
     showToast("Password host richiesta");
     render();
@@ -1240,6 +1410,7 @@ function createRoom() {
     }
     switchMode("host", true);
     showToast(`Stanza ${response.code} creata`);
+    if (quickStart) emitHost("host:start");
   });
 }
 
@@ -1654,6 +1825,11 @@ function cleanQuiz(input) {
   const questions = Array.isArray(source.questions) ? source.questions : [];
   return {
     title: String(source.title || "QuizLive").trim().slice(0, 80) || "QuizLive",
+    subject: String(source.subject || "").trim().slice(0, 40),
+    level: String(source.level || "").trim().slice(0, 40),
+    language: String(source.language || "Italiano").trim().slice(0, 32) || "Italiano",
+    tags: parseTags(source.tags),
+    teamMode: Boolean(source.teamMode),
     questions: questions.map((question, index) => {
       const type = normalizeQuestionType(question.type);
       const answers = (type === "true_false" ? ["Vero", "Falso"] : paddedAnswers(question.answers))
@@ -1664,6 +1840,8 @@ function cleanQuiz(input) {
       return {
         type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
+        imageUrl: normalizeMediaUrl(question.imageUrl),
+        videoUrl: normalizeMediaUrl(question.videoUrl),
         answers,
         correctIndex: correctIndexes[0] || 0,
         correctIndexes,
@@ -1710,6 +1888,29 @@ function selectionCount(question) {
   return normalizeQuestionType(question.type) === "multiple_select"
     ? correctIndexesForQuestion(question, answers).length
     : 1;
+}
+
+function parseTags(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,;]+/);
+  return Array.from(new Set(raw
+    .map((tag) => String(tag || "").trim().slice(0, 24))
+    .filter(Boolean)))
+    .slice(0, 8);
+}
+
+function normalizeMediaUrl(value) {
+  const raw = String(value || "").trim().slice(0, 500);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function normalizeSearch(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function normalizeQuestionType(type) {
@@ -1931,6 +2132,11 @@ function escapeAttr(value) {
 function defaultQuiz() {
   return {
     title: "Demo QuizLive",
+    subject: "Tecnologia",
+    level: "Demo",
+    language: "Italiano",
+    tags: ["demo", "live"],
+    teamMode: false,
     questions: [
       {
         type: "multiple",
