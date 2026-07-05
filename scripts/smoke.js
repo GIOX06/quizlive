@@ -46,7 +46,7 @@ async function main() {
 
   const host = createSocket(true);
   const screen = createSocket(false);
-  const player = createSocket(false);
+  let player = createSocket(false);
   const decliningPlayer = createSocket(false);
 
   try {
@@ -118,6 +118,7 @@ async function main() {
       nickname: "Smoke Player"
     });
     assert.equal(joined.ok, true);
+    assert.match(joined.sessionToken, /^[a-f0-9]{48}$/);
 
     const decliningJoined = await emitAck(decliningPlayer, "player:join", {
       code: created.code,
@@ -158,6 +159,40 @@ async function main() {
     assert.equal(answered.correct, true);
 
     await waitForState(host, (state) => state.status === "question" && state.answerCount === 1);
+
+    player.close();
+    await waitForState(host, (state) =>
+      state.status === "question" &&
+      state.players.some((item) => item.nickname === "Smoke Player" && item.connected === false)
+    );
+
+    const rejoinedPlayer = createSocket(false);
+    await waitForConnect(rejoinedPlayer);
+    rejoinedPlayer.on("room:state", (state) => {
+      rejoinedPlayer.latestState = state;
+    });
+    const rejoined = await emitAck(rejoinedPlayer, "player:join", {
+      code: created.code,
+      nickname: "Smoke Player",
+      sessionToken: joined.sessionToken
+    });
+    assert.equal(rejoined.ok, true);
+    assert.equal(rejoined.rejoined, true);
+    assert.notEqual(rejoined.playerId, joined.playerId);
+    player = rejoinedPlayer;
+
+    await waitForState(player, (state) =>
+      state.role === "player" &&
+      state.status === "question" &&
+      state.question &&
+      state.question.answered === true
+    );
+    await waitForState(host, (state) =>
+      state.status === "question" &&
+      state.answerCount === 1 &&
+      state.players.filter((item) => item.nickname === "Smoke Player").length === 1 &&
+      state.players.some((item) => item.nickname === "Smoke Player" && item.connected === true)
+    );
 
     const revealed = await emitAck(host, "host:reveal", {});
     assert.equal(revealed.ok, true);

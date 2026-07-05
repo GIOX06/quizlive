@@ -6,6 +6,7 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 
 - Host creates a room with a 6 digit code.
 - Players join from any phone browser with code and nickname without seeing the host quiz builder.
+- Player phones can recover the same seat after a refresh or temporary network drop.
 - A public monitor view can show the lobby QR code, questions, answer reveal, and leaderboard on a TV or projector.
 - Host lobby shows a QR code for quick player entry.
 - Questions run in realtime with a server-side timer.
@@ -159,7 +160,6 @@ Then redeploy. QR codes and copied player links will use the custom public URL.
 For a production version, the next useful upgrades are:
 
 - user accounts for hosts
-- room reconnection by session token
 - media uploads for questions
 - public/private quiz library
 - Dockerfile for consistent deployment

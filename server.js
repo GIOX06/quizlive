@@ -432,14 +432,25 @@ io.on("connection", (socket) => {
       sendAck(ack, { ok: false, error: "Partita non trovata" });
       return;
     }
-    if (room.status !== "lobby") {
+    const sessionToken = normalizePlayerSessionToken(payload && payload.sessionToken);
+    const existingPlayer = sessionToken ? findPlayerBySessionToken(room, sessionToken) : null;
+    if (room.status !== "lobby" && !existingPlayer) {
       sendAck(ack, { ok: false, error: "Partita gia iniziata" });
       return;
     }
 
     const nickname = normalizeNickname(payload && payload.nickname);
+    if (existingPlayer) {
+      reattachPlayerSocket(room, existingPlayer, socket, nickname);
+      sendAck(ack, { ok: true, code, playerId: existingPlayer.id, sessionToken: existingPlayer.sessionToken, rejoined: true });
+      emitRoom(room);
+      return;
+    }
+
+    const playerSessionToken = createPlayerSessionToken();
     const player = {
       id: socket.id,
+      sessionToken: playerSessionToken,
       nickname,
       team: room.quiz.teamMode ? assignTeam(room) : "",
       score: 0,
@@ -454,8 +465,9 @@ io.on("connection", (socket) => {
     socket.data.role = "player";
     socket.data.roomCode = code;
     socket.data.playerId = socket.id;
+    socket.data.playerSessionToken = playerSessionToken;
     socket.join(roomChannel(code));
-    sendAck(ack, { ok: true, code, playerId: socket.id });
+    sendAck(ack, { ok: true, code, playerId: socket.id, sessionToken: playerSessionToken });
     emitRoom(room);
   });
 
@@ -627,6 +639,42 @@ function inviteRematchPlayers(room) {
 function resetPlayerForNewGame(player) {
   player.score = 0;
   player.streak = 0;
+}
+
+function findPlayerBySessionToken(room, sessionToken) {
+  return Array.from(room.players.values()).find((player) => player.sessionToken === sessionToken) || null;
+}
+
+function reattachPlayerSocket(room, player, socket, nickname) {
+  const previousId = player.id;
+  const previousSocket = previousId && previousId !== socket.id ? io.sockets.sockets.get(previousId) : null;
+  if (previousSocket) {
+    previousSocket.leave(roomChannel(room.code));
+    previousSocket.data.role = null;
+    previousSocket.data.roomCode = null;
+    previousSocket.data.playerId = null;
+    previousSocket.data.playerSessionToken = null;
+  }
+
+  if (previousId !== socket.id) {
+    room.players.delete(previousId);
+    room.players.set(socket.id, player);
+    for (const answerMap of room.answers.values()) {
+      if (!answerMap.has(previousId)) continue;
+      answerMap.set(socket.id, answerMap.get(previousId));
+      answerMap.delete(previousId);
+    }
+  }
+
+  player.id = socket.id;
+  player.nickname = nickname || player.nickname;
+  player.connected = true;
+  player.joinedAt = Date.now();
+  socket.data.role = "player";
+  socket.data.roomCode = room.code;
+  socket.data.playerId = socket.id;
+  socket.data.playerSessionToken = player.sessionToken;
+  socket.join(roomChannel(room.code));
 }
 
 function activePlayers(room) {
@@ -2047,6 +2095,15 @@ function normalizeNickname(value) {
 
 function normalizeCode(value) {
   return String(value || "").replace(/\D/g, "").slice(0, 6);
+}
+
+function createPlayerSessionToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+function normalizePlayerSessionToken(value) {
+  const token = String(value || "").trim();
+  return /^[a-f0-9]{48}$/i.test(token) ? token.toLowerCase() : "";
 }
 
 function normalizeQrUrl(value) {

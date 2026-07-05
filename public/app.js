@@ -1,5 +1,6 @@
 const socket = io();
 
+const PLAYER_SESSION_STORAGE_KEY = "quizlive_player_session";
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const answerClasses = ["answer-a", "answer-b", "answer-c", "answer-d", "answer-e", "answer-f"];
 const questionTypes = [
@@ -33,7 +34,9 @@ let local = {
   screenCode: initialScreenCode(),
   screenJoining: false,
   screenWaiting: false,
-  nickname: "",
+  nickname: initialNickname(),
+  playerSession: loadPlayerSession(),
+  playerRejoining: false,
   playerBaseUrl: window.location.origin,
   playerAccessMode: "same-origin"
 };
@@ -49,6 +52,7 @@ const toastEl = document.getElementById("toast");
 socket.on("connect", () => {
   reconnectingForHostAuth = false;
   autoJoinScreen();
+  autoRejoinPlayer();
   render();
 });
 
@@ -88,6 +92,7 @@ window.addEventListener("hashchange", () => {
   local.screenCode = initialScreenCode();
   local.mode = initialMode();
   autoJoinScreen();
+  autoRejoinPlayer();
   render();
 });
 
@@ -141,6 +146,7 @@ function renderJoinHome() {
         <div>
           <h1 class="section-title">Entra in partita</h1>
           <p class="subtle">Inserisci codice e nickname.</p>
+          ${renderPlayerSessionHint()}
         </div>
         <label class="stack">
           <span>Codice stanza</span>
@@ -151,11 +157,18 @@ function renderJoinHome() {
           <input data-field="join-name" maxlength="24" placeholder="Nome" value="${escapeAttr(local.nickname)}" />
         </label>
         <div class="toolbar">
-          <button class="btn teal" data-action="join-room">Entra in partita</button>
+          <button class="btn teal" data-action="join-room" ${local.playerRejoining ? "disabled" : ""}>${local.playerRejoining ? "Rientro..." : "Entra in partita"}</button>
         </div>
       </div>
     </section>
   `;
+}
+
+function renderPlayerSessionHint() {
+  const session = local.playerSession;
+  if (local.playerRejoining) return `<p class="subtle">Rientro automatico in corso...</p>`;
+  if (!session || session.code !== local.joinCode) return "";
+  return `<p class="subtle">Sessione trovata per ${escapeHtml(session.nickname || "questo telefono")}.</p>`;
 }
 
 function renderScreenHome() {
@@ -1487,12 +1500,14 @@ function joinRoom() {
   const nameField = document.querySelector("[data-field='join-name']");
   const code = codeField ? codeField.value : local.joinCode;
   const nickname = nameField ? nameField.value : local.nickname;
-  socket.emit("player:join", { code, nickname }, (response) => {
+  const sessionToken = sessionTokenForCode(code);
+  socket.emit("player:join", { code, nickname, sessionToken }, (response) => {
     if (!response || !response.ok) {
       showToast(response && response.error ? response.error : "Impossibile entrare");
       return;
     }
-    showToast("Entrato");
+    savePlayerSession(response.code || code, nickname, response.sessionToken);
+    showToast(response.rejoined ? "Rientrato" : "Entrato");
   });
 }
 
@@ -1720,6 +1735,32 @@ function autoJoinScreen() {
   watchScreen();
 }
 
+function autoRejoinPlayer() {
+  const playerRoomCode = local.room && local.room.role === "player" ? local.room.code : "";
+  const playerView = local.mode === "join" || Boolean(playerRoomCode);
+  if (!playerView || local.playerRejoining || !socket.connected) return;
+  const session = local.playerSession;
+  const code = playerRoomCode || local.joinCode || (session && session.code);
+  if (!session || !session.sessionToken || !code || session.code !== code) return;
+
+  local.playerRejoining = true;
+  socket.emit("player:join", {
+    code,
+    nickname: session.nickname,
+    sessionToken: session.sessionToken
+  }, (response) => {
+    local.playerRejoining = false;
+    if (!response || !response.ok) {
+      clearPlayerSession();
+      if (playerRoomCode) local.room = null;
+      render();
+      return;
+    }
+    savePlayerSession(response.code || code, session.nickname, response.sessionToken);
+    showToast("Rientrato");
+  });
+}
+
 async function loadHostAuth() {
   try {
     const response = await fetch("/api/host/auth", {
@@ -1882,6 +1923,7 @@ function leaveRoomLocally(message) {
   local.room = null;
   local.selectedAnswer = null;
   local.selectedAnswers = [];
+  clearPlayerSession();
   if (code) local.joinCode = code;
   switchMode("join", true);
   showToast(message);
@@ -2047,6 +2089,62 @@ function initialJoinCode() {
   const fromQuery = params.get("join") || params.get("code") || "";
   const fromHash = hash.startsWith("join=") ? hash.slice(5) : "";
   return String(fromHash || fromQuery).replace(/\D/g, "").slice(0, 6);
+}
+
+function initialNickname() {
+  const session = loadPlayerSession();
+  return session && session.nickname ? session.nickname : "";
+}
+
+function loadPlayerSession() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PLAYER_SESSION_STORAGE_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return null;
+    const code = String(parsed.code || "").replace(/\D/g, "").slice(0, 6);
+    const sessionToken = String(parsed.sessionToken || "").trim();
+    if (code.length !== 6 || !/^[a-f0-9]{48}$/i.test(sessionToken)) return null;
+    return {
+      code,
+      sessionToken: sessionToken.toLowerCase(),
+      nickname: String(parsed.nickname || "").trim().slice(0, 24)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function savePlayerSession(code, nickname, sessionToken) {
+  const normalizedCode = String(code || "").replace(/\D/g, "").slice(0, 6);
+  const normalizedToken = String(sessionToken || "").trim().toLowerCase();
+  if (normalizedCode.length !== 6 || !/^[a-f0-9]{48}$/i.test(normalizedToken)) return;
+  local.playerSession = {
+    code: normalizedCode,
+    nickname: String(nickname || local.nickname || "").trim().slice(0, 24),
+    sessionToken: normalizedToken
+  };
+  local.joinCode = normalizedCode;
+  local.nickname = local.playerSession.nickname;
+  try {
+    window.localStorage.setItem(PLAYER_SESSION_STORAGE_KEY, JSON.stringify(local.playerSession));
+  } catch (error) {
+    // Session restore is optional when storage is unavailable.
+  }
+}
+
+function clearPlayerSession() {
+  local.playerSession = null;
+  try {
+    window.localStorage.removeItem(PLAYER_SESSION_STORAGE_KEY);
+  } catch (error) {
+    // Nothing else to do.
+  }
+}
+
+function sessionTokenForCode(code) {
+  const normalizedCode = String(code || "").replace(/\D/g, "").slice(0, 6);
+  return local.playerSession && local.playerSession.code === normalizedCode
+    ? local.playerSession.sessionToken
+    : "";
 }
 
 function initialScreenCode() {
