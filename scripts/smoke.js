@@ -76,6 +76,24 @@ async function main() {
     const uploadedMediaBinary = await getBinary(uploadedMedia.url);
     assert.ok(uploadedMediaBinary.length > 0);
     quiz.questions[0].imageUrl = uploadedMedia.url;
+    quiz.questions[0].imageAlt = "Tiny smoke image";
+    quiz.questions[0].imageCredit = "Smoke Photographer";
+    quiz.questions[0].imageCreditUrl = "https://www.pexels.com/@smoke";
+    quiz.questions[0].imageProvider = "Pexels";
+    quiz.questions[0].imagePageUrl = "https://www.pexels.com/photo/smoke-test-123/";
+
+    const imageSearch = await postJsonRaw("/api/images/search", {
+      quiz,
+      question: quiz.questions[0]
+    });
+    if (imageSearch.status === 501) {
+      assert.match(imageSearch.data.error, /PEXELS_API_KEY/);
+    } else {
+      assert.equal(imageSearch.status, 200);
+      assert.equal(imageSearch.data.ok, true);
+      assert.equal(imageSearch.data.provider, "pexels");
+      assert.ok(Array.isArray(imageSearch.data.images));
+    }
 
     const screenWatching = await emitAck(screen, "screen:watch", {});
     assert.equal(screenWatching.ok, true);
@@ -102,6 +120,8 @@ async function main() {
     assert.equal(importedQuiz.quiz.questions[0].type, "speed");
     assert.equal(importedQuiz.quiz.questions[0].answers[0], "Yes");
     assert.equal(importedQuiz.quiz.questions[0].imageUrl, uploadedMedia.url);
+    assert.equal(importedQuiz.quiz.questions[0].imageCredit, "Smoke Photographer");
+    assert.equal(importedQuiz.quiz.questions[0].imageProvider, "Pexels");
     assert.equal(importedQuiz.quiz.questions[1].type, "multiple_select");
     assert.deepEqual(importedQuiz.quiz.questions[1].correctIndexes, [0, 1, 3]);
 
@@ -448,6 +468,18 @@ async function postJson(path, payload) {
   });
   assert.equal(response.ok, true);
   return response.json();
+}
+
+async function postJsonRaw(path, payload) {
+  const response = await fetch(new URL(path, serverUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload)
+  });
+  return {
+    status: response.status,
+    data: await response.json()
+  };
 }
 
 async function postBinary(path, payload) {

@@ -31,6 +31,7 @@ let local = {
   savedResults: [],
   archiveSearch: "",
   archiveVisibility: "all",
+  imageSuggestions: {},
   currentQuizId: null,
   joinCode: initialJoinCode(),
   screenCode: initialScreenCode(),
@@ -342,9 +343,11 @@ function renderQuestionEditor(question, questionIndex) {
           <input data-question-media="imageUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.imageUrl || "")}" maxlength="500" placeholder="https://..." />
           <div class="media-actions">
             <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+            <button class="btn small ghost" data-action="suggest-question-images" data-question-index="${questionIndex}" ${imageSuggestionState(questionIndex).loading ? "disabled" : ""}>${imageSuggestionState(questionIndex).loading ? "Cerco..." : "Suggerisci immagini"}</button>
             ${question.imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
           </div>
           ${question.imageUrl ? `<img class="media-thumb" src="${escapeAttr(question.imageUrl)}" alt="Anteprima immagine domanda" />` : ""}
+          ${renderImageSuggestions(questionIndex)}
         </div>
         <label class="stack">
           <span>Video URL</span>
@@ -387,6 +390,38 @@ function renderQuestionEditor(question, questionIndex) {
       </div>
     </article>
   `;
+}
+
+function imageSuggestionState(questionIndex) {
+  return local.imageSuggestions[questionIndex] || { loading: false, images: [], query: "", error: "" };
+}
+
+function renderImageSuggestions(questionIndex) {
+  const state = imageSuggestionState(questionIndex);
+  if (state.loading) return `<div class="empty compact">Ricerca immagini...</div>`;
+  if (state.error) return `<div class="empty compact">${escapeHtml(state.error)}</div>`;
+  if (!state.images || !state.images.length) return "";
+  return `
+    <div class="image-suggestions">
+      <div class="image-suggestion-head">
+        <span class="subtle">Query: ${escapeHtml(state.query || "")}</span>
+        <a href="https://www.pexels.com" target="_blank" rel="noopener">Pexels</a>
+      </div>
+      <div class="image-suggestion-grid">
+        ${state.images.map((image, imageIndex) => `
+          <button class="image-suggestion" data-action="select-suggested-image" data-question-index="${questionIndex}" data-image-index="${imageIndex}" style="${imageThumbStyle(image.avgColor)}">
+            <img src="${escapeAttr(image.thumbUrl)}" alt="${escapeAttr(image.alt || "")}" loading="lazy" />
+            <span>${escapeHtml(image.photographer || "Pexels")}</span>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function imageThumbStyle(color) {
+  const value = String(color || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(value) ? `--thumb-color:${escapeAttr(value)}` : "";
 }
 
 function renderImportBox() {
@@ -698,12 +733,25 @@ function renderQuestionMedia(question) {
   const videoEmbed = videoUrl ? videoEmbedUrl(videoUrl) : "";
   return `
     <div class="question-media">
-      ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="" loading="lazy" />` : ""}
+      ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(question.imageAlt || "")}" loading="lazy" />` : ""}
+      ${imageUrl ? renderImageCredit(question) : ""}
       ${videoUrl ? videoEmbed
         ? `<iframe src="${escapeAttr(videoEmbed)}" title="Video domanda" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`
         : `<video src="${escapeAttr(videoUrl)}" controls playsinline></video>` : ""}
     </div>
   `;
+}
+
+function renderImageCredit(question) {
+  if (!question || !question.imageCredit) return "";
+  const provider = question.imageProvider || "Pexels";
+  const credit = question.imageCreditUrl
+    ? `<a href="${escapeAttr(question.imageCreditUrl)}" target="_blank" rel="noopener">${escapeHtml(question.imageCredit)}</a>`
+    : escapeHtml(question.imageCredit);
+  const providerLink = question.imagePageUrl
+    ? `<a href="${escapeAttr(question.imagePageUrl)}" target="_blank" rel="noopener">${escapeHtml(provider)}</a>`
+    : escapeHtml(provider);
+  return `<p class="media-credit">Foto: ${credit} / ${providerLink}</p>`;
 }
 
 function videoEmbedUrl(url) {
@@ -1145,6 +1193,7 @@ function bindEvents() {
     element.addEventListener("input", () => {
       const question = local.quiz.questions[Number(element.dataset.questionIndex)];
       question[element.dataset.questionMedia] = element.value;
+      if (element.dataset.questionMedia === "imageUrl") clearImageCredit(question);
     });
   });
   document.querySelectorAll("[data-question-image-upload]").forEach((element) => {
@@ -1255,6 +1304,8 @@ function handleAction(event) {
 
   if (action === "add-question") addQuestion();
   if (action === "remove-question") removeQuestion(Number(target.dataset.questionIndex));
+  if (action === "suggest-question-images") suggestQuestionImages(Number(target.dataset.questionIndex));
+  if (action === "select-suggested-image") selectSuggestedImage(Number(target.dataset.questionIndex), Number(target.dataset.imageIndex));
   if (action === "clear-question-image") clearQuestionImage(Number(target.dataset.questionIndex));
   if (action === "toggle-import") {
     local.importOpen = !local.importOpen;
@@ -1318,6 +1369,7 @@ function addQuestion() {
 function removeQuestion(index) {
   if (local.quiz.questions.length <= 1) return;
   local.quiz.questions.splice(index, 1);
+  local.imageSuggestions = {};
   render();
 }
 
@@ -1348,6 +1400,7 @@ async function uploadQuestionImage(input) {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || "Upload non riuscito");
     question.imageUrl = data.url;
+    clearImageCredit(question);
     showToast("Immagine caricata");
     render();
   } catch (error) {
@@ -1356,11 +1409,73 @@ async function uploadQuestionImage(input) {
   }
 }
 
+async function suggestQuestionImages(index) {
+  const question = local.quiz.questions[index];
+  if (!question) return;
+  local.imageSuggestions[index] = { loading: true, images: [], query: "", error: "" };
+  render();
+
+  try {
+    const response = await fetch("/api/images/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        quiz: cleanQuiz(local.quiz),
+        question
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Ricerca immagini non riuscita");
+    local.imageSuggestions[index] = {
+      loading: false,
+      images: Array.isArray(data.images) ? data.images : [],
+      query: data.query || "",
+      error: ""
+    };
+    if (!local.imageSuggestions[index].images.length) showToast("Nessuna immagine trovata");
+  } catch (error) {
+    local.imageSuggestions[index] = {
+      loading: false,
+      images: [],
+      query: "",
+      error: error.message || "Ricerca immagini non riuscita"
+    };
+    showToast(local.imageSuggestions[index].error);
+  }
+  render();
+}
+
+function selectSuggestedImage(questionIndex, imageIndex) {
+  const question = local.quiz.questions[questionIndex];
+  const state = imageSuggestionState(questionIndex);
+  const image = state.images && state.images[imageIndex];
+  if (!question || !image) return;
+  question.imageUrl = image.imageUrl || "";
+  question.imageAlt = image.alt || "";
+  question.imageCredit = image.photographer || "";
+  question.imageCreditUrl = image.photographerUrl || "";
+  question.imageProvider = image.provider || "Pexels";
+  question.imagePageUrl = image.pageUrl || "";
+  showToast("Immagine selezionata");
+  render();
+}
+
 function clearQuestionImage(index) {
   const question = local.quiz.questions[index];
   if (!question) return;
   question.imageUrl = "";
+  clearImageCredit(question);
   render();
+}
+
+function clearImageCredit(question) {
+  if (!question) return;
+  question.imageAlt = "";
+  question.imageCredit = "";
+  question.imageCreditUrl = "";
+  question.imageProvider = "";
+  question.imagePageUrl = "";
 }
 
 function applyImport() {
@@ -2061,6 +2176,11 @@ function cleanQuiz(input) {
         type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
         imageUrl: normalizeImageUrl(question.imageUrl),
+        imageAlt: String(question.imageAlt || "").trim().slice(0, 160),
+        imageCredit: String(question.imageCredit || "").trim().slice(0, 80),
+        imageCreditUrl: normalizeMediaUrl(question.imageCreditUrl),
+        imageProvider: String(question.imageProvider || "").trim().slice(0, 32),
+        imagePageUrl: normalizeMediaUrl(question.imagePageUrl),
         videoUrl: normalizeMediaUrl(question.videoUrl),
         answers,
         correctIndex: correctIndexes[0] || 0,

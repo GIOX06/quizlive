@@ -485,6 +485,68 @@ textarea {
   background: #fff;
 }
 
+.image-suggestions {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.image-suggestion-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  font-size: 0.88rem;
+}
+
+.image-suggestion-head a,
+.media-credit a {
+  color: var(--blue);
+  font-weight: 800;
+}
+
+.image-suggestion-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.image-suggestion {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--thumb-color, #fff);
+  color: var(--ink);
+  text-align: left;
+}
+
+.image-suggestion img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.image-suggestion span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  font-weight: 850;
+  background: rgba(255, 255, 255, 0.84);
+  border-radius: 6px;
+  padding: 0.2rem 0.3rem;
+}
+
+.media-credit {
+  margin: -0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .mini-title {
   margin: 0;
   font-size: 1rem;
@@ -1314,6 +1376,10 @@ textarea {
 
   .link-field {
     grid-template-columns: 1fr;
+  }
+
+  .image-suggestion-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .toolbar .btn {

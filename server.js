@@ -22,6 +22,7 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const HOST_PASSWORD = String(process.env.HOST_PASSWORD || "");
+const PEXELS_API_KEY = String(process.env.PEXELS_API_KEY || "");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, ".data");
 const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
 const HOST_SESSION_COOKIE = "quizlive_host";
@@ -203,6 +204,44 @@ app.get("/api/media/:id", async (req, res) => {
     res.send(Buffer.from(media.data, "base64"));
   } catch (error) {
     sendArchiveError(res, error);
+  }
+});
+
+app.post("/api/images/search", requireHostHttp, async (req, res) => {
+  try {
+    if (!PEXELS_API_KEY) {
+      res.status(501).json({ ok: false, error: "Aggiungi PEXELS_API_KEY su Render per usare la ricerca immagini" });
+      return;
+    }
+
+    const query = buildImageSearchQuery(req.body || {});
+    const url = new URL("https://api.pexels.com/v1/search");
+    url.searchParams.set("query", query);
+    url.searchParams.set("orientation", "landscape");
+    url.searchParams.set("locale", "it-IT");
+    url.searchParams.set("per_page", "12");
+
+    const response = await fetch(url, {
+      headers: { Authorization: PEXELS_API_KEY }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = data && data.error ? String(data.error) : "Ricerca immagini non disponibile";
+      res.status(response.status).json({ ok: false, error: message });
+      return;
+    }
+
+    const images = Array.isArray(data.photos) ? data.photos.map(pexelsPhotoToImage).filter(Boolean) : [];
+    res.json({
+      ok: true,
+      provider: "pexels",
+      providerLabel: "Pexels",
+      providerUrl: "https://www.pexels.com",
+      query,
+      images
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "Ricerca immagini non disponibile" });
   }
 });
 
@@ -868,6 +907,11 @@ function serializeRoom(room, socket) {
           typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
           text: question.text,
           imageUrl: question.imageUrl,
+          imageAlt: question.imageAlt,
+          imageCredit: question.imageCredit,
+          imageCreditUrl: question.imageCreditUrl,
+          imageProvider: question.imageProvider,
+          imagePageUrl: question.imagePageUrl,
           videoUrl: question.videoUrl,
           answers: question.answers.map((answer, index) => ({
             text: answer,
@@ -1064,6 +1108,11 @@ function resultsToJson(room) {
       type: question.type,
       text: question.text,
       imageUrl: question.imageUrl,
+      imageAlt: question.imageAlt,
+      imageCredit: question.imageCredit,
+      imageCreditUrl: question.imageCreditUrl,
+      imageProvider: question.imageProvider,
+      imagePageUrl: question.imagePageUrl,
       videoUrl: question.videoUrl,
       answers: question.answers,
       correctIndex: question.correctIndex,
@@ -1270,6 +1319,11 @@ function resultFromRoom(room) {
         type: question.type,
         text: question.text,
         imageUrl: question.imageUrl,
+        imageAlt: question.imageAlt,
+        imageCredit: question.imageCredit,
+        imageCreditUrl: question.imageCreditUrl,
+        imageProvider: question.imageProvider,
+        imagePageUrl: question.imagePageUrl,
         videoUrl: question.videoUrl,
         answers: question.answers,
         correctIndex: question.correctIndex,
@@ -1504,7 +1558,7 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Tag", normalizedQuiz.tags.join(", ")],
     ["Team mode", normalizedQuiz.teamMode ? "si" : "no"],
     [],
-    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Corretta", "Immagine URL", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
+    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Corretta", "Immagine URL", "Alt immagine", "Credito immagine", "Link fotografo", "Link foto", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
   ];
 
   normalizedQuiz.questions.forEach((question, index) => {
@@ -1515,6 +1569,10 @@ function quizToWorkbook(quiz, isTemplate) {
       question.timeLimit,
       correctIndexes(question).map((answerIndex) => answerLetters[answerIndex] || "A").join(","),
       question.imageUrl || "",
+      question.imageAlt || "",
+      question.imageCredit || "",
+      question.imageCreditUrl || "",
+      question.imagePageUrl || "",
       question.videoUrl || "",
       ...Array.from({ length: 6 }, (_item, answerIndex) => question.answers[answerIndex] || "")
     ]);
@@ -1528,6 +1586,10 @@ function quizToWorkbook(quiz, isTemplate) {
     { wch: 44 },
     { wch: 14 },
     { wch: 10 },
+    { wch: 34 },
+    { wch: 28 },
+    { wch: 22 },
+    { wch: 34 },
     { wch: 34 },
     { wch: 34 },
     { wch: 22 },
@@ -1582,6 +1644,10 @@ function workbookToQuiz(workbook) {
   const timeIndex = indexFor("tempo_secondi", "tempo", "secondi");
   const correctIndex = indexFor("corretta", "risposta_corretta");
   const imageIndex = indexFor("immagine_url", "image_url", "immagine");
+  const imageAltIndex = indexFor("alt_immagine", "image_alt");
+  const imageCreditIndex = indexFor("credito_immagine", "image_credit");
+  const imageCreditUrlIndex = indexFor("link_fotografo", "credito_url", "image_credit_url");
+  const imagePageUrlIndex = indexFor("link_foto", "pagina_immagine", "image_page_url");
   const videoIndex = indexFor("video_url", "video");
   const answerIndexes = ["risposta_a", "risposta_b", "risposta_c", "risposta_d", "risposta_e", "risposta_f"].map((name) => indexFor(name));
 
@@ -1597,6 +1663,11 @@ function workbookToQuiz(workbook) {
       type,
       text,
       imageUrl: row[imageIndex] || "",
+      imageAlt: row[imageAltIndex] || "",
+      imageCredit: row[imageCreditIndex] || "",
+      imageCreditUrl: row[imageCreditUrlIndex] || "",
+      imagePageUrl: row[imagePageUrlIndex] || "",
+      imageProvider: row[imageCreditIndex] ? "Pexels" : "",
       videoUrl: row[videoIndex] || "",
       answers: normalizedAnswers,
       correctIndexes: parseCorrectIndexes(row[correctIndex], normalizedAnswers, type),
@@ -2155,6 +2226,11 @@ function normalizeQuestion(item, index) {
     type,
     text,
     imageUrl: normalizeImageUrl(item && item.imageUrl),
+    imageAlt: normalizeShortText(item && item.imageAlt, 160),
+    imageCredit: normalizeShortText(item && item.imageCredit, 80),
+    imageCreditUrl: normalizeMediaUrl(item && item.imageCreditUrl),
+    imageProvider: normalizeShortText(item && item.imageProvider, 32),
+    imagePageUrl: normalizeMediaUrl(item && item.imagePageUrl),
     videoUrl: normalizeMediaUrl(item && item.videoUrl),
     answers: normalizedAnswers,
     correctIndex,
@@ -2178,6 +2254,60 @@ function normalizeTags(value) {
 function normalizeQuizVisibility(value) {
   const key = normalizeCell(value || "private");
   return key === "pubblica" || key === "public" ? "public" : "private";
+}
+
+function buildImageSearchQuery(payload) {
+  const requested = normalizeShortText(payload && payload.query, 80);
+  if (requested) return requested;
+
+  const quiz = payload && payload.quiz && typeof payload.quiz === "object" ? payload.quiz : {};
+  const question = payload && payload.question && typeof payload.question === "object" ? payload.question : {};
+  const tags = Array.isArray(quiz.tags) ? quiz.tags.join(" ") : quiz.tags || "";
+  const text = [
+    question.text,
+    quiz.subject,
+    quiz.folder,
+    tags,
+    quiz.title
+  ].filter(Boolean).join(" ");
+  const words = imageSearchKeywords(text);
+  return words.length ? words.slice(0, 7).join(" ") : "education classroom quiz";
+}
+
+function imageSearchKeywords(text) {
+  const stopwords = new Set([
+    "che", "chi", "cosa", "come", "dove", "quando", "quale", "quali", "quanto", "perche", "perché",
+    "sono", "essere", "vero", "falso", "risposta", "risposte", "corretta", "corrette", "sbagliata",
+    "scegli", "seleziona", "indica", "trova", "domanda", "quiz", "live", "classe", "livello",
+    "the", "and", "for", "with", "what", "which", "where", "when", "answer", "correct"
+  ]);
+  return Array.from(new Set(String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 3 && !stopwords.has(word))))
+    .slice(0, 12);
+}
+
+function pexelsPhotoToImage(photo) {
+  if (!photo || !photo.src) return null;
+  const imageUrl = photo.src.large || photo.src.landscape || photo.src.medium || photo.src.original || "";
+  const thumbUrl = photo.src.tiny || photo.src.small || imageUrl;
+  if (!imageUrl || !thumbUrl) return null;
+  return {
+    id: String(photo.id || ""),
+    provider: "Pexels",
+    imageUrl,
+    thumbUrl,
+    alt: normalizeShortText(photo.alt, 160),
+    avgColor: normalizeShortText(photo.avg_color, 16),
+    pageUrl: normalizeMediaUrl(photo.url),
+    photographer: normalizeShortText(photo.photographer, 80),
+    photographerUrl: normalizeMediaUrl(photo.photographer_url)
+  };
 }
 
 function parseImageDataUrl(value) {

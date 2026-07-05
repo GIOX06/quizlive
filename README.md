@@ -18,7 +18,7 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 - Quiz export/import works with an editable XLSX template from the host builder, including metadata and media URLs.
 - Host can save quizzes to a small library with folder, private/public visibility, metadata search, loading, and draft duplication.
 - Optional team mode automatically assigns players to teams and shows a team leaderboard.
-- Questions can include public image/video URLs, and image files can be uploaded from the host editor.
+- Questions can include public image/video URLs, image files uploaded from the host editor, or suggested photos from Pexels.
 - Finished games are saved to historical results with CSV/JSON/XLSX export.
 
 ## Local setup
@@ -134,6 +134,18 @@ When `HOST_PASSWORD` is set, opening `/#host` asks for the password before showi
 On Render, add `HOST_PASSWORD` from the service Environment page, then redeploy. Do not commit the password to GitHub.
 
 Host login sessions last up to 12 hours and reset when the service restarts.
+
+## Image suggestions
+
+The host editor can suggest photos related to a question by searching Pexels. Add this environment variable to enable it:
+
+```text
+PEXELS_API_KEY=your-pexels-api-key
+```
+
+On Render, add `PEXELS_API_KEY` from the service Environment page, then redeploy. Without this key the manual image URL and upload tools still work, and the suggestion button shows a setup message.
+
+Suggested images keep photographer credit and a Pexels link with the quiz.
 
 ### Render Blueprint
 
