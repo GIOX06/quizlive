@@ -9,11 +9,11 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 - A public monitor view can show the lobby QR code, questions, answer reveal, and leaderboard on a TV or projector.
 - Host lobby shows a QR code for quick player entry.
 - Questions run in realtime with a server-side timer.
-- Scores include correctness, speed, and streak bonuses.
+- Scores include correctness, speed, streak bonuses, and a speed-focused question type.
 - Host sees answer stats and leaderboard.
 - Players see answer buttons, feedback, score, and ranking.
 - Results export as CSV or JSON while the room is active.
-- Quiz export/import works as JSON from the host builder.
+- Quiz export/import works with an editable XLSX template from the host builder.
 - Host can save quizzes to the archive and load them later.
 - Finished games are saved to historical results with CSV/JSON export.
 

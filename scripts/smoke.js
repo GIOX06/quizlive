@@ -10,6 +10,7 @@ const quiz = {
   title: "Smoke Test",
   questions: [
     {
+      type: "speed",
       text: "Ready?",
       answers: ["Yes", "No", "Maybe", "Later"],
       correctIndex: 0,
@@ -61,6 +62,19 @@ async function main() {
     assert.equal(savedQuiz.ok, true);
     assert.equal(savedQuiz.quiz.title, quiz.title);
 
+    const exportedQuizXlsx = await postBinary("/api/quiz/export.xlsx", { quiz });
+    assert.ok(exportedQuizXlsx.length > 1000);
+    const importedQuiz = await postJson("/api/quiz/import.xlsx", {
+      file: exportedQuizXlsx.toString("base64")
+    });
+    assert.equal(importedQuiz.ok, true);
+    assert.equal(importedQuiz.quiz.title, quiz.title);
+    assert.equal(importedQuiz.quiz.questions[0].type, "speed");
+    assert.equal(importedQuiz.quiz.questions[0].answers[0], "Yes");
+
+    const templateXlsx = await getBinary("/api/quiz-template.xlsx");
+    assert.ok(templateXlsx.length > 1000);
+
     const archive = await getJson("/api/archive/quizzes");
     assert.ok(archive.quizzes.some((item) => item.id === savedQuiz.quiz.id));
 
@@ -104,6 +118,7 @@ async function main() {
       state.role === "player" &&
       state.status === "question" &&
       state.question &&
+      state.question.type === "speed" &&
       state.question.answers.length === 4
     );
     await waitForState(screen, (state) =>
@@ -295,6 +310,14 @@ async function getText(path) {
   return response.text();
 }
 
+async function getBinary(path) {
+  const response = await fetch(new URL(path, serverUrl), {
+    headers: authHeaders()
+  });
+  assert.equal(response.ok, true);
+  return Buffer.from(await response.arrayBuffer());
+}
+
 async function postJson(path, payload) {
   const response = await fetch(new URL(path, serverUrl), {
     method: "POST",
@@ -303,6 +326,16 @@ async function postJson(path, payload) {
   });
   assert.equal(response.ok, true);
   return response.json();
+}
+
+async function postBinary(path, payload) {
+  const response = await fetch(new URL(path, serverUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload)
+  });
+  assert.equal(response.ok, true);
+  return Buffer.from(await response.arrayBuffer());
 }
 
 async function deleteJson(path) {

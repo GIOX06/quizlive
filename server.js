@@ -7,6 +7,7 @@ const path = require("path");
 const { Pool } = require("pg");
 const QRCode = require("qrcode");
 const { Server } = require("socket.io");
+const XLSX = require("xlsx");
 
 const app = express();
 const server = http.createServer(app);
@@ -25,6 +26,27 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, ".data");
 const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
 const HOST_SESSION_COOKIE = "quizlive_host";
 const HOST_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const QUESTION_TYPE_LABELS = {
+  multiple: "Multipla",
+  true_false: "Vero/Falso",
+  speed: "Veloce"
+};
+const answerLetters = ["A", "B", "C", "D", "E", "F"];
+const QUESTION_TYPE_ALIASES = {
+  multipla: "multiple",
+  multiple: "multiple",
+  scelta_multipla: "multiple",
+  vero_falso: "true_false",
+  verofalso: "true_false",
+  vero_o_falso: "true_false",
+  "vero/falso": "true_false",
+  true_false: "true_false",
+  truefalse: "true_false",
+  veloce: "speed",
+  risposta_veloce: "speed",
+  speed: "speed",
+  fast: "speed"
+};
 const rooms = new Map();
 const hostSessions = new Map();
 const store = loadStore();
@@ -37,7 +59,7 @@ const archiveReady = pgPool
     })
   : Promise.resolve();
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public"), {
   setHeaders(res, filePath) {
     if (/\.(html|css|js)$/i.test(filePath)) {
@@ -117,6 +139,34 @@ app.get("/api/qr.svg", async (req, res) => {
     res.send(svg);
   } catch (error) {
     res.status(500).send("QR generation failed");
+  }
+});
+
+app.get("/api/quiz-template.xlsx", requireHostHttp, (_req, res) => {
+  const workbook = quizToWorkbook(defaultQuiz(), true);
+  sendWorkbook(res, workbook, "quizlive-modello.xlsx");
+});
+
+app.post("/api/quiz/export.xlsx", requireHostHttp, (req, res) => {
+  try {
+    const quiz = normalizeQuiz(req.body && req.body.quiz);
+    const workbook = quizToWorkbook(quiz, false);
+    sendWorkbook(res, workbook, safeWorkbookName(quiz.title));
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/api/quiz/import.xlsx", requireHostHttp, (req, res) => {
+  try {
+    const file = String(req.body && req.body.file || "");
+    const base64 = file.includes(",") ? file.split(",").pop() : file;
+    if (!base64) throw new Error("File XLSX mancante");
+    const workbook = XLSX.read(Buffer.from(base64, "base64"), { type: "buffer" });
+    const quiz = workbookToQuiz(workbook);
+    res.json({ ok: true, quiz });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message });
   }
 });
 
@@ -638,7 +688,8 @@ function submitAnswer(room, player, answerIndex) {
   const isCorrect = answerIndex === question.correctIndex;
   const elapsed = Math.max(0, answeredAt - room.questionStartedAt);
   const duration = Math.max(1, question.timeLimit * 1000);
-  const speedBonus = isCorrect ? Math.max(0, Math.round(500 * (1 - elapsed / duration))) : 0;
+  const scoreProfile = questionScoreProfile(question.type);
+  const speedBonus = isCorrect ? Math.max(0, Math.round(scoreProfile.speedBonus * (1 - elapsed / duration))) : 0;
 
   if (isCorrect) {
     player.streak += 1;
@@ -646,8 +697,8 @@ function submitAnswer(room, player, answerIndex) {
     player.streak = 0;
   }
 
-  const streakBonus = isCorrect ? Math.min(250, Math.max(0, (player.streak - 1) * 50)) : 0;
-  const points = isCorrect ? 500 + speedBonus + streakBonus : 0;
+  const streakBonus = isCorrect ? Math.min(scoreProfile.maxStreakBonus, Math.max(0, (player.streak - 1) * scoreProfile.streakStep)) : 0;
+  const points = isCorrect ? scoreProfile.base + speedBonus + streakBonus : 0;
   player.score += points;
 
   answerMap.set(player.id, {
@@ -689,6 +740,8 @@ function serializeRoom(room, socket) {
     player: playerId ? serializePlayer(room.players.get(playerId), room) : null,
     question: question
       ? {
+          type: question.type,
+          typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
           text: question.text,
           answers: question.answers.map((answer, index) => ({
             text: answer,
@@ -761,12 +814,23 @@ function countAnswers(answerMap, answerIndex) {
   return total;
 }
 
+function questionScoreProfile(type) {
+  if (type === "speed") {
+    return { base: 250, speedBonus: 1000, streakStep: 30, maxStreakBonus: 150 };
+  }
+  if (type === "true_false") {
+    return { base: 450, speedBonus: 450, streakStep: 40, maxStreakBonus: 200 };
+  }
+  return { base: 500, speedBonus: 500, streakStep: 50, maxStreakBonus: 250 };
+}
+
 function resultsToJson(room) {
   return {
     code: room.code,
     title: room.quiz.title,
     exportedAt: new Date().toISOString(),
     questions: room.quiz.questions.map((question, questionIndex) => ({
+      type: question.type,
       text: question.text,
       answers: question.answers,
       correctIndex: question.correctIndex,
@@ -929,6 +993,7 @@ function resultFromRoom(room) {
     questions: room.quiz.questions.map((question, questionIndex) => {
       const answerMap = room.answers.get(questionIndex) || new Map();
       return {
+        type: question.type,
         text: question.text,
         answers: question.answers,
         correctIndex: question.correctIndex,
@@ -980,6 +1045,166 @@ function resultToCsv(result) {
   });
 
   return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function quizToWorkbook(quiz, isTemplate) {
+  const normalizedQuiz = normalizeQuiz(isTemplate ? templateQuiz() : quiz);
+  const rows = [
+    ["QuizLive - quiz"],
+    ["Titolo", normalizedQuiz.title],
+    [],
+    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Corretta", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
+  ];
+
+  normalizedQuiz.questions.forEach((question, index) => {
+    rows.push([
+      index + 1,
+      question.type === "true_false" ? "vero_falso" : question.type === "speed" ? "veloce" : "multipla",
+      question.text,
+      question.timeLimit,
+      answerLetters[question.correctIndex] || "A",
+      ...Array.from({ length: 6 }, (_item, answerIndex) => question.answers[answerIndex] || "")
+    ]);
+  });
+
+  const workbook = XLSX.utils.book_new();
+  const quizSheet = XLSX.utils.aoa_to_sheet(rows);
+  quizSheet["!cols"] = [
+    { wch: 8 },
+    { wch: 16 },
+    { wch: 44 },
+    { wch: 14 },
+    { wch: 10 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 22 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, quizSheet, "QuizLive");
+
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ["Come compilare"],
+    ["Titolo", "Scrivi il titolo nella cella B2 del foglio QuizLive."],
+    ["Tipo", "Usa multipla, vero_falso oppure veloce."],
+    ["Corretta", "Scrivi A, B, C, D, E o F. Puoi anche scrivere 1, 2, 3..."],
+    ["Vero/Falso", "Per vero_falso usa A per Vero oppure B per Falso. Le risposte verranno normalizzate."],
+    ["Limiti", "Massimo 50 domande, 2-6 risposte, tempo da 5 a 90 secondi."]
+  ]);
+  instructions["!cols"] = [{ wch: 18 }, { wch: 92 }];
+  XLSX.utils.book_append_sheet(workbook, instructions, "Istruzioni");
+  return workbook;
+}
+
+function workbookToQuiz(workbook) {
+  const sheetName = workbook.SheetNames.includes("QuizLive") ? "QuizLive" : workbook.SheetNames[0];
+  if (!sheetName) throw new Error("Il file XLSX non contiene fogli");
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
+  const titleRow = rows.find((row) => normalizeCell(row[0]) === "titolo");
+  const title = String(titleRow && titleRow[1] || "QuizLive").trim().slice(0, 80) || "QuizLive";
+  const headerIndex = rows.findIndex((row) =>
+    row.some((cell) => normalizeCell(cell) === "domanda") &&
+    row.some((cell) => normalizeCell(cell) === "tipo")
+  );
+  if (headerIndex < 0) throw new Error("Intestazioni XLSX non trovate");
+
+  const headers = rows[headerIndex].map(normalizeCell);
+  const indexFor = (...names) => headers.findIndex((header) => names.includes(header));
+  const typeIndex = indexFor("tipo");
+  const textIndex = indexFor("domanda", "testo_domanda");
+  const timeIndex = indexFor("tempo_secondi", "tempo", "secondi");
+  const correctIndex = indexFor("corretta", "risposta_corretta");
+  const answerIndexes = ["risposta_a", "risposta_b", "risposta_c", "risposta_d", "risposta_e", "risposta_f"].map((name) => indexFor(name));
+
+  const questions = rows.slice(headerIndex + 1).map((row, index) => {
+    const text = String(row[textIndex] || "").trim();
+    if (!text) return null;
+    const type = normalizeQuestionType(row[typeIndex]);
+    const answers = answerIndexes
+      .map((answerIndex) => answerIndex >= 0 ? String(row[answerIndex] || "").trim() : "")
+      .filter(Boolean);
+    const normalizedAnswers = type === "true_false" ? ["Vero", "Falso"] : answers;
+    return {
+      type,
+      text,
+      answers: normalizedAnswers,
+      correctIndex: parseCorrectIndex(row[correctIndex], normalizedAnswers),
+      timeLimit: Number(row[timeIndex]) || 20
+    };
+  }).filter(Boolean);
+
+  return normalizeQuiz({ title, questions });
+}
+
+function parseCorrectIndex(value, answers) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const index = Math.round(value) - 1;
+    return index >= 0 && index < answers.length ? index : 0;
+  }
+
+  const raw = String(value || "").trim();
+  const upper = raw.toUpperCase();
+  const letterIndex = answerLetters.indexOf(upper);
+  if (letterIndex >= 0 && letterIndex < answers.length) return letterIndex;
+  const numericIndex = Number.parseInt(raw, 10) - 1;
+  if (Number.isInteger(numericIndex) && numericIndex >= 0 && numericIndex < answers.length) return numericIndex;
+  const answerIndex = answers.findIndex((answer) => normalizeCell(answer) === normalizeCell(raw));
+  return answerIndex >= 0 ? answerIndex : 0;
+}
+
+function normalizeCell(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
+}
+
+function sendWorkbook(res, workbook, filename) {
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+  res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("content-disposition", `attachment; filename="${filename}"`);
+  res.send(buffer);
+}
+
+function safeWorkbookName(title) {
+  const slug = String(title || "quizlive")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase() || "quizlive";
+  return `${slug}.xlsx`;
+}
+
+function templateQuiz() {
+  return {
+    title: "QuizLive modello",
+    questions: [
+      {
+        type: "multiple",
+        text: "Quale formato usiamo per importare un quiz?",
+        answers: ["XLSX", "MP3", "PNG", "ZIP vuoto"],
+        correctIndex: 0,
+        timeLimit: 20
+      },
+      {
+        type: "true_false",
+        text: "I telefoni entrano con codice stanza e nickname.",
+        answers: ["Vero", "Falso"],
+        correctIndex: 0,
+        timeLimit: 15
+      },
+      {
+        type: "speed",
+        text: "Quale risposta premia di piu la rapidita?",
+        answers: ["Veloce", "Archivio", "Monitor", "Logo"],
+        correctIndex: 0,
+        timeLimit: 10
+      }
+    ]
+  };
 }
 
 async function ensureArchiveReady() {
@@ -1327,12 +1552,17 @@ function normalizeQuiz(input) {
 }
 
 function normalizeQuestion(item, index) {
+  const type = normalizeQuestionType(item && item.type);
   const text = String(item && item.text ? item.text : `Domanda ${index + 1}`).trim().slice(0, 240);
   const answers = Array.isArray(item && item.answers) ? item.answers : [];
-  const normalizedAnswers = answers
+  let normalizedAnswers = answers
     .map((answer) => String(answer || "").trim().slice(0, 160))
     .filter(Boolean)
     .slice(0, 6);
+
+  if (type === "true_false") {
+    normalizedAnswers = ["Vero", "Falso"];
+  }
 
   if (normalizedAnswers.length < 2) {
     throw new Error(`La domanda ${index + 1} deve avere almeno due risposte`);
@@ -1344,11 +1574,21 @@ function normalizeQuestion(item, index) {
   const timeLimit = Number.isFinite(rawTime) ? Math.min(90, Math.max(5, Math.round(rawTime))) : 20;
 
   return {
+    type,
     text,
     answers: normalizedAnswers,
     correctIndex,
     timeLimit
   };
+}
+
+function normalizeQuestionType(value) {
+  const key = String(value || "multiple")
+    .trim()
+    .toLowerCase()
+    .replace(/[\/\s]+/g, "_")
+    .replace(/-/g, "_");
+  return QUESTION_TYPE_ALIASES[key] || "multiple";
 }
 
 function normalizeNickname(value) {
@@ -1480,22 +1720,25 @@ function defaultQuiz() {
     title: "Demo QuizLive",
     questions: [
       {
+        type: "multiple",
         text: "Quale tecnologia permette risposte live tra host e telefoni?",
         answers: ["WebSocket", "Solo email", "PDF", "Bluetooth spento"],
         correctIndex: 0,
         timeLimit: 20
       },
       {
+        type: "speed",
         text: "Quale formato e comodo per esportare risultati in un foglio di calcolo?",
-        answers: ["CSV", "PNG", "MP3", "MOV"],
+        answers: ["XLSX", "PNG", "MP3", "MOV"],
         correctIndex: 0,
-        timeLimit: 18
+        timeLimit: 12
       },
       {
-        text: "Cosa serve ai giocatori per entrare nella partita?",
-        answers: ["Codice stanza e nickname", "App store", "Cavo USB", "Account admin"],
+        type: "true_false",
+        text: "I giocatori entrano con codice stanza e nickname.",
+        answers: ["Vero", "Falso"],
         correctIndex: 0,
-        timeLimit: 20
+        timeLimit: 15
       }
     ]
   };

@@ -2,6 +2,11 @@ const socket = io();
 
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const answerClasses = ["answer-a", "answer-b", "answer-c", "answer-d", "answer-e", "answer-f"];
+const questionTypes = [
+  { value: "multiple", label: "Scelta multipla" },
+  { value: "true_false", label: "Vero/Falso" },
+  { value: "speed", label: "Risposta veloce" }
+];
 let local = {
   mode: initialMode(),
   room: null,
@@ -201,8 +206,9 @@ function renderHostHome() {
           <button class="btn primary" data-action="create-room">Crea stanza</button>
           <button class="btn teal" data-action="save-quiz">Salva quiz</button>
           <button class="btn ghost" data-action="add-question">Aggiungi domanda</button>
-          <button class="btn ghost" data-action="toggle-import">Import JSON</button>
-          <button class="btn ghost" data-action="download-quiz">Export quiz</button>
+          <button class="btn ghost" data-action="toggle-import">Import XLSX</button>
+          <button class="btn ghost" data-action="download-template-xlsx">Modello XLSX</button>
+          <button class="btn ghost" data-action="download-quiz-xlsx">Export XLSX</button>
           <button class="btn ghost" data-action="toggle-archive">Archivio</button>
         </div>
         ${local.importOpen ? renderImportBox() : ""}
@@ -260,18 +266,27 @@ function renderQuizBuilder() {
 }
 
 function renderQuestionEditor(question, questionIndex) {
-  const answers = paddedAnswers(question.answers);
+  const questionType = normalizeQuestionType(question.type);
+  const answers = editableAnswers(question);
+  const selectedCorrect = Math.min(Math.max(Number(question.correctIndex) || 0, 0), Math.max(answers.length - 1, 0));
   return `
     <article class="builder-question stack" data-question-index="${questionIndex}">
       <div class="question-head">
         <strong>Domanda ${questionIndex + 1}</strong>
+        <span class="status-pill compact">${escapeHtml(questionTypeLabel(questionType))}</span>
         <button class="btn small ghost" data-action="remove-question" data-question-index="${questionIndex}" ${local.quiz.questions.length <= 1 ? "disabled" : ""}>Rimuovi</button>
       </div>
       <label class="stack">
         <span>Testo domanda</span>
         <textarea data-question-text data-question-index="${questionIndex}" maxlength="240">${escapeHtml(question.text)}</textarea>
       </label>
-      <div class="grid-2">
+      <div class="grid-3">
+        <label class="stack">
+          <span>Tipo</span>
+          <select data-question-type data-question-index="${questionIndex}">
+            ${questionTypes.map((type) => `<option value="${type.value}" ${questionType === type.value ? "selected" : ""}>${type.label}</option>`).join("")}
+          </select>
+        </label>
         <label class="stack">
           <span>Tempo</span>
           <input data-question-time data-question-index="${questionIndex}" type="number" min="5" max="90" value="${question.timeLimit}" />
@@ -279,7 +294,7 @@ function renderQuestionEditor(question, questionIndex) {
         <label class="stack">
           <span>Risposta corretta</span>
           <select data-question-correct data-question-index="${questionIndex}">
-            ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${question.correctIndex === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || "")}</option>`).join("")}
+            ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${selectedCorrect === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || "")}</option>`).join("")}
           </select>
         </label>
       </div>
@@ -287,9 +302,9 @@ function renderQuestionEditor(question, questionIndex) {
         ${answers.map((answer, answerIndex) => `
           <div class="answer-editor">
             <span class="answer-key ${letterClass(answerIndex)}">${answerLetters[answerIndex]}</span>
-            <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" />
+            <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" ${questionType === "true_false" ? "readonly" : ""} />
             <label class="radio-label">
-              <input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${question.correctIndex === answerIndex ? "checked" : ""} />
+              <input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${selectedCorrect === answerIndex ? "checked" : ""} />
               Corretta
             </label>
           </div>
@@ -302,9 +317,14 @@ function renderQuestionEditor(question, questionIndex) {
 function renderImportBox() {
   return `
     <div class="panel flat stack">
-      <textarea data-field="import-json" placeholder='{"title":"...","questions":[...]}' spellcheck="false">${escapeHtml(local.importText)}</textarea>
+      <div>
+        <h2 class="mini-title">Importa quiz XLSX</h2>
+        <p class="subtle">Usa il modello QuizLive, compila le righe in Excel, Numbers o Google Sheets, poi ricarica il file qui.</p>
+      </div>
+      <input data-field="import-xlsx" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
       <div class="toolbar">
-        <button class="btn teal" data-action="apply-import">Importa</button>
+        <button class="btn teal" data-action="apply-import-xlsx">Importa XLSX</button>
+        <button class="btn ghost" data-action="download-template-xlsx">Scarica modello</button>
         <button class="btn ghost" data-action="toggle-import">Chiudi</button>
       </div>
     </div>
@@ -475,6 +495,7 @@ function renderScreenQuestion(room) {
         <h1 class="screen-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
           <div class="timer">${secondsLeft(room)}</div>
+          <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
@@ -493,6 +514,7 @@ function renderScreenReveal(room) {
         <p class="screen-kicker">Risultati domanda ${room.currentIndex + 1}/${room.totalQuestions}</p>
         <h1 class="screen-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
+          <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
@@ -506,13 +528,17 @@ function renderScreenReveal(room) {
 
 function renderScreenEnded(room) {
   return `
-    <div class="panel screen-panel stack">
+    <div class="panel screen-panel screen-final stack">
       <div>
         <p class="screen-kicker">${escapeHtml(room.title)}</p>
         <h1 class="screen-title">Classifica finale</h1>
       </div>
-      ${renderPodium(room)}
-      ${renderLeaderboard(room)}
+      <div class="screen-podium-wrap">
+        ${renderPodium(room)}
+      </div>
+      <div class="screen-final-board">
+        ${renderLeaderboard(room)}
+      </div>
     </div>
   `;
 }
@@ -525,6 +551,7 @@ function renderHostQuestion(room) {
         <h1 class="question-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
           <div class="timer">${secondsLeft(room)}</div>
+          <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           <span class="status-pill">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</span>
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
@@ -612,6 +639,7 @@ function renderPlayerQuestion(room) {
         <h1 class="question-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
           <div class="timer">${secondsLeft(room)}</div>
+          <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           <span class="status-pill">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</span>
           ${question.answered ? `<span class="status-pill">Risposta inviata</span>` : ""}
         </div>
@@ -633,6 +661,7 @@ function renderReveal(room, isHost) {
         <h1 class="question-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
           <span class="status-pill">${correct ? "Corretta" : isHost ? "Risultati" : "Risposta mostrata"}</span>
+          <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           ${playerAnswer ? `<span class="status-pill">+${playerAnswer.points} punti</span>` : ""}
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
@@ -776,6 +805,19 @@ function bindEvents() {
       local.quiz.questions[Number(element.dataset.questionIndex)].timeLimit = Number(element.value);
     });
   });
+  document.querySelectorAll("[data-question-type]").forEach((element) => {
+    element.addEventListener("change", () => {
+      const question = local.quiz.questions[Number(element.dataset.questionIndex)];
+      question.type = normalizeQuestionType(element.value);
+      if (question.type === "true_false") {
+        question.answers = ["Vero", "Falso"];
+        question.correctIndex = Math.min(Number(question.correctIndex) || 0, 1);
+      } else if (!question.answers || question.answers.length < 2) {
+        question.answers = ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
+      }
+      render();
+    });
+  });
   document.querySelectorAll("[data-answer-text]").forEach((element) => {
     element.addEventListener("input", () => {
       const question = local.quiz.questions[Number(element.dataset.questionIndex)];
@@ -843,11 +885,14 @@ function handleAction(event) {
   if (action === "toggle-archive") toggleArchive();
   if (action === "refresh-archive") loadArchive();
   if (action === "apply-import") applyImport();
+  if (action === "apply-import-xlsx") importQuizXlsx();
   if (action === "save-quiz") saveQuiz();
   if (action === "load-saved-quiz") loadSavedQuiz(target.dataset.quizId);
   if (action === "delete-saved-quiz") deleteSavedQuiz(target.dataset.quizId);
   if (action === "delete-saved-result") deleteSavedResult(target.dataset.resultId);
   if (action === "download-quiz") downloadJson("quizlive-quiz.json", cleanQuiz(local.quiz));
+  if (action === "download-template-xlsx") downloadQuizTemplate();
+  if (action === "download-quiz-xlsx") downloadQuizXlsx();
   if (action === "switch-host") {
     switchMode("host");
     loadHostAuth();
@@ -878,6 +923,7 @@ function handleAction(event) {
 
 function addQuestion() {
   local.quiz.questions.push({
+    type: "multiple",
     text: "Nuova domanda",
     answers: ["Risposta A", "Risposta B", "Risposta C", "Risposta D"],
     correctIndex: 0,
@@ -903,6 +949,98 @@ function applyImport() {
   } catch (error) {
     showToast("JSON non valido");
   }
+}
+
+async function importQuizXlsx() {
+  const input = document.querySelector("[data-field='import-xlsx']");
+  const file = input && input.files && input.files[0];
+  if (!file) {
+    showToast("Scegli un file XLSX");
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const response = await fetch("/api/quiz/import.xlsx", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ file: dataUrl })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Import non riuscito");
+    local.quiz = cleanQuiz(data.quiz);
+    local.currentQuizId = null;
+    local.importOpen = false;
+    showToast("Quiz XLSX importato");
+    render();
+  } catch (error) {
+    showToast(error.message || "Import XLSX non riuscito");
+  }
+}
+
+async function downloadQuizTemplate() {
+  await downloadUrl("/api/quiz-template.xlsx", "quizlive-modello.xlsx", "Modello XLSX scaricato");
+}
+
+async function downloadQuizXlsx() {
+  const quiz = cleanQuiz(local.quiz);
+  if (!quiz.questions.length) {
+    showToast("Aggiungi almeno una domanda");
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/quiz/export.xlsx", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ quiz })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Export non riuscito");
+    }
+    await downloadBlobResponse(response, "quizlive.xlsx");
+    showToast("Quiz XLSX esportato");
+  } catch (error) {
+    showToast(error.message || "Export XLSX non riuscito");
+  }
+}
+
+async function downloadUrl(url, fallbackName, successMessage) {
+  try {
+    const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+    if (!response.ok) throw new Error("Download non riuscito");
+    await downloadBlobResponse(response, fallbackName);
+    showToast(successMessage);
+  } catch (error) {
+    showToast(error.message || "Download non riuscito");
+  }
+}
+
+async function downloadBlobResponse(response, fallbackName) {
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : fallbackName;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("File non leggibile"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function toggleArchive() {
@@ -1402,11 +1540,13 @@ function cleanQuiz(input) {
   return {
     title: String(source.title || "QuizLive").trim().slice(0, 80) || "QuizLive",
     questions: questions.map((question, index) => {
-      const answers = paddedAnswers(question.answers)
+      const type = normalizeQuestionType(question.type);
+      const answers = (type === "true_false" ? ["Vero", "Falso"] : paddedAnswers(question.answers))
         .map((answer) => String(answer || "").trim())
         .filter(Boolean)
         .slice(0, 6);
       return {
+        type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
         answers,
         correctIndex: Math.min(Math.max(Number(question.correctIndex) || 0, 0), Math.max(answers.length - 1, 0)),
@@ -1420,6 +1560,24 @@ function paddedAnswers(answers) {
   const result = Array.isArray(answers) ? answers.slice(0, 6) : [];
   while (result.length < 4) result.push("");
   return result;
+}
+
+function editableAnswers(question) {
+  if (normalizeQuestionType(question.type) === "true_false") return ["Vero", "Falso"];
+  return paddedAnswers(question.answers);
+}
+
+function normalizeQuestionType(type) {
+  const key = String(type || "multiple").trim().toLowerCase().replace(/[\/\s]+/g, "_").replace(/-/g, "_");
+  if (key === "vero_falso" || key === "verofalso" || key === "true_false" || key === "truefalse") return "true_false";
+  if (key === "veloce" || key === "risposta_veloce" || key === "speed" || key === "fast") return "speed";
+  if (key === "multipla" || key === "scelta_multipla") return "multiple";
+  return "multiple";
+}
+
+function questionTypeLabel(type) {
+  const found = questionTypes.find((item) => item.value === normalizeQuestionType(type));
+  return found ? found.label : "Scelta multipla";
 }
 
 function secondsLeft(room) {
@@ -1605,22 +1763,25 @@ function defaultQuiz() {
     title: "Demo QuizLive",
     questions: [
       {
+        type: "multiple",
         text: "Quale tecnologia permette risposte live tra host e telefoni?",
         answers: ["WebSocket", "Solo email", "PDF", "Bluetooth spento"],
         correctIndex: 0,
         timeLimit: 20
       },
       {
+        type: "speed",
         text: "Quale formato e comodo per esportare risultati in un foglio di calcolo?",
-        answers: ["CSV", "PNG", "MP3", "MOV"],
+        answers: ["XLSX", "PNG", "MP3", "MOV"],
         correctIndex: 0,
-        timeLimit: 18
+        timeLimit: 12
       },
       {
-        text: "Cosa serve ai giocatori per entrare nella partita?",
-        answers: ["Codice stanza e nickname", "App store", "Cavo USB", "Account admin"],
+        type: "true_false",
+        text: "I giocatori entrano con codice stanza e nickname.",
+        answers: ["Vero", "Falso"],
         correctIndex: 0,
-        timeLimit: 20
+        timeLimit: 15
       }
     ]
   };
