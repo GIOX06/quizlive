@@ -134,7 +134,6 @@ function renderJoinHome() {
         </label>
         <div class="toolbar">
           <button class="btn teal" data-action="join-room">Entra in partita</button>
-          <button class="btn ghost" data-action="switch-host">Area host</button>
         </div>
       </div>
     </section>
@@ -175,7 +174,7 @@ function renderHostHome() {
         <div class="toolbar">
           <button class="btn ghost" data-action="open-waiting-screen">Apri monitor</button>
           ${local.hostAuth.enabled ? `<button class="btn ghost" data-action="host-logout">Blocca host</button>` : ""}
-          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+          <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
         </div>
       </div>
       <div class="panel stack">
@@ -204,7 +203,7 @@ function renderHostAccess() {
             <h1 class="section-title">Accesso host</h1>
             <p class="subtle">Controllo accesso...</p>
           </div>
-          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+          <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
         </div>
       </section>
     `;
@@ -223,7 +222,7 @@ function renderHostAccess() {
         </label>
         <div class="toolbar">
           <button class="btn primary" data-action="host-login" ${local.hostAuth.loading ? "disabled" : ""}>Sblocca host</button>
-          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+          <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
         </div>
       </div>
     </section>
@@ -402,6 +401,7 @@ function renderHostLobby(room) {
           <span class="status-pill">Codice ${escapeHtml(room.code)}</span>
           <span class="status-pill ${playerAccessClass()}">${escapeHtml(playerBaseLabel())}</span>
           <button class="btn ghost" data-action="copy-player-link">Copia link</button>
+          <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
           <button class="btn ghost" data-action="copy-screen-link">Copia monitor</button>
           <button class="btn ghost" data-action="open-screen-link">Apri monitor</button>
         </div>
@@ -836,6 +836,7 @@ function handleAction(event) {
   if (action === "host-login") hostLogin();
   if (action === "host-logout") hostLogout();
   if (action === "copy-player-link") copyPlayerLink();
+  if (action === "open-player-link") openPlayerLink();
   if (action === "open-waiting-screen") openWaitingScreen();
   if (action === "copy-screen-link") copyScreenLink();
   if (action === "open-screen-link") openScreenLink();
@@ -1075,6 +1076,13 @@ async function copyPlayerLink() {
     const copied = fallbackCopy(link);
     showToast(copied ? message : "Copia non riuscita");
   }
+}
+
+function openPlayerLink() {
+  const link = local.room && local.room.code
+    ? playerLink(local.room.code)
+    : `${playerBaseUrl()}/#join`;
+  window.open(link, "_blank", "noopener,noreferrer");
 }
 
 async function copyScreenLink() {
