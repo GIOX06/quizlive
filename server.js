@@ -209,12 +209,12 @@ app.get("/api/media/:id", async (req, res) => {
 
 app.post("/api/images/search", requireHostHttp, async (req, res) => {
   try {
+    const query = buildImageSearchQuery(req.body || {});
     if (!PEXELS_API_KEY) {
-      res.status(501).json({ ok: false, error: "Aggiungi PEXELS_API_KEY su Render per usare la ricerca immagini" });
+      res.status(501).json({ ok: false, error: "Aggiungi PEXELS_API_KEY su Render per usare la ricerca immagini", query });
       return;
     }
 
-    const query = buildImageSearchQuery(req.body || {});
     const url = new URL("https://api.pexels.com/v1/search");
     url.searchParams.set("query", query);
     url.searchParams.set("orientation", "landscape");
@@ -2317,16 +2317,24 @@ function buildImageSearchQuery(payload) {
 
   const quiz = payload && payload.quiz && typeof payload.quiz === "object" ? payload.quiz : {};
   const question = payload && payload.question && typeof payload.question === "object" ? payload.question : {};
-  const tags = Array.isArray(quiz.tags) ? quiz.tags.join(" ") : quiz.tags || "";
-  const text = [
+  const subjectWords = imageSearchKeywords(quiz.subject).slice(0, 3);
+  const questionWords = imageSearchKeywords([
     question.text,
-    quiz.subject,
-    quiz.folder,
-    tags,
-    quiz.title
-  ].filter(Boolean).join(" ");
-  const words = imageSearchKeywords(text);
-  return words.length ? words.slice(0, 7).join(" ") : "education classroom quiz";
+    correctAnswerTextForSearch(question)
+  ].filter(Boolean).join(" ")).slice(0, 7);
+  const queryWords = Array.from(new Set([...subjectWords, ...questionWords]));
+  return queryWords.length ? queryWords.join(" ") : "education classroom";
+}
+
+function correctAnswerTextForSearch(question) {
+  const answers = Array.isArray(question && question.answers) ? question.answers : [];
+  const indexes = Array.isArray(question && question.correctIndexes) && question.correctIndexes.length
+    ? question.correctIndexes
+    : [question && question.correctIndex];
+  return uniqueAnswerIndexes(indexes)
+    .map((index) => answers[index])
+    .filter(Boolean)
+    .join(" ");
 }
 
 function imageSearchKeywords(text) {

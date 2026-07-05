@@ -83,9 +83,16 @@ async function main() {
     quiz.questions[0].imagePageUrl = "https://www.pexels.com/photo/smoke-test-123/";
 
     const imageSearch = await postJsonRaw("/api/images/search", {
-      quiz,
-      question: quiz.questions[0]
+      quiz: { subject: "Geografia" },
+      question: {
+        text: "Quale pianeta e conosciuto come pianeta rosso nel sistema solare?",
+        answers: ["Venere", "Marte", "Giove", "Saturno"],
+        correctIndex: 1
+      }
     });
+    assert.match(imageSearch.data.query, /geografia/);
+    assert.match(imageSearch.data.query, /pianeta/);
+    assert.match(imageSearch.data.query, /marte/);
     if (imageSearch.status === 501) {
       assert.match(imageSearch.data.error, /PEXELS_API_KEY/);
     } else {

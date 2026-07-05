@@ -138,7 +138,7 @@ Host login sessions last up to 12 hours and reset when the service restarts.
 
 ## Image suggestions
 
-The host editor can suggest photos related to a question by searching Pexels. Add this environment variable to enable it:
+The host editor can suggest photos related to a question by searching Pexels. The automatic search query is built from the quiz subject and the question content. Add this environment variable to enable it:
 
 ```text
 PEXELS_API_KEY=your-pexels-api-key
