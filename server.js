@@ -453,6 +453,26 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:update-quiz", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+    if (room.status !== "lobby" && room.status !== "ended") {
+      sendAck(ack, { ok: false, error: "Termina o resetta la partita prima di cambiare quiz" });
+      return;
+    }
+    try {
+      const quiz = normalizeQuiz(payload && payload.quiz);
+      await updateRoomQuiz(room, quiz);
+      sendAck(ack, { ok: true, code: room.code });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("host:release-screens", async (_payload, ack) => {
     const room = getHostRoom(socket);
     if (!room) {
@@ -569,6 +589,11 @@ io.on("connection", (socket) => {
       player.rematch = "accepted";
       player.connected = true;
       player.joinedAt = Date.now();
+      if (!room.quiz.teamMode) {
+        player.team = "";
+      } else if (!player.team) {
+        player.team = assignTeam(room);
+      }
       sendAck(ack, { ok: true });
       emitRoom(room);
       return;
@@ -690,6 +715,35 @@ async function resetRoom(room) {
 
   await attachWaitingScreens(room);
   await emitRoom(room);
+}
+
+async function updateRoomQuiz(room, quiz) {
+  const invitePreviousPlayers = room.status === "ended";
+  clearRoomTimer(room);
+  room.quiz = quiz;
+  room.status = "lobby";
+  room.currentIndex = -1;
+  room.questionStartedAt = null;
+  room.questionEndsAt = null;
+  room.resultId = null;
+  room.answers.clear();
+
+  if (invitePreviousPlayers) {
+    inviteRematchPlayers(room);
+    await attachWaitingScreens(room);
+    return;
+  }
+
+  removeInactivePlayers(room, "Sei stato escluso dalla nuova partita");
+  for (const player of activePlayers(room)) {
+    resetPlayerForNewGame(player);
+    if (!room.quiz.teamMode) {
+      player.team = "";
+    } else if (!player.team) {
+      player.team = assignTeam(room);
+    }
+  }
+  await attachWaitingScreens(room);
 }
 
 function inviteRematchPlayers(room) {
@@ -895,6 +949,7 @@ function serializeRoom(room, socket) {
     subject: room.quiz.subject,
     level: room.quiz.level,
     language: room.quiz.language,
+    quiz: role === "host" ? room.quiz : undefined,
     tags: room.quiz.tags,
     teamMode: Boolean(room.quiz.teamMode),
     totalQuestions: room.quiz.questions.length,

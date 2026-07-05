@@ -9,6 +9,7 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 - Player phones can recover the same seat after a refresh or temporary network drop.
 - A public monitor view can show the lobby QR code, questions, answer reveal, and leaderboard on a TV or projector.
 - Host lobby shows a QR code for quick player entry.
+- Host can reset to the lobby or change the quiz while keeping the same room code, monitor, and connected players.
 - Questions run in realtime with a server-side timer.
 - Scores include correctness, speed, streak bonuses, a speed-focused question type, and multi-answer questions.
 - Multi-answer questions support partial scoring: exact answers get full points, partly correct answers get half points, fully wrong answers get zero.

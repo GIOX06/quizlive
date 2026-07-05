@@ -32,6 +32,7 @@ let local = {
   archiveSearch: "",
   archiveVisibility: "all",
   imageSuggestions: {},
+  hostEditingRoom: false,
   currentQuizId: null,
   joinCode: initialJoinCode(),
   screenCode: initialScreenCode(),
@@ -128,6 +129,9 @@ function renderTopbar() {
 }
 
 function renderMain() {
+  if (local.hostEditingRoom && local.room && local.room.role === "host") {
+    return hostAccessGranted() ? renderHostHome() : renderHostAccess();
+  }
   if (!local.room) {
     if (local.mode === "host") return hostAccessGranted() ? renderHostHome() : renderHostAccess();
     if (local.mode === "screen") return renderScreenHome();
@@ -206,14 +210,16 @@ function renderCastScreenButton() {
 }
 
 function renderHostHome() {
+  const editingRoom = local.hostEditingRoom && local.room && local.room.role === "host";
   return `
     <section class="stack">
       <div class="host-header">
         <div>
-          <h1 class="section-title">Crea partita</h1>
-          <p class="subtle">Quiz, lobby, timer, punteggio e risultati esportabili.</p>
+          <h1 class="section-title">${editingRoom ? `Cambia quiz stanza ${escapeHtml(local.room.code)}` : "Crea partita"}</h1>
+          <p class="subtle">${editingRoom ? "Carica o modifica un quiz mantenendo stesso codice, monitor e giocatori." : "Quiz, lobby, timer, punteggio e risultati esportabili."}</p>
         </div>
         <div class="toolbar">
+          ${editingRoom ? `<button class="btn ghost" data-action="cancel-room-edit">Torna lobby</button>` : ""}
           <button class="btn ghost" data-action="open-waiting-screen">Apri monitor</button>
           ${renderCastScreenButton()}
           ${local.hostAuth.enabled ? `<button class="btn ghost" data-action="host-logout">Blocca host</button>` : ""}
@@ -223,8 +229,8 @@ function renderHostHome() {
       <div class="panel stack">
         ${renderQuizBuilder()}
         <div class="toolbar">
-          <button class="btn primary" data-action="create-room">Crea stanza</button>
-          <button class="btn gold" data-action="quick-start-room">Avvia subito</button>
+          <button class="btn primary" data-action="create-room">${editingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
+          <button class="btn gold" data-action="quick-start-room">${editingRoom ? "Aggiorna e avvia" : "Avvia subito"}</button>
           <button class="btn teal" data-action="save-quiz">Salva quiz</button>
           <button class="btn ghost" data-action="add-question">Aggiungi domanda</button>
           <button class="btn ghost" data-action="toggle-import">Import XLSX</button>
@@ -591,6 +597,7 @@ function renderHostGame(room) {
         <div class="toolbar">
           ${room.exports ? `<a class="btn ghost" href="${room.exports.csv}">CSV</a><a class="btn ghost" href="${room.exports.json}">JSON</a><a class="btn ghost" href="${room.exports.xlsx}">XLSX</a>` : ""}
           ${room.status === "ended" ? `<button class="btn ghost" data-action="release-screens">Monitor in attesa</button>` : ""}
+          ${room.status === "ended" ? `<button class="btn ghost" data-action="back-to-builder">Cambia quiz</button>` : ""}
           <button class="btn ghost" data-action="reset-room">Reset</button>
         </div>
         <div>
@@ -626,6 +633,7 @@ function renderHostLobby(room) {
       </div>
       <div class="toolbar">
         <button class="btn primary" data-action="start-game" ${room.totalQuestions < 1 ? "disabled" : ""}>Avvia quiz</button>
+        <button class="btn ghost" data-action="back-to-builder">Cambia quiz</button>
       </div>
     </div>
   `;
@@ -1347,6 +1355,8 @@ function handleAction(event) {
   if (action === "reveal-question") emitHost("host:reveal");
   if (action === "next-question") emitHost("host:next");
   if (action === "reset-room") emitHost("host:reset");
+  if (action === "back-to-builder") editCurrentRoomQuiz();
+  if (action === "cancel-room-edit") cancelRoomEdit();
   if (action === "release-screens") releaseScreens();
   if (action === "answer") answer(Number(target.dataset.answerIndex));
   if (action === "submit-multiple-answer") submitMultipleAnswer();
@@ -1695,6 +1705,26 @@ async function deleteSavedResult(id) {
   }
 }
 
+function editCurrentRoomQuiz() {
+  if (!local.room || local.room.role !== "host") return;
+  local.quiz = roomToEditableQuiz(local.room);
+  local.currentQuizId = null;
+  local.selectedAnswer = null;
+  local.selectedAnswers = [];
+  local.archiveOpen = true;
+  local.hostEditingRoom = true;
+  local.mode = "host";
+  window.history.replaceState(null, "", "#host");
+  showToast("Builder pronto");
+  loadArchive();
+  render();
+}
+
+function cancelRoomEdit() {
+  local.hostEditingRoom = false;
+  render();
+}
+
 function createRoom(quickStart = false) {
   if (!hostAccessGranted()) {
     showToast("Password host richiesta");
@@ -1707,14 +1737,32 @@ function createRoom(quickStart = false) {
     showToast("Aggiungi almeno una domanda");
     return;
   }
+  if (local.hostEditingRoom && local.room && local.room.role === "host") {
+    updateCurrentRoomQuiz(quiz, quickStart);
+    return;
+  }
   socket.emit("host:create", { quiz }, (response) => {
     if (!response || !response.ok) {
       showToast(response && response.error ? response.error : "Errore creazione stanza");
       return;
     }
     switchMode("host", true);
+    local.hostEditingRoom = false;
     showToast(`Stanza ${response.code} creata`);
     if (quickStart) emitHost("host:start");
+  });
+}
+
+function updateCurrentRoomQuiz(quiz, quickStart) {
+  socket.emit("host:update-quiz", { quiz }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Aggiornamento stanza non riuscito");
+      return;
+    }
+    local.hostEditingRoom = false;
+    showToast("Stanza aggiornata");
+    if (quickStart) emitHost("host:start");
+    render();
   });
 }
 
@@ -2189,6 +2237,11 @@ function cleanQuiz(input) {
       };
     }).filter((question) => question.text && question.answers.length >= 2)
   };
+}
+
+function roomToEditableQuiz(room) {
+  if (room && room.quiz) return cleanQuiz(room.quiz);
+  return cleanQuiz(local.quiz);
 }
 
 function paddedAnswers(answers) {

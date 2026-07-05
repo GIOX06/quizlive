@@ -361,6 +361,31 @@ async function main() {
     const deletedResult = await deleteJson(`/api/archive/results/${savedResult.id}`);
     assert.equal(deletedResult.ok, true);
 
+    const replacementQuiz = {
+      ...quiz,
+      title: "Smoke Replacement",
+      questions: [
+        {
+          type: "multiple",
+          text: "Replacement question",
+          answers: ["One", "Two", "Three", "Four"],
+          correctIndex: 0,
+          timeLimit: 10
+        }
+      ]
+    };
+    const updatedRoomQuiz = await emitAck(host, "host:update-quiz", { quiz: replacementQuiz });
+    assert.equal(updatedRoomQuiz.ok, true);
+    assert.equal(updatedRoomQuiz.code, created.code);
+    await waitForState(host, (state) =>
+      state.status === "lobby" &&
+      state.code === created.code &&
+      state.title === "Smoke Replacement" &&
+      state.totalQuestions === 1 &&
+      state.quiz &&
+      state.quiz.title === "Smoke Replacement"
+    );
+
     const deletedQuiz = await deleteJson(`/api/archive/quizzes/${savedQuiz.quiz.id}`);
     assert.equal(deletedQuiz.ok, true);
 
