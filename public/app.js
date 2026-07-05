@@ -5,13 +5,15 @@ const answerClasses = ["answer-a", "answer-b", "answer-c", "answer-d", "answer-e
 const questionTypes = [
   { value: "multiple", label: "Scelta multipla" },
   { value: "true_false", label: "Vero/Falso" },
-  { value: "speed", label: "Risposta veloce" }
+  { value: "speed", label: "Risposta veloce" },
+  { value: "multiple_select", label: "Risposte multiple" }
 ];
 let local = {
   mode: initialMode(),
   room: null,
   quiz: defaultQuiz(),
   selectedAnswer: null,
+  selectedAnswers: [],
   importOpen: false,
   archiveOpen: false,
   archiveLoading: false,
@@ -63,6 +65,7 @@ socket.on("room:state", (room) => {
   }
   if (room.status !== "question") {
     local.selectedAnswer = null;
+    local.selectedAnswers = [];
   }
   render();
 });
@@ -269,6 +272,7 @@ function renderQuestionEditor(question, questionIndex) {
   const questionType = normalizeQuestionType(question.type);
   const answers = editableAnswers(question);
   const selectedCorrect = Math.min(Math.max(Number(question.correctIndex) || 0, 0), Math.max(answers.length - 1, 0));
+  const selectedCorrectIndexes = correctIndexesForQuestion(question, answers);
   return `
     <article class="builder-question stack" data-question-index="${questionIndex}">
       <div class="question-head">
@@ -292,10 +296,12 @@ function renderQuestionEditor(question, questionIndex) {
           <input data-question-time data-question-index="${questionIndex}" type="number" min="5" max="90" value="${question.timeLimit}" />
         </label>
         <label class="stack">
-          <span>Risposta corretta</span>
-          <select data-question-correct data-question-index="${questionIndex}">
-            ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${selectedCorrect === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || "")}</option>`).join("")}
-          </select>
+          <span>${questionType === "multiple_select" ? "Risposte da scegliere" : "Risposta corretta"}</span>
+          ${questionType === "multiple_select"
+            ? `<div class="readonly-field">${selectedCorrectIndexes.length}</div>`
+            : `<select data-question-correct data-question-index="${questionIndex}">
+                ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${selectedCorrect === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || "")}</option>`).join("")}
+              </select>`}
         </label>
       </div>
       <div class="stack">
@@ -304,7 +310,9 @@ function renderQuestionEditor(question, questionIndex) {
             <span class="answer-key ${letterClass(answerIndex)}">${answerLetters[answerIndex]}</span>
             <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" ${questionType === "true_false" ? "readonly" : ""} />
             <label class="radio-label">
-              <input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${selectedCorrect === answerIndex ? "checked" : ""} />
+              ${questionType === "multiple_select"
+                ? `<input type="checkbox" data-correct-checkbox data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${selectedCorrectIndexes.includes(answerIndex) ? "checked" : ""} />`
+                : `<input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${selectedCorrect === answerIndex ? "checked" : ""} />`}
               Corretta
             </label>
           </div>
@@ -496,6 +504,7 @@ function renderScreenQuestion(room) {
         <div class="meta-row">
           ${renderTimer(room)}
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
+          ${renderSelectionPill(question)}
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
@@ -515,6 +524,7 @@ function renderScreenReveal(room) {
         <h1 class="screen-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
+          ${renderSelectionPill(question)}
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
@@ -554,6 +564,23 @@ function renderTimer(room) {
   `;
 }
 
+function renderSelectionPill(question) {
+  if (!question || question.type !== "multiple_select") return "";
+  const count = selectionCount(question);
+  return `<span class="status-pill">Scegli ${count} risposte</span>`;
+}
+
+function renderSubmitMultiple(question) {
+  const required = selectionCount(question);
+  const selected = local.selectedAnswers.length;
+  return `
+    <div class="toolbar answer-submit">
+      <button class="btn primary" data-action="submit-multiple-answer" ${selected !== required ? "disabled" : ""}>Invia risposte</button>
+      <span class="subtle">${selected}/${required} selezionate</span>
+    </div>
+  `;
+}
+
 function renderHostQuestion(room) {
   const question = room.question;
   return `
@@ -563,6 +590,7 @@ function renderHostQuestion(room) {
         <div class="meta-row">
           ${renderTimer(room)}
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
+          ${renderSelectionPill(question)}
           <span class="status-pill">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</span>
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
@@ -651,6 +679,7 @@ function renderPlayerQuestion(room) {
         <div class="meta-row">
           ${renderTimer(room)}
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
+          ${renderSelectionPill(question)}
           <span class="status-pill">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</span>
           ${question.answered ? `<span class="status-pill">Risposta inviata</span>` : ""}
         </div>
@@ -659,6 +688,7 @@ function renderPlayerQuestion(room) {
         ${question.answers.map((answer) => renderAnswerButton(answer, question)).join("")}
       </div>
     </article>
+    ${question.type === "multiple_select" && !question.answered ? renderSubmitMultiple(question) : ""}
   `;
 }
 
@@ -673,6 +703,7 @@ function renderReveal(room, isHost) {
         <div class="meta-row">
           <span class="status-pill">${correct ? "Corretta" : isHost ? "Risultati" : "Risposta mostrata"}</span>
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
+          ${renderSelectionPill(question)}
           ${playerAnswer ? `<span class="status-pill">+${playerAnswer.points} punti</span>` : ""}
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
@@ -763,7 +794,14 @@ function renderLeaderboard(room) {
 }
 
 function renderAnswerButton(answer, question, reveal = false) {
-  const selected = local.selectedAnswer === answer.index || (question.playerAnswer && question.playerAnswer.answerIndex === answer.index);
+  const playerIndexes = question.playerAnswer && Array.isArray(question.playerAnswer.answerIndexes)
+    ? question.playerAnswer.answerIndexes
+    : question.playerAnswer
+      ? [question.playerAnswer.answerIndex]
+      : [];
+  const selected = local.selectedAnswer === answer.index ||
+    local.selectedAnswers.includes(answer.index) ||
+    playerIndexes.includes(answer.index);
   const correct = reveal && answer.correct;
   const wrong = reveal && selected && !answer.correct;
   return `
@@ -788,10 +826,12 @@ function renderAnswerDisplay(answer) {
 
 function renderAnswerStat(answer, playerCount) {
   const percent = playerCount ? Math.round((Number(answer.count || 0) / playerCount) * 100) : 0;
+  const hasMark = typeof answer.correct === "boolean";
   return `
-    <div class="answer-stat ${answerClasses[answer.index]} ${answer.correct ? "correct" : ""}">
+    <div class="answer-stat ${answerClasses[answer.index]} ${answer.correct ? "correct" : ""} ${hasMark && !answer.correct ? "incorrect" : ""}">
       <span class="letter">${answerLetters[answer.index]}</span>
       <span class="answer-text">${escapeHtml(answer.text)} - ${answer.count || 0}</span>
+      ${hasMark ? `<span class="answer-mark ${answer.correct ? "ok" : "no"}" aria-label="${answer.correct ? "Corretta" : "Sbagliata"}">${answer.correct ? "&#10003;" : "&times;"}</span>` : ""}
       <span class="stat-bar"><span style="width:${percent}%"></span></span>
     </div>
   `;
@@ -823,8 +863,13 @@ function bindEvents() {
       if (question.type === "true_false") {
         question.answers = ["Vero", "Falso"];
         question.correctIndex = Math.min(Number(question.correctIndex) || 0, 1);
+        question.correctIndexes = [question.correctIndex];
+      } else if (question.type === "multiple_select") {
+        question.answers = question.answers && question.answers.length >= 2 ? question.answers : ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
+        question.correctIndexes = correctIndexesForQuestion(question, editableAnswers(question));
       } else if (!question.answers || question.answers.length < 2) {
         question.answers = ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
+        question.correctIndexes = [Number(question.correctIndex) || 0];
       }
       render();
     });
@@ -839,6 +884,23 @@ function bindEvents() {
     element.addEventListener("change", () => {
       const question = local.quiz.questions[Number(element.dataset.questionIndex)];
       question.correctIndex = Number(element.dataset.answerIndex || element.value);
+      question.correctIndexes = [question.correctIndex];
+      render();
+    });
+  });
+  document.querySelectorAll("[data-correct-checkbox]").forEach((element) => {
+    element.addEventListener("change", () => {
+      const question = local.quiz.questions[Number(element.dataset.questionIndex)];
+      const answerIndex = Number(element.dataset.answerIndex);
+      const current = correctIndexesForQuestion(question, editableAnswers(question));
+      if (element.checked) {
+        question.correctIndexes = Array.from(new Set([...current, answerIndex])).sort((a, b) => a - b);
+      } else if (current.length > 2) {
+        question.correctIndexes = current.filter((index) => index !== answerIndex);
+      } else {
+        showToast("Servono almeno 2 corrette");
+      }
+      question.correctIndex = question.correctIndexes[0] || 0;
       render();
     });
   });
@@ -927,6 +989,7 @@ function handleAction(event) {
   if (action === "reset-room") emitHost("host:reset");
   if (action === "release-screens") releaseScreens();
   if (action === "answer") answer(Number(target.dataset.answerIndex));
+  if (action === "submit-multiple-answer") submitMultipleAnswer();
   if (action === "accept-rematch") respondRematch(true);
   if (action === "decline-rematch") respondRematch(false);
   if (action === "leave-room") leaveRoomLocally("Puoi rientrare con codice e nickname");
@@ -1512,12 +1575,45 @@ function releaseScreens() {
 }
 
 function answer(answerIndex) {
+  const question = local.room && local.room.question;
+  if (question && question.type === "multiple_select" && !question.answered) {
+    const required = selectionCount(question);
+    const selected = new Set(local.selectedAnswers);
+    if (selected.has(answerIndex)) {
+      selected.delete(answerIndex);
+    } else if (selected.size < required) {
+      selected.add(answerIndex);
+    } else {
+      showToast(`Scegli solo ${required} risposte`);
+    }
+    local.selectedAnswers = Array.from(selected).sort((a, b) => a - b);
+    render();
+    return;
+  }
+
   local.selectedAnswer = answerIndex;
   render();
   socket.emit("player:answer", { answerIndex }, (response) => {
     if (!response || !response.ok) {
       showToast(response && response.error ? response.error : "Risposta non inviata");
     }
+  });
+}
+
+function submitMultipleAnswer() {
+  const question = local.room && local.room.question;
+  if (!question || question.type !== "multiple_select") return;
+  const required = selectionCount(question);
+  if (local.selectedAnswers.length !== required) {
+    showToast(`Seleziona ${required} risposte`);
+    return;
+  }
+  socket.emit("player:answer", { answerIndexes: local.selectedAnswers }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Risposte non inviate");
+      return;
+    }
+    local.selectedAnswers = [];
   });
 }
 
@@ -1539,6 +1635,7 @@ function leaveRoomLocally(message) {
   const code = local.room && local.room.code;
   local.room = null;
   local.selectedAnswer = null;
+  local.selectedAnswers = [];
   if (code) local.joinCode = code;
   switchMode("join", true);
   showToast(message);
@@ -1556,11 +1653,13 @@ function cleanQuiz(input) {
         .map((answer) => String(answer || "").trim())
         .filter(Boolean)
         .slice(0, 6);
+      const correctIndexes = normalizeCorrectIndexes(question, answers, type);
       return {
         type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
         answers,
-        correctIndex: Math.min(Math.max(Number(question.correctIndex) || 0, 0), Math.max(answers.length - 1, 0)),
+        correctIndex: correctIndexes[0] || 0,
+        correctIndexes,
         timeLimit: Math.min(90, Math.max(5, Math.round(Number(question.timeLimit) || 20)))
       };
     }).filter((question) => question.text && question.answers.length >= 2)
@@ -1578,10 +1677,39 @@ function editableAnswers(question) {
   return paddedAnswers(question.answers);
 }
 
+function normalizeCorrectIndexes(question, answers, type) {
+  const source = Array.isArray(question.correctIndexes) && question.correctIndexes.length
+    ? question.correctIndexes
+    : [question.correctIndex];
+  let indexes = Array.from(new Set(source
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value < answers.length)))
+    .sort((a, b) => a - b);
+  if (!indexes.length) indexes = [0];
+  if (type === "multiple_select" && indexes.length < 2 && answers.length >= 2) {
+    const fallback = answers.findIndex((_answer, index) => !indexes.includes(index));
+    indexes = Array.from(new Set([...indexes, fallback >= 0 ? fallback : 0])).sort((a, b) => a - b);
+  }
+  return type === "multiple_select" ? indexes : [indexes[0]];
+}
+
+function correctIndexesForQuestion(question, answers) {
+  return normalizeCorrectIndexes(question, answers, normalizeQuestionType(question.type));
+}
+
+function selectionCount(question) {
+  if (Number.isInteger(question.selectionCount) && question.selectionCount > 0) return question.selectionCount;
+  const answers = Array.isArray(question.answers) ? question.answers : [];
+  return normalizeQuestionType(question.type) === "multiple_select"
+    ? correctIndexesForQuestion(question, answers).length
+    : 1;
+}
+
 function normalizeQuestionType(type) {
   const key = String(type || "multiple").trim().toLowerCase().replace(/[\/\s]+/g, "_").replace(/-/g, "_");
   if (key === "vero_falso" || key === "verofalso" || key === "true_false" || key === "truefalse") return "true_false";
   if (key === "veloce" || key === "risposta_veloce" || key === "speed" || key === "fast") return "speed";
+  if (key === "risposte_multiple" || key === "risposta_multipla" || key === "multiple_select" || key === "multi_select" || key === "multiple_correct") return "multiple_select";
   if (key === "multipla" || key === "scelta_multipla") return "multiple";
   return "multiple";
 }
@@ -1817,6 +1945,13 @@ function defaultQuiz() {
         answers: ["Vero", "Falso"],
         correctIndex: 0,
         timeLimit: 15
+      },
+      {
+        type: "multiple_select",
+        text: "Quali schermate sono pensate per il pubblico?",
+        answers: ["Monitor", "Classifica", "Password host", "Domanda live"],
+        correctIndexes: [0, 1, 3],
+        timeLimit: 18
       }
     ]
   };

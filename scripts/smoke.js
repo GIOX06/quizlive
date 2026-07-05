@@ -15,6 +15,13 @@ const quiz = {
       answers: ["Yes", "No", "Maybe", "Later"],
       correctIndex: 0,
       timeLimit: 8
+    },
+    {
+      type: "multiple_select",
+      text: "Pick the live parts",
+      answers: ["Host", "Phone", "Wallpaper", "Public screen"],
+      correctIndexes: [0, 1, 3],
+      timeLimit: 8
     }
   ]
 };
@@ -71,6 +78,8 @@ async function main() {
     assert.equal(importedQuiz.quiz.title, quiz.title);
     assert.equal(importedQuiz.quiz.questions[0].type, "speed");
     assert.equal(importedQuiz.quiz.questions[0].answers[0], "Yes");
+    assert.equal(importedQuiz.quiz.questions[1].type, "multiple_select");
+    assert.deepEqual(importedQuiz.quiz.questions[1].correctIndexes, [0, 1, 3]);
 
     const templateXlsx = await getBinary("/api/quiz-template.xlsx");
     assert.ok(templateXlsx.length > 1000);
@@ -150,6 +159,41 @@ async function main() {
       state.status === "reveal" &&
       state.question &&
       state.question.answers.some((answer) => answer.correct === true && answer.count === 1)
+    );
+
+    const nextQuestion = await emitAck(host, "host:next", {});
+    assert.equal(nextQuestion.ok, true);
+
+    await waitForState(player, (state) =>
+      state.role === "player" &&
+      state.status === "question" &&
+      state.question &&
+      state.question.type === "multiple_select" &&
+      state.question.selectionCount === 3
+    );
+
+    const incompleteMultiAnswered = await emitAck(player, "player:answer", { answerIndexes: [0, 1] });
+    assert.equal(incompleteMultiAnswered.ok, false);
+
+    const multiAnswered = await emitAck(player, "player:answer", { answerIndexes: [0, 1, 3] });
+    assert.equal(multiAnswered.ok, true);
+    assert.equal(multiAnswered.correct, true);
+
+    const wrongMultiAnswered = await emitAck(decliningPlayer, "player:answer", { answerIndexes: [0, 2, 3] });
+    assert.equal(wrongMultiAnswered.ok, true);
+    assert.equal(wrongMultiAnswered.correct, false);
+
+    const multiReveal = await emitAck(host, "host:reveal", {});
+    assert.equal(multiReveal.ok, true);
+
+    await waitForState(screen, (state) =>
+      state.role === "screen" &&
+      state.status === "reveal" &&
+      state.question &&
+      state.question.type === "multiple_select" &&
+      state.question.answers.filter((answer) => answer.correct === true).length === 3 &&
+      state.question.answers.some((answer) => answer.index === 2 && answer.count === 1) &&
+      state.question.answers.some((answer) => answer.correct === false)
     );
 
     const ended = await emitAck(host, "host:next", {});
