@@ -802,15 +802,17 @@ function renderAnswerButton(answer, question, reveal = false) {
   const selected = local.selectedAnswer === answer.index ||
     local.selectedAnswers.includes(answer.index) ||
     playerIndexes.includes(answer.index);
-  const correct = reveal && answer.correct;
-  const wrong = reveal && selected && !answer.correct;
+  const hasMark = reveal && typeof answer.correct === "boolean";
+  const correct = hasMark && answer.correct;
+  const wrong = hasMark && !answer.correct;
   return `
-    <button class="answer-btn ${answerClasses[answer.index]} ${selected ? "selected" : ""} ${correct ? "correct" : ""} ${wrong ? "wrong" : ""}"
+    <button class="answer-btn ${answerClasses[answer.index]} ${selected ? "selected" : ""} ${hasMark ? "with-mark" : ""} ${correct ? "correct" : ""} ${wrong ? "wrong" : ""}"
       data-action="answer"
       data-answer-index="${answer.index}"
       ${question.answered || reveal ? "disabled" : ""}>
       <span class="letter">${answerLetters[answer.index]}</span>
       <span class="answer-text">${escapeHtml(answer.text)}</span>
+      ${renderAnswerMark(answer.correct, hasMark)}
     </button>
   `;
 }
@@ -831,10 +833,15 @@ function renderAnswerStat(answer, playerCount) {
     <div class="answer-stat ${answerClasses[answer.index]} ${answer.correct ? "correct" : ""} ${hasMark && !answer.correct ? "incorrect" : ""}">
       <span class="letter">${answerLetters[answer.index]}</span>
       <span class="answer-text">${escapeHtml(answer.text)} - ${answer.count || 0}</span>
-      ${hasMark ? `<span class="answer-mark ${answer.correct ? "ok" : "no"}" aria-label="${answer.correct ? "Corretta" : "Sbagliata"}">${answer.correct ? "&#10003;" : "&times;"}</span>` : ""}
+      ${renderAnswerMark(answer.correct, hasMark)}
       <span class="stat-bar"><span style="width:${percent}%"></span></span>
     </div>
   `;
+}
+
+function renderAnswerMark(correct, visible) {
+  if (!visible) return "";
+  return `<span class="answer-mark ${correct ? "ok" : "no"}" aria-label="${correct ? "Corretta" : "Sbagliata"}">${correct ? "&#10003;" : "&times;"}</span>`;
 }
 
 function bindEvents() {

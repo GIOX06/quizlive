@@ -759,6 +759,7 @@ textarea {
   transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
 }
 
+.answer-btn.with-mark,
 .answer-stat {
   grid-template-columns: 2.7rem minmax(0, 1fr) auto;
 }
@@ -813,18 +814,19 @@ textarea {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.24);
   font-size: 1.85rem;
   font-weight: 950;
   line-height: 1;
 }
 
 .answer-mark.ok {
-  color: #e9fff0;
+  background: rgba(23, 122, 72, 0.92);
+  color: #fff;
 }
 
 .answer-mark.no {
-  color: #fff0f0;
+  background: rgba(156, 42, 42, 0.9);
+  color: #fff;
 }
 
 .answer-a {
