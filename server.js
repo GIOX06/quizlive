@@ -199,6 +199,16 @@ app.get("/api/rooms/:code/export/results.json", requireHostHttp, (req, res) => {
   res.json(resultsToJson(room));
 });
 
+app.get("/api/rooms/:code/export/results.xlsx", requireHostHttp, (req, res) => {
+  const room = rooms.get(normalizeCode(req.params.code));
+  if (!room) {
+    res.status(404).send("Room not found");
+    return;
+  }
+
+  sendWorkbook(res, resultToWorkbook(resultFromRoom(room)), `quizlive-${room.code}-results.xlsx`);
+});
+
 app.get("/api/archive/quizzes", requireHostHttp, async (_req, res) => {
   try {
     const quizzes = await listQuizzesFromStore();
@@ -269,6 +279,19 @@ app.get("/api/archive/results/:id.csv", requireHostHttp, async (req, res) => {
     res.setHeader("content-type", "text/csv; charset=utf-8");
     res.setHeader("content-disposition", `attachment; filename="quizlive-${result.code}-saved-results.csv"`);
     res.send(resultToCsv(result));
+  } catch (error) {
+    sendArchiveError(res, error);
+  }
+});
+
+app.get("/api/archive/results/:id.xlsx", requireHostHttp, async (req, res) => {
+  try {
+    const result = await findResult(req.params.id);
+    if (!result) {
+      res.status(404).send("Result not found");
+      return;
+    }
+    sendWorkbook(res, resultToWorkbook(result), `quizlive-${result.code}-saved-results.xlsx`);
   } catch (error) {
     sendArchiveError(res, error);
   }
@@ -785,13 +808,15 @@ function serializeRoom(room, socket) {
     players: role === "host" ? hostPlayers(room, answerMap) : undefined,
     leaderboard: leaderboard(room).slice(0, 10),
     teamLeaderboard: room.quiz.teamMode ? teamLeaderboard(room) : undefined,
+    questionSummaries: role === "host" ? questionSummaries(room) : undefined,
     answerCount: answerMap.size,
     playerCount: activePlayers(room).length,
     pendingInviteCount: role === "host" ? pendingInviteCount(room) : undefined,
     exports: role === "host"
       ? {
           csv: `/api/rooms/${room.code}/export/results.csv`,
-          json: `/api/rooms/${room.code}/export/results.json`
+          json: `/api/rooms/${room.code}/export/results.json`,
+          xlsx: `/api/rooms/${room.code}/export/results.xlsx`
         }
       : undefined
   };
@@ -857,6 +882,25 @@ function teamLeaderboard(room) {
     teams.set(team, current);
   }
   return Array.from(teams.values()).sort((a, b) => b.score - a.score || a.team.localeCompare(b.team));
+}
+
+function questionSummaries(room) {
+  const playerCount = activePlayers(room).length;
+  return room.quiz.questions.map((question, index) => {
+    const answerMap = room.answers.get(index) || new Map();
+    return {
+      index,
+      type: question.type,
+      typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
+      text: question.text,
+      stats: questionStats(question, answerMap, playerCount),
+      correctAnswers: correctIndexes(question).map((answerIndex) => ({
+        index: answerIndex,
+        letter: answerLetters[answerIndex] || String(answerIndex + 1),
+        text: question.answers[answerIndex] || ""
+      }))
+    };
+  });
 }
 
 function countAnswers(answerMap, answerIndex) {
@@ -1175,6 +1219,135 @@ function resultToCsv(result) {
   });
 
   return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function resultToWorkbook(result) {
+  const normalized = result && typeof result === "object" ? result : {};
+  const questions = Array.isArray(normalized.questions) ? normalized.questions : [];
+  const leaderboardItems = Array.isArray(normalized.leaderboard) ? normalized.leaderboard : [];
+  const teamItems = Array.isArray(normalized.teamLeaderboard) ? normalized.teamLeaderboard : [];
+  const workbook = XLSX.utils.book_new();
+  const averageAccuracy = questions.length
+    ? Math.round(questions.reduce((sum, question) => sum + Number(question.stats && question.stats.accuracy || 0), 0) / questions.length)
+    : 0;
+
+  appendSheet(workbook, "Riepilogo", [
+    ["QuizLive - risultati"],
+    ["Titolo", normalized.title || ""],
+    ["Codice stanza", normalized.code || ""],
+    ["Materia", normalized.subject || ""],
+    ["Livello", normalized.level || ""],
+    ["Lingua", normalized.language || ""],
+    ["Tag", Array.isArray(normalized.tags) ? normalized.tags.join(", ") : ""],
+    ["Team mode", normalized.teamMode ? "si" : "no"],
+    ["Creato", normalized.createdAt || ""],
+    ["Concluso/esportato", normalized.endedAt || normalized.exportedAt || new Date().toISOString()],
+    ["Giocatori", leaderboardItems.length],
+    ["Squadre", teamItems.length],
+    ["Domande", questions.length],
+    ["Accuracy media %", averageAccuracy]
+  ], [{ wch: 24 }, { wch: 60 }]);
+
+  appendSheet(workbook, "Classifica", [
+    ["Rank", "Nickname", "Team", "Punteggio", "Streak"],
+    ...leaderboardItems.map((player, index) => [
+      player.rank || index + 1,
+      player.nickname || "",
+      player.team || "",
+      Number(player.score || 0),
+      Number(player.streak || 0)
+    ])
+  ], [{ wch: 8 }, { wch: 28 }, { wch: 18 }, { wch: 14 }, { wch: 10 }]);
+
+  appendSheet(workbook, "Squadre", [
+    ["Rank", "Squadra", "Giocatori", "Punteggio"],
+    ...teamItems.map((team, index) => [
+      index + 1,
+      team.team || "",
+      Number(team.playerCount || 0),
+      Number(team.score || 0)
+    ])
+  ], [{ wch: 8 }, { wch: 22 }, { wch: 12 }, { wch: 14 }]);
+
+  appendSheet(workbook, "Domande", [
+    ["#", "Tipo", "Domanda", "Risposte corrette", "Risposte ricevute", "Corrette", "Parziali", "Sbagliate", "Risposta %", "Accuracy %"],
+    ...questions.map((question, index) => [
+      index + 1,
+      question.type || "",
+      question.text || "",
+      resultCorrectAnswerText(question),
+      Number(question.stats && question.stats.responseCount || 0),
+      Number(question.stats && question.stats.correctCount || 0),
+      Number(question.stats && question.stats.partialCount || 0),
+      Number(question.stats && question.stats.wrongCount || 0),
+      Number(question.stats && question.stats.answerRate || 0),
+      Number(question.stats && question.stats.accuracy || 0)
+    ])
+  ], [{ wch: 6 }, { wch: 18 }, { wch: 54 }, { wch: 34 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }]);
+
+  appendSheet(workbook, "Risposte", [
+    ["Domanda", "Nickname", "Team", "Risposta", "Esito", "Punti", "Data risposta"],
+    ...questions.flatMap((question, questionIndex) => {
+      const responses = Array.isArray(question.responses) ? question.responses : [];
+      return responses.map((response) => {
+        const player = leaderboardItems.find((item) => item.id === response.playerId) || {};
+        return [
+          questionIndex + 1,
+          response.nickname || player.nickname || "",
+          player.team || "",
+          response.answerText || "",
+          answerOutcome(response),
+          Number(response.points || 0),
+          response.answeredAt || ""
+        ];
+      });
+    })
+  ], [{ wch: 8 }, { wch: 28 }, { wch: 18 }, { wch: 44 }, { wch: 12 }, { wch: 10 }, { wch: 26 }]);
+
+  appendSheet(workbook, "Scelte", [
+    ["Domanda", "Lettera", "Risposta", "Corretta", "Scelte", "Scelte %"],
+    ...questions.flatMap((question, questionIndex) => {
+      const answers = Array.isArray(question.answers) ? question.answers : [];
+      const responses = Array.isArray(question.responses) ? question.responses : [];
+      return answers.map((answer, answerIndex) => {
+        const count = responses.filter((response) => {
+          const indexes = Array.isArray(response.answerIndexes) ? response.answerIndexes : [response.answerIndex];
+          return indexes.includes(answerIndex);
+        }).length;
+        return [
+          questionIndex + 1,
+          answerLetters[answerIndex] || String(answerIndex + 1),
+          answer || "",
+          resultCorrectIndexes(question).includes(answerIndex) ? "yes" : "no",
+          count,
+          responses.length ? Math.round((count / responses.length) * 100) : 0
+        ];
+      });
+    })
+  ], [{ wch: 8 }, { wch: 8 }, { wch: 44 }, { wch: 10 }, { wch: 10 }, { wch: 10 }]);
+
+  return workbook;
+}
+
+function appendSheet(workbook, name, rows, columns) {
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  if (columns) sheet["!cols"] = columns;
+  XLSX.utils.book_append_sheet(workbook, sheet, name);
+}
+
+function resultCorrectIndexes(question) {
+  if (Array.isArray(question.correctIndexes) && question.correctIndexes.length) {
+    return uniqueAnswerIndexes(question.correctIndexes);
+  }
+  return uniqueAnswerIndexes([question.correctIndex]);
+}
+
+function resultCorrectAnswerText(question) {
+  const answers = Array.isArray(question.answers) ? question.answers : [];
+  return resultCorrectIndexes(question)
+    .map((index) => `${answerLetters[index] || index + 1} ${answers[index] || ""}`.trim())
+    .filter(Boolean)
+    .join("; ");
 }
 
 function answerTextForIndexes(question, indexes) {

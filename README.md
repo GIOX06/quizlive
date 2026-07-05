@@ -11,14 +11,14 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 - Questions run in realtime with a server-side timer.
 - Scores include correctness, speed, streak bonuses, a speed-focused question type, and multi-answer questions.
 - Multi-answer questions support partial scoring: exact answers get full points, partly correct answers get half points, fully wrong answers get zero.
-- Host sees answer stats and leaderboard.
+- Host sees answer stats, final dashboard, question accuracy, and leaderboard.
 - Players see answer buttons, feedback, score, and ranking.
-- Results export as CSV or JSON while the room is active.
+- Results export as CSV, JSON, or XLSX while the room is active.
 - Quiz export/import works with an editable XLSX template from the host builder, including metadata and media URLs.
 - Host can save quizzes to the archive, search by metadata/tags, load them later, or duplicate them as drafts.
 - Optional team mode automatically assigns players to teams and shows a team leaderboard.
 - Questions can include public image or video URLs.
-- Finished games are saved to historical results with CSV/JSON export.
+- Finished games are saved to historical results with CSV/JSON/XLSX export.
 
 ## Local setup
 

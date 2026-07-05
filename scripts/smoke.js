@@ -216,8 +216,16 @@ async function main() {
     const ended = await emitAck(host, "host:next", {});
     assert.equal(ended.ok, true);
 
-    await waitForState(host, (state) => state.status === "ended");
+    await waitForState(host, (state) =>
+      state.status === "ended" &&
+      Array.isArray(state.questionSummaries) &&
+      state.questionSummaries.length === quiz.questions.length &&
+      state.questionSummaries.some((item) => item.stats && item.stats.partialCount === 1)
+    );
     await waitForState(screen, (state) => state.status === "ended" && state.leaderboard.length >= 1);
+
+    const liveResultXlsx = await getBinary(`/api/rooms/${created.code}/export/results.xlsx`);
+    assert.ok(liveResultXlsx.length > 1000);
 
     screen.waitingEvents = 0;
     const releasedScreens = await emitAck(host, "host:release-screens", {});
@@ -276,6 +284,9 @@ async function main() {
 
     const savedResultCsv = await getText(`/api/archive/results/${savedResult.id}.csv`);
     assert.match(savedResultCsv, /Smoke Player/);
+
+    const savedResultXlsx = await getBinary(`/api/archive/results/${savedResult.id}.xlsx`);
+    assert.ok(savedResultXlsx.length > 1000);
 
     const deletedResult = await deleteJson(`/api/archive/results/${savedResult.id}`);
     assert.equal(deletedResult.ok, true);

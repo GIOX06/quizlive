@@ -435,6 +435,7 @@ function renderSavedResults() {
           <div class="toolbar">
             <a class="btn small ghost" href="/api/archive/results/${escapeAttr(item.id)}.csv">CSV</a>
             <a class="btn small ghost" href="/api/archive/results/${escapeAttr(item.id)}.json">JSON</a>
+            <a class="btn small ghost" href="/api/archive/results/${escapeAttr(item.id)}.xlsx">XLSX</a>
             <button class="btn small ghost danger" data-action="delete-saved-result" data-result-id="${escapeAttr(item.id)}">Elimina</button>
           </div>
         </article>
@@ -481,7 +482,7 @@ function renderHostGame(room) {
       </div>
       <aside class="panel stack">
         <div class="toolbar">
-          ${room.exports ? `<a class="btn ghost" href="${room.exports.csv}">CSV</a><a class="btn ghost" href="${room.exports.json}">JSON</a>` : ""}
+          ${room.exports ? `<a class="btn ghost" href="${room.exports.csv}">CSV</a><a class="btn ghost" href="${room.exports.json}">JSON</a><a class="btn ghost" href="${room.exports.xlsx}">XLSX</a>` : ""}
           ${room.status === "ended" ? `<button class="btn ghost" data-action="release-screens">Monitor in attesa</button>` : ""}
           <button class="btn ghost" data-action="reset-room">Reset</button>
         </div>
@@ -835,8 +836,75 @@ function renderEnded(room, isHost) {
       ${renderTeamLeaderboard(room)}
       ${renderPodium(room)}
       ${renderLeaderboard(room)}
+      ${isHost ? renderResultsDashboard(room) : ""}
       ${isHost ? `<div class="toolbar"><button class="btn ghost" data-action="reset-room">Nuova partita</button></div>` : ""}
     </div>
+  `;
+}
+
+function renderResultsDashboard(room) {
+  const summaries = Array.isArray(room.questionSummaries) ? room.questionSummaries : [];
+  if (!summaries.length) return "";
+  const totals = summaries.reduce((acc, item) => {
+    const stats = item.stats || {};
+    acc.responses += Number(stats.responseCount || 0);
+    acc.correct += Number(stats.correctCount || 0);
+    acc.partial += Number(stats.partialCount || 0);
+    acc.wrong += Number(stats.wrongCount || 0);
+    acc.accuracy += Number(stats.accuracy || 0);
+    return acc;
+  }, { responses: 0, correct: 0, partial: 0, wrong: 0, accuracy: 0 });
+  const averageAccuracy = summaries.length ? Math.round(totals.accuracy / summaries.length) : 0;
+  return `
+    <section class="results-dashboard stack">
+      <div>
+        <h2 class="section-title">Statistiche partita</h2>
+        <p class="subtle">Riepilogo per leggere subito domande forti, parziali e punti critici.</p>
+      </div>
+      <div class="stat-grid">
+        ${renderStatTile("Giocatori", room.leaderboard ? room.leaderboard.length : 0)}
+        ${renderStatTile("Risposte", totals.responses)}
+        ${renderStatTile("Parziali", totals.partial)}
+        ${renderStatTile("Accuracy media", `${averageAccuracy}%`)}
+      </div>
+      <div class="question-summary-list">
+        ${summaries.map((item) => renderQuestionSummary(item)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderStatTile(label, value) {
+  return `
+    <div class="stat-tile">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderQuestionSummary(item) {
+  const stats = item.stats || {};
+  const correctAnswers = Array.isArray(item.correctAnswers) ? item.correctAnswers : [];
+  const accuracy = Number(stats.accuracy || 0);
+  return `
+    <article class="question-summary">
+      <div>
+        <div class="summary-head">
+          <strong>${item.index + 1}. ${escapeHtml(item.text)}</strong>
+          <span class="status-pill compact">${escapeHtml(item.typeLabel || questionTypeLabel(item.type))}</span>
+        </div>
+        <p class="subtle">Corrette: ${correctAnswers.map((answer) => `${escapeHtml(answer.letter)} ${escapeHtml(answer.text)}`).join(", ")}</p>
+      </div>
+      <div class="summary-stats">
+        <span>${stats.responseCount || 0} risposte</span>
+        <span>${stats.correctCount || 0} corrette</span>
+        <span>${stats.partialCount || 0} parziali</span>
+        <span>${stats.wrongCount || 0} sbagliate</span>
+      </div>
+      <div class="meter" aria-label="Accuracy ${accuracy}%"><span style="width:${accuracy}%"></span></div>
+      <strong>${accuracy}% accuracy</strong>
+    </article>
   `;
 }
 

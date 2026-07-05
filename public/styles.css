@@ -973,6 +973,77 @@ textarea {
   font-weight: 900;
 }
 
+.results-dashboard {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.stat-tile {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.stat-tile span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.stat-tile strong {
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.question-summary-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.question-summary {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.summary-head,
+.summary-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.summary-stats {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.meter {
+  height: 0.65rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(23, 32, 38, 0.1);
+}
+
+.meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+
 .player-row,
 .leader-row {
   display: grid;
@@ -1162,6 +1233,7 @@ textarea {
   .grid-4,
   .answers-grid,
   .archive-grid,
+  .stat-grid,
   .podium {
     grid-template-columns: 1fr;
   }
