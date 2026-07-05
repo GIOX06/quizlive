@@ -151,6 +151,11 @@ async function main() {
 
     const reset = await emitAck(host, "host:reset", {});
     assert.equal(reset.ok, true);
+    await waitForState(screen, (state) =>
+      state.role === "screen" &&
+      state.status === "lobby" &&
+      state.code === created.code
+    );
 
     await waitForState(player, (state) =>
       state.status === "lobby" &&

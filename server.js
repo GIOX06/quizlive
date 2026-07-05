@@ -291,14 +291,18 @@ io.on("connection", (socket) => {
     sendAck(ack, { ok: true });
   });
 
-  socket.on("host:reset", (_payload, ack) => {
+  socket.on("host:reset", async (_payload, ack) => {
     const room = getHostRoom(socket);
     if (!room) {
       sendAck(ack, { ok: false, error: "Host room not found" });
       return;
     }
-    resetRoom(room);
-    sendAck(ack, { ok: true });
+    try {
+      await resetRoom(room);
+      sendAck(ack, { ok: true });
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
   });
 
   socket.on("host:release-screens", async (_payload, ack) => {
@@ -504,7 +508,7 @@ async function endGame(room) {
   await emitRoom(room);
 }
 
-function resetRoom(room) {
+async function resetRoom(room) {
   const invitePreviousPlayers = room.status === "ended";
   clearRoomTimer(room);
   room.status = "lobby";
@@ -523,7 +527,8 @@ function resetRoom(room) {
     }
   }
 
-  emitRoom(room);
+  await attachWaitingScreens(room);
+  await emitRoom(room);
 }
 
 function inviteRematchPlayers(room) {
@@ -571,7 +576,10 @@ function removePlayer(room, playerId, message) {
 
 async function attachWaitingScreens(room) {
   const screens = await io.in(waitingScreenChannel()).fetchSockets();
-  await Promise.all(screens.map((target) => attachScreenToRoom(target, room)));
+  const matchingScreens = screens.filter((target) => {
+    return !target.data.followRoomCode || target.data.followRoomCode === room.code;
+  });
+  await Promise.all(matchingScreens.map((target) => attachScreenToRoom(target, room)));
 }
 
 async function attachScreenToRoom(socket, room) {
@@ -580,6 +588,7 @@ async function attachScreenToRoom(socket, room) {
   await socket.leave(waitingScreenChannel());
   socket.data.role = "screen";
   socket.data.roomCode = room.code;
+  socket.data.followRoomCode = room.code;
   socket.data.playerId = null;
   await socket.join(roomChannel(room.code));
 }
@@ -596,6 +605,7 @@ async function sendScreenToWaiting(socket) {
   if (previousCode) await socket.leave(roomChannel(previousCode));
   socket.data.role = "screen";
   socket.data.roomCode = null;
+  socket.data.followRoomCode = previousCode || socket.data.followRoomCode || null;
   socket.data.playerId = null;
   await socket.join(waitingScreenChannel());
   socket.emit("screen:waiting", { waiting: true });
