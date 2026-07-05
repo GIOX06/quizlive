@@ -301,12 +301,24 @@ io.on("connection", (socket) => {
     sendAck(ack, { ok: true });
   });
 
+  socket.on("host:release-screens", async (_payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const released = await releaseRoomScreens(room);
+      sendAck(ack, { ok: true, released });
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("screen:watch", async (_payload, ack) => {
     try {
-      socket.data.role = "screen";
-      socket.data.roomCode = null;
-      socket.data.playerId = null;
-      await socket.join(waitingScreenChannel());
+      await sendScreenToWaiting(socket);
       sendAck(ack, { ok: true, waiting: true });
     } catch (error) {
       sendAck(ack, { ok: false, error: error.message });
@@ -570,6 +582,23 @@ async function attachScreenToRoom(socket, room) {
   socket.data.roomCode = room.code;
   socket.data.playerId = null;
   await socket.join(roomChannel(room.code));
+}
+
+async function releaseRoomScreens(room) {
+  const sockets = await io.in(roomChannel(room.code)).fetchSockets();
+  const screens = sockets.filter((target) => target.data.role === "screen");
+  await Promise.all(screens.map(sendScreenToWaiting));
+  return screens.length;
+}
+
+async function sendScreenToWaiting(socket) {
+  const previousCode = socket.data.roomCode;
+  if (previousCode) await socket.leave(roomChannel(previousCode));
+  socket.data.role = "screen";
+  socket.data.roomCode = null;
+  socket.data.playerId = null;
+  await socket.join(waitingScreenChannel());
+  socket.emit("screen:waiting", { waiting: true });
 }
 
 function submitAnswer(room, player, answerIndex) {

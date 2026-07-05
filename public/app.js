@@ -62,6 +62,10 @@ socket.on("player:removed", (payload) => {
   leaveRoomLocally(payload && payload.message ? payload.message : "Sei fuori dalla nuova partita");
 });
 
+socket.on("screen:waiting", () => {
+  enterScreenWaiting();
+});
+
 loadNetworkConfig();
 loadHostAuth();
 
@@ -376,6 +380,7 @@ function renderHostGame(room) {
       <aside class="panel stack">
         <div class="toolbar">
           ${room.exports ? `<a class="btn ghost" href="${room.exports.csv}">CSV</a><a class="btn ghost" href="${room.exports.json}">JSON</a>` : ""}
+          ${room.status === "ended" ? `<button class="btn ghost" data-action="release-screens">Monitor in attesa</button>` : ""}
           <button class="btn ghost" data-action="reset-room">Reset</button>
         </div>
         <div>
@@ -847,6 +852,7 @@ function handleAction(event) {
   if (action === "reveal-question") emitHost("host:reveal");
   if (action === "next-question") emitHost("host:next");
   if (action === "reset-room") emitHost("host:reset");
+  if (action === "release-screens") releaseScreens();
   if (action === "answer") answer(Number(target.dataset.answerIndex));
   if (action === "accept-rematch") respondRematch(true);
   if (action === "decline-rematch") respondRematch(false);
@@ -1052,6 +1058,17 @@ function watchScreen() {
   render();
 }
 
+function enterScreenWaiting() {
+  local.room = null;
+  local.mode = "screen";
+  local.screenCode = "";
+  local.screenJoining = false;
+  local.screenWaiting = true;
+  local.selectedAnswer = null;
+  window.history.replaceState(null, "", "#screen");
+  render();
+}
+
 function switchMode(mode, silent = false) {
   local.mode = mode;
   if (mode === "host") {
@@ -1215,6 +1232,16 @@ function emitHost(eventName) {
     if (!response || !response.ok) {
       showToast(response && response.error ? response.error : "Comando non riuscito");
     }
+  });
+}
+
+function releaseScreens() {
+  socket.emit("host:release-screens", {}, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Monitor non aggiornato");
+      return;
+    }
+    showToast(response.released ? "Monitor in attesa" : "Nessun monitor collegato");
   });
 }
 

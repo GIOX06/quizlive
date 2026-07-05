@@ -43,6 +43,9 @@ async function main() {
     screen.on("room:state", (state) => {
       screen.latestState = state;
     });
+    screen.on("screen:waiting", () => {
+      screen.waitingEvents = (screen.waitingEvents || 0) + 1;
+    });
     player.on("room:state", (state) => {
       player.latestState = state;
     });
@@ -139,6 +142,12 @@ async function main() {
 
     await waitForState(host, (state) => state.status === "ended");
     await waitForState(screen, (state) => state.status === "ended" && state.leaderboard.length >= 1);
+
+    screen.waitingEvents = 0;
+    const releasedScreens = await emitAck(host, "host:release-screens", {});
+    assert.equal(releasedScreens.ok, true);
+    assert.equal(releasedScreens.released, 1);
+    await waitForCondition(() => screen.waitingEvents >= 1, "Timeout waiting for screen waiting state");
 
     const reset = await emitAck(host, "host:reset", {});
     assert.equal(reset.ok, true);
@@ -336,5 +345,23 @@ function waitForState(socket, predicate) {
     }
 
     socket.on("room:state", onState);
+  });
+}
+
+function waitForCondition(predicate, message) {
+  if (predicate()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      if (predicate()) {
+        clearInterval(interval);
+        resolve();
+        return;
+      }
+      if (Date.now() - startedAt > 4000) {
+        clearInterval(interval);
+        reject(new Error(message));
+      }
+    }, 25);
   });
 }
