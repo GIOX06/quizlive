@@ -300,6 +300,22 @@ io.on("connection", (socket) => {
     sendAck(ack, { ok: true });
   });
 
+  socket.on("screen:join", (payload, ack) => {
+    const code = normalizeCode(payload && payload.code);
+    const room = rooms.get(code);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Partita non trovata" });
+      return;
+    }
+
+    socket.data.role = "screen";
+    socket.data.roomCode = code;
+    socket.data.playerId = null;
+    socket.join(roomChannel(code));
+    sendAck(ack, { ok: true, code });
+    emitRoom(room);
+  });
+
   socket.on("player:join", (payload, ack) => {
     const code = normalizeCode(payload && payload.code);
     const room = rooms.get(code);
@@ -586,12 +602,13 @@ async function emitRoom(room) {
 }
 
 function serializeRoom(room, socket) {
-  const role = socket.data.role === "host" ? "host" : "player";
+  const role = socket.data.role === "host" ? "host" : socket.data.role === "screen" ? "screen" : "player";
   const question = room.currentIndex >= 0 ? room.quiz.questions[room.currentIndex] : null;
   const answerMap = room.currentIndex >= 0 ? room.answers.get(room.currentIndex) || new Map() : new Map();
   const playerId = socket.data.playerId;
   const playerAnswer = playerId && answerMap.get(playerId);
   const revealMode = room.status === "reveal" || room.status === "ended" || role === "host";
+  const answerCountMode = role === "host" || room.status === "reveal" || room.status === "ended";
 
   return {
     code: room.code,
@@ -609,7 +626,7 @@ function serializeRoom(room, socket) {
             text: answer,
             index,
             correct: revealMode ? index === question.correctIndex : undefined,
-            count: role === "host" || room.status === "reveal" ? countAnswers(answerMap, index) : undefined
+            count: answerCountMode ? countAnswers(answerMap, index) : undefined
           })),
           timeLimit: question.timeLimit,
           correctIndex: revealMode ? question.correctIndex : undefined,

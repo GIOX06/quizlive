@@ -6,6 +6,7 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 
 - Host creates a room with a 6 digit code.
 - Players join from any phone browser with code and nickname without seeing the host quiz builder.
+- A public monitor view can show the lobby QR code, questions, answer reveal, and leaderboard on a TV or projector.
 - Host lobby shows a QR code for quick player entry.
 - Questions run in realtime with a server-side timer.
 - Scores include correctness, speed, and streak bonuses.
@@ -35,6 +36,12 @@ Host view:
 http://localhost:3000/#host
 ```
 
+Public monitor view:
+
+```text
+http://localhost:3000/#screen=123456
+```
+
 Phones on the same Wi-Fi can connect using the Mac local network address, for example:
 
 ```text
@@ -45,6 +52,12 @@ When the host creates a room, the lobby shows a QR code that opens a player link
 
 ```text
 http://192.168.1.20:3000/#join=123456
+```
+
+The host lobby also has a monitor link for a shared screen:
+
+```text
+http://192.168.1.20:3000/#screen=123456
 ```
 
 When the host opens the app on `localhost`, QuizLive automatically prefers the Mac LAN address for the QR code so phones do not scan a `localhost` link.

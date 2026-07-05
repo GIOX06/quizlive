@@ -467,6 +467,88 @@ textarea {
   overflow: hidden;
 }
 
+.screen-layout {
+  min-height: calc(100vh - 8rem);
+  display: grid;
+  align-items: stretch;
+}
+
+.screen-panel,
+.screen-question {
+  min-height: calc(100vh - 8rem);
+}
+
+.screen-lobby {
+  align-content: center;
+  text-align: center;
+}
+
+.screen-lobby-grid {
+  display: grid;
+  grid-template-columns: minmax(16rem, 24rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  width: min(100%, 58rem);
+  margin: 0 auto;
+}
+
+.screen-qr {
+  width: 100%;
+}
+
+.screen-lobby-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: center;
+}
+
+.screen-kicker {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.screen-code {
+  margin: 0;
+  color: var(--red);
+  font-size: 7rem;
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.screen-title {
+  margin: 0;
+  font-size: 4.6rem;
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+
+.screen-answers .answer-stat {
+  min-height: 8rem;
+}
+
+.screen-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 0 clamp(1rem, 3vw, 1.6rem) clamp(1rem, 3vw, 1.6rem);
+}
+
+.screen-strip-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .question-main {
   padding: clamp(1rem, 3vw, 1.6rem);
 }
@@ -750,6 +832,19 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .screen-lobby-grid,
+  .screen-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-code {
+    font-size: 4.5rem;
+  }
+
+  .screen-title {
+    font-size: 3rem;
+  }
+
   .topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -774,6 +869,14 @@ textarea {
   .archive-grid,
   .podium {
     grid-template-columns: 1fr;
+  }
+
+  .screen-code {
+    font-size: 3.4rem;
+  }
+
+  .screen-title {
+    font-size: 2.15rem;
   }
 
   .answer-editor {

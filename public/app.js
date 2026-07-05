@@ -22,6 +22,8 @@ let local = {
   savedResults: [],
   currentQuizId: null,
   joinCode: initialJoinCode(),
+  screenCode: initialScreenCode(),
+  screenJoining: false,
   nickname: "",
   playerBaseUrl: window.location.origin,
   playerAccessMode: "same-origin"
@@ -33,6 +35,7 @@ const toastEl = document.getElementById("toast");
 
 socket.on("connect", () => {
   reconnectingForHostAuth = false;
+  autoJoinScreen();
   render();
 });
 
@@ -60,7 +63,9 @@ loadHostAuth();
 window.addEventListener("hashchange", () => {
   if (local.room) return;
   local.joinCode = initialJoinCode();
+  local.screenCode = initialScreenCode();
   local.mode = initialMode();
+  autoJoinScreen();
   render();
 });
 
@@ -94,9 +99,11 @@ function renderTopbar() {
 function renderMain() {
   if (!local.room) {
     if (local.mode === "host") return hostAccessGranted() ? renderHostHome() : renderHostAccess();
+    if (local.mode === "screen") return renderScreenHome();
     return renderJoinHome();
   }
   if (local.room.role === "host") return renderHostGame(local.room);
+  if (local.room.role === "screen") return renderScreenGame(local.room);
   return renderPlayerGame(local.room);
 }
 
@@ -123,6 +130,27 @@ function renderJoinHome() {
         <div class="toolbar">
           <button class="btn teal" data-action="join-room">Entra in partita</button>
           <button class="btn ghost" data-action="switch-host">Area host</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderScreenHome() {
+  return `
+    <section class="join-shell">
+      <div class="panel join-panel stack">
+        <div>
+          <h1 class="section-title">Monitor pubblico</h1>
+          <p class="subtle">Inserisci il codice stanza per mostrare quiz e classifica su TV o proiettore.</p>
+        </div>
+        <label class="stack">
+          <span>Codice stanza</span>
+          <input data-field="screen-code" inputmode="numeric" maxlength="6" placeholder="123456" value="${escapeAttr(local.screenCode)}" />
+        </label>
+        <div class="toolbar">
+          <button class="btn primary" data-action="join-screen" ${local.screenJoining ? "disabled" : ""}>Apri monitor</button>
+          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
         </div>
       </div>
     </section>
@@ -366,12 +394,97 @@ function renderHostLobby(room) {
           <span class="status-pill">Codice ${escapeHtml(room.code)}</span>
           <span class="status-pill ${playerAccessClass()}">${escapeHtml(playerBaseLabel())}</span>
           <button class="btn ghost" data-action="copy-player-link">Copia link</button>
+          <button class="btn ghost" data-action="copy-screen-link">Copia monitor</button>
+          <button class="btn ghost" data-action="open-screen-link">Apri monitor</button>
         </div>
         <p class="qr-note ${playerAccessClass()}">${escapeHtml(playerAccessNotice())}</p>
       </div>
       <div class="toolbar">
         <button class="btn primary" data-action="start-game" ${room.totalQuestions < 1 ? "disabled" : ""}>Avvia quiz</button>
       </div>
+    </div>
+  `;
+}
+
+function renderScreenGame(room) {
+  const question = room.question;
+  return `
+    <section class="screen-layout">
+      ${room.status === "lobby" ? renderScreenLobby(room) : ""}
+      ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
+      ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
+      ${room.status === "ended" ? renderScreenEnded(room) : ""}
+    </section>
+  `;
+}
+
+function renderScreenLobby(room) {
+  return `
+    <div class="panel screen-panel screen-lobby stack">
+      <div>
+        <p class="screen-kicker">${escapeHtml(room.title)}</p>
+        <h1 class="screen-code">${escapeHtml(room.code)}</h1>
+        <p class="subtle">Inquadra il QR o entra con il codice stanza.</p>
+      </div>
+      <div class="screen-lobby-grid">
+        <img class="qr-code screen-qr" src="${escapeAttr(qrCodeSrc(room.code))}" alt="QR code ingresso giocatori" />
+        <div class="screen-lobby-meta">
+          <span class="status-pill ${playerAccessClass()}">${escapeHtml(playerBaseLabel())}</span>
+          <span class="status-pill">${room.playerCount} giocatori</span>
+          <span class="status-pill">${room.totalQuestions} domande</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderScreenQuestion(room) {
+  const question = room.question;
+  return `
+    <article class="question-card screen-question">
+      <div class="question-main">
+        <p class="screen-kicker">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</p>
+        <h1 class="screen-title">${escapeHtml(question.text)}</h1>
+        <div class="meta-row">
+          <div class="timer">${secondsLeft(room)}</div>
+          <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
+        </div>
+      </div>
+      <div class="answers-grid screen-answers">
+        ${question.answers.map(renderAnswerDisplay).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderScreenReveal(room) {
+  const question = room.question;
+  return `
+    <article class="question-card screen-question">
+      <div class="question-main">
+        <p class="screen-kicker">Risultati domanda ${room.currentIndex + 1}/${room.totalQuestions}</p>
+        <h1 class="screen-title">${escapeHtml(question.text)}</h1>
+        <div class="meta-row">
+          <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
+        </div>
+      </div>
+      <div class="answers-grid screen-answers">
+        ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
+      </div>
+      ${renderTopLeaderboardStrip(room)}
+    </article>
+  `;
+}
+
+function renderScreenEnded(room) {
+  return `
+    <div class="panel screen-panel stack">
+      <div>
+        <p class="screen-kicker">${escapeHtml(room.title)}</p>
+        <h1 class="screen-title">Classifica finale</h1>
+      </div>
+      ${renderPodium(room)}
+      ${renderLeaderboard(room)}
     </div>
   `;
 }
@@ -505,26 +618,47 @@ function renderReveal(room, isHost) {
 }
 
 function renderEnded(room, isHost) {
-  const top = room.leaderboard.slice(0, 3);
   return `
     <div class="panel stack">
       <div>
         <h1 class="section-title">Classifica finale</h1>
         <p class="subtle">${escapeHtml(room.title)}</p>
       </div>
-      ${top.length ? `
-        <div class="podium">
-          ${top.map((player, index) => `
-            <div class="podium-place">
-              <div class="podium-rank">${index + 1}</div>
-              <strong>${escapeHtml(player.nickname)}</strong>
-              <span>${player.score} punti</span>
-            </div>
-          `).join("")}
-        </div>
-      ` : `<div class="empty">Nessun giocatore</div>`}
+      ${renderPodium(room)}
       ${renderLeaderboard(room)}
       ${isHost ? `<div class="toolbar"><button class="btn ghost" data-action="reset-room">Nuova partita</button></div>` : ""}
+    </div>
+  `;
+}
+
+function renderPodium(room) {
+  const top = room.leaderboard.slice(0, 3);
+  if (!top.length) return `<div class="empty">Nessun giocatore</div>`;
+  return `
+    <div class="podium">
+      ${top.map((player, index) => `
+        <div class="podium-place">
+          <div class="podium-rank">${index + 1}</div>
+          <strong>${escapeHtml(player.nickname)}</strong>
+          <span>${player.score} punti</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderTopLeaderboardStrip(room) {
+  const top = room.leaderboard.slice(0, 3);
+  if (!top.length) return "";
+  return `
+    <div class="screen-strip">
+      ${top.map((player, index) => `
+        <div class="screen-strip-item">
+          <span class="rank">${index + 1}</span>
+          <strong>${escapeHtml(player.nickname)}</strong>
+          <span>${player.score}</span>
+        </div>
+      `).join("")}
     </div>
   `;
 }
@@ -572,6 +706,15 @@ function renderAnswerButton(answer, question, reveal = false) {
       <span class="letter">${answerLetters[answer.index]}</span>
       <span class="answer-text">${escapeHtml(answer.text)}</span>
     </button>
+  `;
+}
+
+function renderAnswerDisplay(answer) {
+  return `
+    <div class="answer-stat ${answerClasses[answer.index]}">
+      <span class="letter">${answerLetters[answer.index]}</span>
+      <span class="answer-text">${escapeHtml(answer.text)}</span>
+    </div>
   `;
 }
 
@@ -637,6 +780,16 @@ function bindEvents() {
       local.nickname = joinNameField.value;
     });
   }
+  const screenCodeField = document.querySelector("[data-field='screen-code']");
+  if (screenCodeField) {
+    screenCodeField.addEventListener("input", () => {
+      local.screenCode = screenCodeField.value.replace(/\D/g, "").slice(0, 6);
+      screenCodeField.value = local.screenCode;
+    });
+    screenCodeField.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") joinScreen();
+    });
+  }
   const hostPasswordField = document.querySelector("[data-field='host-password']");
   if (hostPasswordField) {
     hostPasswordField.addEventListener("input", () => {
@@ -675,6 +828,9 @@ function handleAction(event) {
   if (action === "host-login") hostLogin();
   if (action === "host-logout") hostLogout();
   if (action === "copy-player-link") copyPlayerLink();
+  if (action === "copy-screen-link") copyScreenLink();
+  if (action === "open-screen-link") openScreenLink();
+  if (action === "join-screen") joinScreen();
   if (action === "create-room") createRoom();
   if (action === "join-room") joinRoom();
   if (action === "start-game") emitHost("host:start");
@@ -849,10 +1005,37 @@ function joinRoom() {
   });
 }
 
+function joinScreen() {
+  const codeField = document.querySelector("[data-field='screen-code']");
+  const code = codeField ? codeField.value : local.screenCode;
+  const normalizedCode = String(code || "").replace(/\D/g, "").slice(0, 6);
+  if (normalizedCode.length !== 6) {
+    showToast("Inserisci codice stanza");
+    return;
+  }
+
+  local.screenCode = normalizedCode;
+  local.screenJoining = true;
+  switchMode("screen", true);
+  socket.emit("screen:join", { code: normalizedCode }, (response) => {
+    local.screenJoining = false;
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Monitor non disponibile");
+      render();
+      return;
+    }
+    showToast("Monitor collegato");
+  });
+  render();
+}
+
 function switchMode(mode, silent = false) {
   local.mode = mode;
   if (mode === "host") {
     window.history.replaceState(null, "", "#host");
+  } else if (mode === "screen") {
+    const code = local.screenCode ? `=${encodeURIComponent(local.screenCode)}` : "";
+    window.history.replaceState(null, "", `#screen${code}`);
   } else {
     const code = local.joinCode ? `=${encodeURIComponent(local.joinCode)}` : "";
     window.history.replaceState(null, "", `#join${code}`);
@@ -872,6 +1055,22 @@ async function copyPlayerLink() {
   }
 }
 
+async function copyScreenLink() {
+  const link = screenLink(local.room && local.room.code);
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("Link monitor copiato");
+  } catch (error) {
+    const copied = fallbackCopy(link);
+    showToast(copied ? "Link monitor copiato" : "Copia non riuscita");
+  }
+}
+
+function openScreenLink() {
+  const link = screenLink(local.room && local.room.code);
+  window.open(link, "_blank", "noopener,noreferrer");
+}
+
 async function loadNetworkConfig() {
   try {
     const response = await fetch("/api/network", { cache: "no-store" });
@@ -884,6 +1083,11 @@ async function loadNetworkConfig() {
     local.playerBaseUrl = window.location.origin;
     local.playerAccessMode = accessModeForOrigin(window.location.origin);
   }
+}
+
+function autoJoinScreen() {
+  if (local.mode !== "screen" || local.room || local.screenJoining || !local.screenCode || !socket.connected) return;
+  joinScreen();
 }
 
 async function loadHostAuth() {
@@ -1054,6 +1258,7 @@ function statusLabel(status) {
 function initialMode() {
   const hash = window.location.hash.replace(/^#/, "");
   if (hash.startsWith("host")) return "host";
+  if (hash.startsWith("screen")) return "screen";
   return "join";
 }
 
@@ -1065,8 +1270,20 @@ function initialJoinCode() {
   return String(fromHash || fromQuery).replace(/\D/g, "").slice(0, 6);
 }
 
+function initialScreenCode() {
+  const hash = window.location.hash.replace(/^#/, "");
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get("screen") || "";
+  const fromHash = hash.startsWith("screen=") ? hash.slice(7) : "";
+  return String(fromHash || fromQuery).replace(/\D/g, "").slice(0, 6);
+}
+
 function playerLink(code) {
   return `${playerBaseUrl()}/#join=${encodeURIComponent(code || "")}`;
+}
+
+function screenLink(code) {
+  return `${playerBaseUrl()}/#screen=${encodeURIComponent(code || "")}`;
 }
 
 function qrCodeSrc(code) {

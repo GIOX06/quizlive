@@ -31,13 +31,17 @@ async function main() {
   await ensureHostAccess();
 
   const host = createSocket(true);
+  const screen = createSocket(false);
   const player = createSocket(false);
   const decliningPlayer = createSocket(false);
 
   try {
-    await Promise.all([waitForConnect(host), waitForConnect(player), waitForConnect(decliningPlayer)]);
+    await Promise.all([waitForConnect(host), waitForConnect(screen), waitForConnect(player), waitForConnect(decliningPlayer)]);
     host.on("room:state", (state) => {
       host.latestState = state;
+    });
+    screen.on("room:state", (state) => {
+      screen.latestState = state;
     });
     player.on("room:state", (state) => {
       player.latestState = state;
@@ -58,6 +62,16 @@ async function main() {
     assert.match(created.code, /^\d{6}$/);
 
     await waitForState(host, (state) => state.role === "host" && state.status === "lobby");
+
+    const screenJoined = await emitAck(screen, "screen:join", { code: created.code });
+    assert.equal(screenJoined.ok, true);
+    await waitForState(screen, (state) =>
+      state.role === "screen" &&
+      state.status === "lobby" &&
+      state.code === created.code &&
+      !state.players &&
+      !state.exports
+    );
 
     const joined = await emitAck(player, "player:join", {
       code: created.code,
@@ -87,6 +101,13 @@ async function main() {
       state.question &&
       state.question.answers.length === 4
     );
+    await waitForState(screen, (state) =>
+      state.role === "screen" &&
+      state.status === "question" &&
+      state.question &&
+      state.question.answers.length === 4 &&
+      state.question.answers.every((answer) => answer.correct === undefined && answer.count === undefined)
+    );
 
     const answered = await emitAck(player, "player:answer", { answerIndex: 0 });
     assert.equal(answered.ok, true);
@@ -104,11 +125,18 @@ async function main() {
       state.question.playerAnswer &&
       state.question.playerAnswer.correct === true
     );
+    await waitForState(screen, (state) =>
+      state.role === "screen" &&
+      state.status === "reveal" &&
+      state.question &&
+      state.question.answers.some((answer) => answer.correct === true && answer.count === 1)
+    );
 
     const ended = await emitAck(host, "host:next", {});
     assert.equal(ended.ok, true);
 
     await waitForState(host, (state) => state.status === "ended");
+    await waitForState(screen, (state) => state.status === "ended" && state.leaderboard.length >= 1);
 
     const reset = await emitAck(host, "host:reset", {});
     assert.equal(reset.ok, true);
@@ -170,6 +198,7 @@ async function main() {
     }, null, 2));
   } finally {
     host.close();
+    screen.close();
     player.close();
     decliningPlayer.close();
   }
