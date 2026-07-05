@@ -39,6 +39,12 @@ http://localhost:3000/#host
 Public monitor view:
 
 ```text
+http://localhost:3000/#screen
+```
+
+Open the public monitor before creating a room to show the QuizLive waiting screen. When the host creates the room, waiting monitors attach automatically. A direct room monitor link also works:
+
+```text
 http://localhost:3000/#screen=123456
 ```
 

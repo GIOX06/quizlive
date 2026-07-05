@@ -50,6 +50,10 @@ async function main() {
       decliningPlayer.latestState = state;
     });
 
+    const screenWatching = await emitAck(screen, "screen:watch", {});
+    assert.equal(screenWatching.ok, true);
+    assert.equal(screenWatching.waiting, true);
+
     const savedQuiz = await postJson("/api/archive/quizzes", { quiz });
     assert.equal(savedQuiz.ok, true);
     assert.equal(savedQuiz.quiz.title, quiz.title);
@@ -63,8 +67,6 @@ async function main() {
 
     await waitForState(host, (state) => state.role === "host" && state.status === "lobby");
 
-    const screenJoined = await emitAck(screen, "screen:join", { code: created.code });
-    assert.equal(screenJoined.ok, true);
     await waitForState(screen, (state) =>
       state.role === "screen" &&
       state.status === "lobby" &&

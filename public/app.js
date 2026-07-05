@@ -24,6 +24,7 @@ let local = {
   joinCode: initialJoinCode(),
   screenCode: initialScreenCode(),
   screenJoining: false,
+  screenWaiting: false,
   nickname: "",
   playerBaseUrl: window.location.origin,
   playerAccessMode: "same-origin"
@@ -47,6 +48,10 @@ socket.on("disconnect", () => {
 socket.on("room:state", (room) => {
   local.room = room;
   local.mode = room.role;
+  if (room.role === "screen") {
+    local.screenCode = room.code;
+    window.history.replaceState(null, "", `#screen=${encodeURIComponent(room.code)}`);
+  }
   if (room.status !== "question") {
     local.selectedAnswer = null;
   }
@@ -138,19 +143,21 @@ function renderJoinHome() {
 
 function renderScreenHome() {
   return `
-    <section class="join-shell">
-      <div class="panel join-panel stack">
-        <div>
-          <h1 class="section-title">Monitor pubblico</h1>
-          <p class="subtle">Inserisci il codice stanza per mostrare quiz e classifica su TV o proiettore.</p>
+    <section class="screen-layout">
+      <div class="panel screen-panel screen-splash stack">
+        <div class="screen-brand">
+          <div class="screen-brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div>
+            <p class="screen-kicker">Monitor pubblico</p>
+            <h1 class="screen-title">QuizLive</h1>
+          </div>
         </div>
-        <label class="stack">
-          <span>Codice stanza</span>
-          <input data-field="screen-code" inputmode="numeric" maxlength="6" placeholder="123456" value="${escapeAttr(local.screenCode)}" />
-        </label>
-        <div class="toolbar">
-          <button class="btn primary" data-action="join-screen" ${local.screenJoining ? "disabled" : ""}>Apri monitor</button>
-          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+        <div class="screen-waiting">
+          <span class="status-pill">${local.screenWaiting ? "In attesa della stanza" : "Pronto"}</span>
+        </div>
+        <div class="screen-code-entry">
+          <input data-field="screen-code" inputmode="numeric" maxlength="6" placeholder="Codice stanza" value="${escapeAttr(local.screenCode)}" />
+          <button class="btn ghost" data-action="join-screen" ${local.screenJoining ? "disabled" : ""}>Collega codice</button>
         </div>
       </div>
     </section>
@@ -166,6 +173,7 @@ function renderHostHome() {
           <p class="subtle">Quiz, lobby, timer, punteggio e risultati esportabili.</p>
         </div>
         <div class="toolbar">
+          <button class="btn ghost" data-action="open-waiting-screen">Apri monitor</button>
           ${local.hostAuth.enabled ? `<button class="btn ghost" data-action="host-logout">Blocca host</button>` : ""}
           <button class="btn ghost" data-action="switch-join">Area giocatore</button>
         </div>
@@ -828,6 +836,7 @@ function handleAction(event) {
   if (action === "host-login") hostLogin();
   if (action === "host-logout") hostLogout();
   if (action === "copy-player-link") copyPlayerLink();
+  if (action === "open-waiting-screen") openWaitingScreen();
   if (action === "copy-screen-link") copyScreenLink();
   if (action === "open-screen-link") openScreenLink();
   if (action === "join-screen") joinScreen();
@@ -1016,6 +1025,7 @@ function joinScreen() {
 
   local.screenCode = normalizedCode;
   local.screenJoining = true;
+  local.screenWaiting = false;
   switchMode("screen", true);
   socket.emit("screen:join", { code: normalizedCode }, (response) => {
     local.screenJoining = false;
@@ -1025,6 +1035,18 @@ function joinScreen() {
       return;
     }
     showToast("Monitor collegato");
+  });
+  render();
+}
+
+function watchScreen() {
+  if (local.screenJoining || local.screenWaiting || !socket.connected) return;
+  local.screenJoining = true;
+  socket.emit("screen:watch", {}, (response) => {
+    local.screenJoining = false;
+    local.screenWaiting = Boolean(response && response.ok && response.waiting);
+    if (!response || !response.ok) showToast("Monitor non disponibile");
+    render();
   });
   render();
 }
@@ -1071,6 +1093,10 @@ function openScreenLink() {
   window.open(link, "_blank", "noopener,noreferrer");
 }
 
+function openWaitingScreen() {
+  window.open(`${playerBaseUrl()}/#screen`, "_blank", "noopener,noreferrer");
+}
+
 async function loadNetworkConfig() {
   try {
     const response = await fetch("/api/network", { cache: "no-store" });
@@ -1086,8 +1112,12 @@ async function loadNetworkConfig() {
 }
 
 function autoJoinScreen() {
-  if (local.mode !== "screen" || local.room || local.screenJoining || !local.screenCode || !socket.connected) return;
-  joinScreen();
+  if (local.mode !== "screen" || local.room || local.screenJoining || !socket.connected) return;
+  if (local.screenCode) {
+    joinScreen();
+    return;
+  }
+  watchScreen();
 }
 
 async function loadHostAuth() {

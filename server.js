@@ -232,7 +232,7 @@ app.delete("/api/archive/results/:id", requireHostHttp, async (req, res) => {
 });
 
 io.on("connection", (socket) => {
-  socket.on("host:create", (payload, ack) => {
+  socket.on("host:create", async (payload, ack) => {
     if (!isHostSocketAuthorized(socket)) {
       sendAck(ack, { ok: false, error: "Password host richiesta" });
       return;
@@ -244,8 +244,9 @@ io.on("connection", (socket) => {
       socket.data.role = "host";
       socket.data.roomCode = room.code;
       socket.join(roomChannel(room.code));
+      await attachWaitingScreens(room);
       sendAck(ack, { ok: true, code: room.code });
-      emitRoom(room);
+      await emitRoom(room);
     } catch (error) {
       sendAck(ack, { ok: false, error: error.message });
     }
@@ -300,20 +301,33 @@ io.on("connection", (socket) => {
     sendAck(ack, { ok: true });
   });
 
-  socket.on("screen:join", (payload, ack) => {
-    const code = normalizeCode(payload && payload.code);
-    const room = rooms.get(code);
-    if (!room) {
-      sendAck(ack, { ok: false, error: "Partita non trovata" });
-      return;
+  socket.on("screen:watch", async (_payload, ack) => {
+    try {
+      socket.data.role = "screen";
+      socket.data.roomCode = null;
+      socket.data.playerId = null;
+      await socket.join(waitingScreenChannel());
+      sendAck(ack, { ok: true, waiting: true });
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
     }
+  });
 
-    socket.data.role = "screen";
-    socket.data.roomCode = code;
-    socket.data.playerId = null;
-    socket.join(roomChannel(code));
-    sendAck(ack, { ok: true, code });
-    emitRoom(room);
+  socket.on("screen:join", async (payload, ack) => {
+    try {
+      const code = normalizeCode(payload && payload.code);
+      const room = rooms.get(code);
+      if (!room) {
+        sendAck(ack, { ok: false, error: "Partita non trovata" });
+        return;
+      }
+
+      await attachScreenToRoom(socket, room);
+      sendAck(ack, { ok: true, code });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
   });
 
   socket.on("player:join", (payload, ack) => {
@@ -541,6 +555,21 @@ function removePlayer(room, playerId, message) {
   target.data.role = null;
   target.data.roomCode = null;
   target.data.playerId = null;
+}
+
+async function attachWaitingScreens(room) {
+  const screens = await io.in(waitingScreenChannel()).fetchSockets();
+  await Promise.all(screens.map((target) => attachScreenToRoom(target, room)));
+}
+
+async function attachScreenToRoom(socket, room) {
+  const previousCode = socket.data.roomCode;
+  if (previousCode) await socket.leave(roomChannel(previousCode));
+  await socket.leave(waitingScreenChannel());
+  socket.data.role = "screen";
+  socket.data.roomCode = room.code;
+  socket.data.playerId = null;
+  await socket.join(roomChannel(room.code));
 }
 
 function submitAnswer(room, player, answerIndex) {
@@ -1390,6 +1419,10 @@ function createRoomCode() {
 
 function roomChannel(code) {
   return `room:${code}`;
+}
+
+function waitingScreenChannel() {
+  return "screen:waiting";
 }
 
 function clearRoomTimer(room) {
