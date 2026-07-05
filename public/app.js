@@ -88,8 +88,8 @@ window.addEventListener("hashchange", () => {
 });
 
 setInterval(() => {
-  if (local.room && local.room.status === "question") render();
-}, 500);
+  if (local.room && local.room.status === "question") updateLiveTimers();
+}, 250);
 
 function render() {
   app.innerHTML = shell(renderMain(), renderTopbar());
@@ -494,7 +494,7 @@ function renderScreenQuestion(room) {
         <p class="screen-kicker">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</p>
         <h1 class="screen-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
-          <div class="timer">${secondsLeft(room)}</div>
+          ${renderTimer(room)}
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
@@ -543,6 +543,17 @@ function renderScreenEnded(room) {
   `;
 }
 
+function renderTimer(room) {
+  const left = secondsLeft(room);
+  const percent = timeProgressPercent(room);
+  return `
+    <div class="countdown ${left <= 5 ? "urgent" : ""}" data-countdown data-ends-at="${escapeAttr(room.questionEndsAt || "")}" data-time-limit="${escapeAttr(room.question ? room.question.timeLimit : 0)}">
+      <div class="timer" data-timer>${left}</div>
+      <div class="time-track" aria-hidden="true"><span data-time-bar style="width:${percent}%"></span></div>
+    </div>
+  `;
+}
+
 function renderHostQuestion(room) {
   const question = room.question;
   return `
@@ -550,7 +561,7 @@ function renderHostQuestion(room) {
       <div class="question-main">
         <h1 class="question-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
-          <div class="timer">${secondsLeft(room)}</div>
+          ${renderTimer(room)}
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           <span class="status-pill">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</span>
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
@@ -638,7 +649,7 @@ function renderPlayerQuestion(room) {
       <div class="question-main">
         <h1 class="question-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
-          <div class="timer">${secondsLeft(room)}</div>
+          ${renderTimer(room)}
           <span class="status-pill">${escapeHtml(question.typeLabel || questionTypeLabel(question.type))}</span>
           <span class="status-pill">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</span>
           ${question.answered ? `<span class="status-pill">Risposta inviata</span>` : ""}
@@ -1583,6 +1594,30 @@ function questionTypeLabel(type) {
 function secondsLeft(room) {
   if (!room.questionEndsAt) return 0;
   return Math.max(0, Math.ceil((room.questionEndsAt - Date.now()) / 1000));
+}
+
+function timeProgressPercent(room) {
+  return countdownPercent(room.questionEndsAt, room.question ? room.question.timeLimit : 0);
+}
+
+function countdownPercent(endsAt, timeLimit) {
+  const duration = Math.max(1, Number(timeLimit) || 1) * 1000;
+  const remaining = Math.max(0, Number(endsAt || 0) - Date.now());
+  return Math.max(0, Math.min(100, Math.round((remaining / duration) * 1000) / 10));
+}
+
+function updateLiveTimers() {
+  document.querySelectorAll("[data-countdown]").forEach((element) => {
+    const endsAt = Number(element.dataset.endsAt || 0);
+    const timeLimit = Number(element.dataset.timeLimit || 0);
+    const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    const percent = countdownPercent(endsAt, timeLimit);
+    const timer = element.querySelector("[data-timer]");
+    const bar = element.querySelector("[data-time-bar]");
+    if (timer && timer.textContent !== String(left)) timer.textContent = String(left);
+    if (bar) bar.style.width = `${percent}%`;
+    element.classList.toggle("urgent", left <= 5);
+  });
 }
 
 function statusLabel(status) {

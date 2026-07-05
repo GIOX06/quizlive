@@ -477,7 +477,6 @@ textarea {
 
 .question-card {
   overflow: hidden;
-  animation: stage-in 220ms ease both;
 }
 
 .screen-layout {
@@ -672,6 +671,54 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+.countdown {
+  display: inline-grid;
+  gap: 0.45rem;
+  justify-items: center;
+  align-items: center;
+  min-width: 5.4rem;
+}
+
+.countdown.urgent .timer {
+  background: var(--red);
+  box-shadow: 0 0 0 6px rgba(239, 91, 91, 0.14);
+}
+
+.time-track {
+  width: 5.4rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(23, 32, 38, 0.12);
+}
+
+.time-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+  transition: width 250ms linear, background-color 160ms ease;
+}
+
+.countdown.urgent .time-track span {
+  background: var(--red);
+}
+
+.screen-question .countdown {
+  min-width: 6.8rem;
+}
+
+.screen-question .timer {
+  width: 5.6rem;
+  height: 5.6rem;
+  font-size: 2rem;
+}
+
+.screen-question .time-track {
+  width: 6.8rem;
+  height: 0.55rem;
+}
+
 .answers-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -798,17 +845,6 @@ textarea {
 .leader-row.self {
   border-color: var(--teal);
   background: rgba(31, 157, 138, 0.08);
-}
-
-@keyframes stage-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .rank {
