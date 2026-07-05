@@ -96,6 +96,20 @@ DATA_DIR=/var/data
 
 This app is intentionally small and portable. It can run on platforms that support a persistent Node server and WebSocket connections, such as Render, Railway, Fly.io, Replit, or a VPS.
 
+## Host password
+
+For public deployments, protect the host area with a secret environment variable:
+
+```text
+HOST_PASSWORD=choose-a-private-password
+```
+
+When `HOST_PASSWORD` is set, opening `/#host` asks for the password before showing the quiz builder, archive, and result exports. Player links and QR codes keep working without a password.
+
+On Render, add `HOST_PASSWORD` from the service Environment page, then redeploy. Do not commit the password to GitHub.
+
+Host login sessions last up to 12 hours and reset when the service restarts.
+
 ### Render Blueprint
 
 The repository includes `render.yaml` for a Render web service:

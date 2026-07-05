@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const os = require("os");
@@ -19,9 +20,13 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
 const DATABASE_URL = process.env.DATABASE_URL || "";
+const HOST_PASSWORD = String(process.env.HOST_PASSWORD || "");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, ".data");
 const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
+const HOST_SESSION_COOKIE = "quizlive_host";
+const HOST_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const rooms = new Map();
+const hostSessions = new Map();
 const store = loadStore();
 const pgPool = createPgPool(DATABASE_URL);
 let archiveInitError = null;
@@ -43,6 +48,36 @@ app.use(express.static(path.join(__dirname, "public"), {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, rooms: rooms.size, archive: pgPool ? "postgres" : "file" });
+});
+
+app.get("/api/host/auth", (req, res) => {
+  res.json({
+    enabled: isHostAuthEnabled(),
+    authenticated: isHostHttpAuthorized(req)
+  });
+});
+
+app.post("/api/host/login", (req, res) => {
+  if (!isHostAuthEnabled()) {
+    res.json({ ok: true, enabled: false, authenticated: true });
+    return;
+  }
+
+  if (!passwordsMatch(req.body && req.body.password)) {
+    res.status(401).json({ ok: false, error: "Password host non corretta" });
+    return;
+  }
+
+  const token = createHostSession();
+  setHostSessionCookie(req, res, token);
+  res.json({ ok: true, enabled: true, authenticated: true });
+});
+
+app.post("/api/host/logout", (req, res) => {
+  const token = getCookie(req, HOST_SESSION_COOKIE);
+  if (token) hostSessions.delete(token);
+  clearHostSessionCookie(req, res);
+  res.json({ ok: true });
 });
 
 app.get("/api/network", (req, res) => {
@@ -85,7 +120,7 @@ app.get("/api/qr.svg", async (req, res) => {
   }
 });
 
-app.get("/api/rooms/:code/export/results.csv", (req, res) => {
+app.get("/api/rooms/:code/export/results.csv", requireHostHttp, (req, res) => {
   const room = rooms.get(normalizeCode(req.params.code));
   if (!room) {
     res.status(404).send("Room not found");
@@ -97,7 +132,7 @@ app.get("/api/rooms/:code/export/results.csv", (req, res) => {
   res.send(resultsToCsv(room));
 });
 
-app.get("/api/rooms/:code/export/results.json", (req, res) => {
+app.get("/api/rooms/:code/export/results.json", requireHostHttp, (req, res) => {
   const room = rooms.get(normalizeCode(req.params.code));
   if (!room) {
     res.status(404).json({ error: "Room not found" });
@@ -108,7 +143,7 @@ app.get("/api/rooms/:code/export/results.json", (req, res) => {
   res.json(resultsToJson(room));
 });
 
-app.get("/api/archive/quizzes", async (_req, res) => {
+app.get("/api/archive/quizzes", requireHostHttp, async (_req, res) => {
   try {
     const quizzes = await listQuizzesFromStore();
     res.json({ quizzes });
@@ -117,7 +152,7 @@ app.get("/api/archive/quizzes", async (_req, res) => {
   }
 });
 
-app.post("/api/archive/quizzes", async (req, res) => {
+app.post("/api/archive/quizzes", requireHostHttp, async (req, res) => {
   try {
     const quiz = normalizeQuiz(req.body && req.body.quiz);
     const id = normalizeArchiveId(req.body && req.body.id) || createArchiveId("quiz");
@@ -132,7 +167,7 @@ app.post("/api/archive/quizzes", async (req, res) => {
   }
 });
 
-app.delete("/api/archive/quizzes/:id", async (req, res) => {
+app.delete("/api/archive/quizzes/:id", requireHostHttp, async (req, res) => {
   try {
     const deleted = await deleteQuizFromStore(req.params.id);
     if (!deleted) {
@@ -145,7 +180,7 @@ app.delete("/api/archive/quizzes/:id", async (req, res) => {
   }
 });
 
-app.get("/api/archive/results", async (_req, res) => {
+app.get("/api/archive/results", requireHostHttp, async (_req, res) => {
   try {
     const results = await listResultsFromStore();
     res.json({ results });
@@ -154,7 +189,7 @@ app.get("/api/archive/results", async (_req, res) => {
   }
 });
 
-app.get("/api/archive/results/:id.json", async (req, res) => {
+app.get("/api/archive/results/:id.json", requireHostHttp, async (req, res) => {
   try {
     const result = await findResult(req.params.id);
     if (!result) {
@@ -168,7 +203,7 @@ app.get("/api/archive/results/:id.json", async (req, res) => {
   }
 });
 
-app.get("/api/archive/results/:id.csv", async (req, res) => {
+app.get("/api/archive/results/:id.csv", requireHostHttp, async (req, res) => {
   try {
     const result = await findResult(req.params.id);
     if (!result) {
@@ -183,7 +218,7 @@ app.get("/api/archive/results/:id.csv", async (req, res) => {
   }
 });
 
-app.delete("/api/archive/results/:id", async (req, res) => {
+app.delete("/api/archive/results/:id", requireHostHttp, async (req, res) => {
   try {
     const deleted = await deleteResultFromStore(req.params.id);
     if (!deleted) {
@@ -198,6 +233,11 @@ app.delete("/api/archive/results/:id", async (req, res) => {
 
 io.on("connection", (socket) => {
   socket.on("host:create", (payload, ack) => {
+    if (!isHostSocketAuthorized(socket)) {
+      sendAck(ack, { ok: false, error: "Password host richiesta" });
+      return;
+    }
+
     try {
       const quiz = normalizeQuiz(payload && payload.quiz);
       const room = createRoom(quiz, socket.id);
@@ -1015,6 +1055,104 @@ function isArchiveFailure(error) {
 function sendArchiveError(res, error) {
   console.error("Archive error:", error.message);
   res.status(500).json({ ok: false, error: "Archivio non disponibile" });
+}
+
+function requireHostHttp(req, res, next) {
+  if (isHostHttpAuthorized(req)) {
+    next();
+    return;
+  }
+  res.status(401).json({ ok: false, error: "Password host richiesta" });
+}
+
+function isHostAuthEnabled() {
+  return HOST_PASSWORD.length > 0;
+}
+
+function isHostHttpAuthorized(req) {
+  if (!isHostAuthEnabled()) return true;
+  return isValidHostSession(getCookie(req, HOST_SESSION_COOKIE));
+}
+
+function isHostSocketAuthorized(socket) {
+  if (!isHostAuthEnabled()) return true;
+  return isValidHostSession(getCookieFromHeader(socket.handshake.headers.cookie, HOST_SESSION_COOKIE));
+}
+
+function passwordsMatch(input) {
+  const actual = String(input || "");
+  const expectedBuffer = Buffer.from(HOST_PASSWORD);
+  const actualBuffer = Buffer.from(actual);
+  if (expectedBuffer.length !== actualBuffer.length) return false;
+  return crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
+function createHostSession() {
+  cleanupHostSessions();
+  const token = crypto.randomBytes(32).toString("base64url");
+  hostSessions.set(token, Date.now() + HOST_SESSION_TTL_MS);
+  return token;
+}
+
+function isValidHostSession(token) {
+  if (!token) return false;
+  const expiresAt = hostSessions.get(token);
+  if (!expiresAt) return false;
+  if (expiresAt <= Date.now()) {
+    hostSessions.delete(token);
+    return false;
+  }
+  hostSessions.set(token, Date.now() + HOST_SESSION_TTL_MS);
+  return true;
+}
+
+function cleanupHostSessions() {
+  const now = Date.now();
+  for (const [token, expiresAt] of hostSessions) {
+    if (expiresAt <= now) hostSessions.delete(token);
+  }
+}
+
+function setHostSessionCookie(req, res, token) {
+  const attributes = [
+    `${HOST_SESSION_COOKIE}=${token}`,
+    "HttpOnly",
+    "Path=/",
+    "SameSite=Lax",
+    `Max-Age=${Math.floor(HOST_SESSION_TTL_MS / 1000)}`
+  ];
+  if (isSecureRequest(req)) attributes.push("Secure");
+  res.setHeader("set-cookie", attributes.join("; "));
+}
+
+function clearHostSessionCookie(req, res) {
+  const attributes = [
+    `${HOST_SESSION_COOKIE}=`,
+    "HttpOnly",
+    "Path=/",
+    "SameSite=Lax",
+    "Max-Age=0"
+  ];
+  if (isSecureRequest(req)) attributes.push("Secure");
+  res.setHeader("set-cookie", attributes.join("; "));
+}
+
+function getCookie(req, name) {
+  return getCookieFromHeader(req.headers.cookie, name);
+}
+
+function getCookieFromHeader(header, name) {
+  const cookies = String(header || "").split(";");
+  for (const cookie of cookies) {
+    const [rawName, ...rawValue] = cookie.trim().split("=");
+    if (rawName === name) return rawValue.join("=");
+  }
+  return "";
+}
+
+function isSecureRequest(req) {
+  const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+  return forwardedProto === "https" || req.secure;
 }
 
 function loadStore() {

@@ -3,6 +3,8 @@ const { io } = require("socket.io-client");
 
 const serverUrl = process.env.SERVER_URL || "http://127.0.0.1:3000";
 const expectedArchive = process.env.EXPECTED_ARCHIVE || "";
+const hostPassword = process.env.HOST_PASSWORD || "";
+let authCookie = "";
 
 const quiz = {
   title: "Smoke Test",
@@ -22,9 +24,15 @@ main().catch((error) => {
 });
 
 async function main() {
-  const host = io(serverUrl, { transports: ["websocket"], forceNew: true });
-  const player = io(serverUrl, { transports: ["websocket"], forceNew: true });
-  const decliningPlayer = io(serverUrl, { transports: ["websocket"], forceNew: true });
+  const health = await getJson("/api/health");
+  assert.equal(health.ok, true);
+  if (expectedArchive) assert.equal(health.archive, expectedArchive);
+
+  await ensureHostAccess();
+
+  const host = createSocket(true);
+  const player = createSocket(false);
+  const decliningPlayer = createSocket(false);
 
   try {
     await Promise.all([waitForConnect(host), waitForConnect(player), waitForConnect(decliningPlayer)]);
@@ -37,10 +45,6 @@ async function main() {
     decliningPlayer.on("room:state", (state) => {
       decliningPlayer.latestState = state;
     });
-
-    const health = await getJson("/api/health");
-    assert.equal(health.ok, true);
-    if (expectedArchive) assert.equal(health.archive, expectedArchive);
 
     const savedQuiz = await postJson("/api/archive/quizzes", { quiz });
     assert.equal(savedQuiz.ok, true);
@@ -171,6 +175,55 @@ async function main() {
   }
 }
 
+function createSocket(includeHostCookie) {
+  const options = {
+    transports: ["websocket"],
+    forceNew: true
+  };
+  if (includeHostCookie && authCookie) {
+    options.extraHeaders = { Cookie: authCookie };
+  }
+  return io(serverUrl, options);
+}
+
+async function ensureHostAccess() {
+  const auth = await getJson("/api/host/auth");
+  if (!auth.enabled) return;
+  if (!hostPassword) {
+    throw new Error("HOST_PASSWORD is required to run smoke tests against a protected host.");
+  }
+
+  const lockedResponse = await fetch(new URL("/api/archive/quizzes", serverUrl), { cache: "no-store" });
+  assert.equal(lockedResponse.status, 401);
+
+  const unauthorizedHost = createSocket(false);
+  try {
+    await waitForConnect(unauthorizedHost);
+    const deniedCreate = await emitAck(unauthorizedHost, "host:create", { quiz });
+    assert.equal(deniedCreate.ok, false);
+    assert.match(deniedCreate.error, /Password host/);
+  } finally {
+    unauthorizedHost.close();
+  }
+
+  await loginHost();
+}
+
+async function loginHost() {
+  const response = await fetch(new URL("/api/host/login", serverUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password: hostPassword })
+  });
+  const data = await response.json();
+  assert.equal(response.ok, true, data.error || "Host login failed");
+  authCookie = String(response.headers.get("set-cookie") || "").split(";")[0];
+  assert.ok(authCookie);
+
+  const auth = await getJson("/api/host/auth");
+  assert.equal(auth.authenticated, true);
+}
+
 function emitAck(socket, eventName, payload) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Timeout waiting for ${eventName}`)), 4000);
@@ -182,13 +235,17 @@ function emitAck(socket, eventName, payload) {
 }
 
 async function getJson(path) {
-  const response = await fetch(new URL(path, serverUrl));
+  const response = await fetch(new URL(path, serverUrl), {
+    headers: authHeaders()
+  });
   assert.equal(response.ok, true);
   return response.json();
 }
 
 async function getText(path) {
-  const response = await fetch(new URL(path, serverUrl));
+  const response = await fetch(new URL(path, serverUrl), {
+    headers: authHeaders()
+  });
   assert.equal(response.ok, true);
   return response.text();
 }
@@ -196,7 +253,7 @@ async function getText(path) {
 async function postJson(path, payload) {
   const response = await fetch(new URL(path, serverUrl), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload)
   });
   assert.equal(response.ok, true);
@@ -204,9 +261,16 @@ async function postJson(path, payload) {
 }
 
 async function deleteJson(path) {
-  const response = await fetch(new URL(path, serverUrl), { method: "DELETE" });
+  const response = await fetch(new URL(path, serverUrl), {
+    method: "DELETE",
+    headers: authHeaders()
+  });
   assert.equal(response.ok, true);
   return response.json();
+}
+
+function authHeaders() {
+  return authCookie ? { Cookie: authCookie } : {};
 }
 
 function waitForConnect(socket) {

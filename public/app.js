@@ -10,6 +10,13 @@ let local = {
   importOpen: false,
   archiveOpen: false,
   archiveLoading: false,
+  hostAuth: {
+    checked: false,
+    enabled: false,
+    authenticated: false,
+    loading: false,
+    password: ""
+  },
   importText: "",
   savedQuizzes: [],
   savedResults: [],
@@ -19,16 +26,18 @@ let local = {
   playerBaseUrl: window.location.origin,
   playerAccessMode: "same-origin"
 };
+let reconnectingForHostAuth = false;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
 
 socket.on("connect", () => {
+  reconnectingForHostAuth = false;
   render();
 });
 
 socket.on("disconnect", () => {
-  showToast("Connessione persa");
+  if (!reconnectingForHostAuth) showToast("Connessione persa");
   render();
 });
 
@@ -46,6 +55,7 @@ socket.on("player:removed", (payload) => {
 });
 
 loadNetworkConfig();
+loadHostAuth();
 
 window.addEventListener("hashchange", () => {
   if (local.room) return;
@@ -82,7 +92,10 @@ function renderTopbar() {
 }
 
 function renderMain() {
-  if (!local.room) return local.mode === "host" ? renderHostHome() : renderJoinHome();
+  if (!local.room) {
+    if (local.mode === "host") return hostAccessGranted() ? renderHostHome() : renderHostAccess();
+    return renderJoinHome();
+  }
   if (local.room.role === "host") return renderHostGame(local.room);
   return renderPlayerGame(local.room);
 }
@@ -124,7 +137,10 @@ function renderHostHome() {
           <h1 class="section-title">Crea partita</h1>
           <p class="subtle">Quiz, lobby, timer, punteggio e risultati esportabili.</p>
         </div>
-        <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+        <div class="toolbar">
+          ${local.hostAuth.enabled ? `<button class="btn ghost" data-action="host-logout">Blocca host</button>` : ""}
+          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+        </div>
       </div>
       <div class="panel stack">
         ${renderQuizBuilder()}
@@ -138,6 +154,41 @@ function renderHostHome() {
         </div>
         ${local.importOpen ? renderImportBox() : ""}
         ${local.archiveOpen ? renderArchiveBox() : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderHostAccess() {
+  if (!local.hostAuth.checked) {
+    return `
+      <section class="join-shell">
+        <div class="panel join-panel stack">
+          <div>
+            <h1 class="section-title">Accesso host</h1>
+            <p class="subtle">Controllo accesso...</p>
+          </div>
+          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="join-shell">
+      <div class="panel join-panel stack">
+        <div>
+          <h1 class="section-title">Accesso host</h1>
+          <p class="subtle">Inserisci la password host.</p>
+        </div>
+        <label class="stack">
+          <span>Password</span>
+          <input data-field="host-password" type="password" autocomplete="current-password" value="${escapeAttr(local.hostAuth.password)}" />
+        </label>
+        <div class="toolbar">
+          <button class="btn primary" data-action="host-login" ${local.hostAuth.loading ? "disabled" : ""}>Sblocca host</button>
+          <button class="btn ghost" data-action="switch-join">Area giocatore</button>
+        </div>
       </div>
     </section>
   `;
@@ -586,6 +637,15 @@ function bindEvents() {
       local.nickname = joinNameField.value;
     });
   }
+  const hostPasswordField = document.querySelector("[data-field='host-password']");
+  if (hostPasswordField) {
+    hostPasswordField.addEventListener("input", () => {
+      local.hostAuth.password = hostPasswordField.value;
+    });
+    hostPasswordField.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") hostLogin();
+    });
+  }
 }
 
 function handleAction(event) {
@@ -607,8 +667,13 @@ function handleAction(event) {
   if (action === "delete-saved-quiz") deleteSavedQuiz(target.dataset.quizId);
   if (action === "delete-saved-result") deleteSavedResult(target.dataset.resultId);
   if (action === "download-quiz") downloadJson("quizlive-quiz.json", cleanQuiz(local.quiz));
-  if (action === "switch-host") switchMode("host");
+  if (action === "switch-host") {
+    switchMode("host");
+    loadHostAuth();
+  }
   if (action === "switch-join") switchMode("join");
+  if (action === "host-login") hostLogin();
+  if (action === "host-logout") hostLogout();
   if (action === "copy-player-link") copyPlayerLink();
   if (action === "create-room") createRoom();
   if (action === "join-room") joinRoom();
@@ -662,8 +727,8 @@ async function loadArchive() {
   render();
   try {
     const [quizResponse, resultResponse] = await Promise.all([
-      fetch("/api/archive/quizzes", { cache: "no-store" }),
-      fetch("/api/archive/results", { cache: "no-store" })
+      fetch("/api/archive/quizzes", { cache: "no-store", credentials: "same-origin" }),
+      fetch("/api/archive/results", { cache: "no-store", credentials: "same-origin" })
     ]);
     if (!quizResponse.ok || !resultResponse.ok) throw new Error("Archivio non disponibile");
     const quizData = await quizResponse.json();
@@ -689,6 +754,7 @@ async function saveQuiz() {
     const response = await fetch("/api/archive/quizzes", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({ id: local.currentQuizId, quiz })
     });
     const data = await response.json();
@@ -717,7 +783,10 @@ function loadSavedQuiz(id) {
 async function deleteSavedQuiz(id) {
   if (!id) return;
   try {
-    const response = await fetch(`/api/archive/quizzes/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const response = await fetch(`/api/archive/quizzes/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "same-origin"
+    });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || "Eliminazione non riuscita");
     if (local.currentQuizId === id) local.currentQuizId = null;
@@ -731,7 +800,10 @@ async function deleteSavedQuiz(id) {
 async function deleteSavedResult(id) {
   if (!id) return;
   try {
-    const response = await fetch(`/api/archive/results/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const response = await fetch(`/api/archive/results/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "same-origin"
+    });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || "Eliminazione non riuscita");
     showToast("Risultato eliminato");
@@ -742,6 +814,12 @@ async function deleteSavedResult(id) {
 }
 
 function createRoom() {
+  if (!hostAccessGranted()) {
+    showToast("Password host richiesta");
+    render();
+    return;
+  }
+
   const quiz = cleanQuiz(local.quiz);
   if (!quiz.questions.length) {
     showToast("Aggiungi almeno una domanda");
@@ -806,6 +884,88 @@ async function loadNetworkConfig() {
     local.playerBaseUrl = window.location.origin;
     local.playerAccessMode = accessModeForOrigin(window.location.origin);
   }
+}
+
+async function loadHostAuth() {
+  try {
+    const response = await fetch("/api/host/auth", {
+      cache: "no-store",
+      credentials: "same-origin"
+    });
+    if (!response.ok) throw new Error("Accesso host non disponibile");
+    const data = await response.json();
+    local.hostAuth.checked = true;
+    local.hostAuth.enabled = Boolean(data.enabled);
+    local.hostAuth.authenticated = !data.enabled || Boolean(data.authenticated);
+  } catch (error) {
+    local.hostAuth.checked = true;
+    local.hostAuth.enabled = true;
+    local.hostAuth.authenticated = false;
+    if (local.mode === "host") showToast("Accesso host non verificato");
+  } finally {
+    render();
+  }
+}
+
+async function hostLogin() {
+  if (local.hostAuth.loading) return;
+  const field = document.querySelector("[data-field='host-password']");
+  const password = field ? field.value : local.hostAuth.password;
+  if (!String(password || "").trim()) {
+    showToast("Inserisci password host");
+    return;
+  }
+
+  local.hostAuth.loading = true;
+  render();
+  try {
+    const response = await fetch("/api/host/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ password })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Password non corretta");
+    local.hostAuth.checked = true;
+    local.hostAuth.enabled = Boolean(data.enabled);
+    local.hostAuth.authenticated = true;
+    local.hostAuth.password = "";
+    reconnectSocketForHost();
+    showToast("Area host sbloccata");
+  } catch (error) {
+    local.hostAuth.authenticated = false;
+    showToast(error.message || "Password non corretta");
+  } finally {
+    local.hostAuth.loading = false;
+    render();
+  }
+}
+
+async function hostLogout() {
+  try {
+    await fetch("/api/host/logout", {
+      method: "POST",
+      credentials: "same-origin"
+    });
+  } catch (error) {
+    // The local lock still happens even if the network request fails.
+  }
+  local.hostAuth.authenticated = !local.hostAuth.enabled;
+  local.hostAuth.password = "";
+  reconnectSocketForHost();
+  showToast("Area host bloccata");
+  render();
+}
+
+function hostAccessGranted() {
+  return local.hostAuth.checked && (!local.hostAuth.enabled || local.hostAuth.authenticated);
+}
+
+function reconnectSocketForHost() {
+  reconnectingForHostAuth = true;
+  if (socket.connected) socket.disconnect();
+  socket.connect();
 }
 
 function emitHost(eventName) {
