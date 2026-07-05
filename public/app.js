@@ -32,6 +32,8 @@ let local = {
 let reconnectingForHostAuth = false;
 let screenPresentationRequest = null;
 let screenPresentationUrl = "";
+let screenPresentationConnection = null;
+let screenPresentationDisconnecting = false;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -164,11 +166,18 @@ function renderScreenHome() {
         <div class="screen-code-entry">
           <input data-field="screen-code" inputmode="numeric" maxlength="6" placeholder="Codice stanza" value="${escapeAttr(local.screenCode)}" />
           <button class="btn ghost" data-action="join-screen" ${local.screenJoining ? "disabled" : ""}>Collega codice</button>
-          <button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>
+          ${renderCastScreenButton()}
         </div>
       </div>
     </section>
   `;
+}
+
+function renderCastScreenButton() {
+  if (isScreenPresentationConnected()) {
+    return `<button class="btn ghost" data-action="disconnect-screen-cast">Scollega TV</button>`;
+  }
+  return `<button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>`;
 }
 
 function renderHostHome() {
@@ -181,7 +190,7 @@ function renderHostHome() {
         </div>
         <div class="toolbar">
           <button class="btn ghost" data-action="open-waiting-screen">Apri monitor</button>
-          <button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>
+          ${renderCastScreenButton()}
           ${local.hostAuth.enabled ? `<button class="btn ghost" data-action="host-logout">Blocca host</button>` : ""}
           <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
         </div>
@@ -414,7 +423,7 @@ function renderHostLobby(room) {
           <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
           <button class="btn ghost" data-action="copy-screen-link">Copia monitor</button>
           <button class="btn ghost" data-action="open-screen-link">Apri monitor</button>
-          <button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>
+          ${renderCastScreenButton()}
         </div>
         <p class="qr-note ${playerAccessClass()}">${escapeHtml(playerAccessNotice())}</p>
       </div>
@@ -852,6 +861,7 @@ function handleAction(event) {
   if (action === "copy-screen-link") copyScreenLink();
   if (action === "open-screen-link") openScreenLink();
   if (action === "cast-screen") castScreenToTv();
+  if (action === "disconnect-screen-cast") disconnectScreenFromTv();
   if (action === "join-screen") joinScreen();
   if (action === "create-room") createRoom();
   if (action === "join-room") joinRoom();
@@ -1131,11 +1141,17 @@ async function castScreenToTv() {
     showToast("Usa Chrome: menu Trasmetti");
     return;
   }
+  if (isScreenPresentationConnected()) {
+    showToast("TV collegata");
+    return;
+  }
 
   try {
     const request = createScreenPresentationRequest(link);
-    await request.start();
+    const connection = await request.start();
+    setScreenPresentationConnection(connection);
     showToast("Monitor inviato alla TV");
+    render();
   } catch (error) {
     const name = error && error.name;
     if (name === "NotAllowedError" || name === "AbortError") {
@@ -1143,6 +1159,31 @@ async function castScreenToTv() {
       return;
     }
     showToast("TV non trovata o non supportata");
+  }
+}
+
+function disconnectScreenFromTv() {
+  const connection = screenPresentationConnection;
+  if (!connection) {
+    showToast("Nessuna TV collegata");
+    render();
+    return;
+  }
+
+  screenPresentationDisconnecting = true;
+  try {
+    if (typeof connection.terminate === "function") {
+      connection.terminate();
+    } else if (typeof connection.close === "function") {
+      connection.close();
+    }
+    showToast("TV scollegata");
+  } catch (error) {
+    showToast("Connessione TV chiusa");
+  } finally {
+    clearScreenPresentationConnection();
+    screenPresentationDisconnecting = false;
+    render();
   }
 }
 
@@ -1170,6 +1211,32 @@ function createScreenPresentationRequest(link) {
 
 function supportsScreenPresentation() {
   return typeof window.PresentationRequest === "function" && Boolean(navigator.presentation);
+}
+
+function setScreenPresentationConnection(connection) {
+  screenPresentationConnection = connection || null;
+  screenPresentationDisconnecting = false;
+  if (connection && typeof connection.addEventListener === "function") {
+    connection.addEventListener("close", handleScreenPresentationEnded);
+    connection.addEventListener("terminate", handleScreenPresentationEnded);
+  }
+}
+
+function clearScreenPresentationConnection() {
+  screenPresentationConnection = null;
+}
+
+function handleScreenPresentationEnded() {
+  const wasConnected = Boolean(screenPresentationConnection);
+  clearScreenPresentationConnection();
+  if (wasConnected && !screenPresentationDisconnecting) showToast("TV scollegata");
+  screenPresentationDisconnecting = false;
+  render();
+}
+
+function isScreenPresentationConnected() {
+  if (!screenPresentationConnection) return false;
+  return !screenPresentationConnection.state || screenPresentationConnection.state === "connected";
 }
 
 async function loadNetworkConfig() {
