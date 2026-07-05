@@ -16,9 +16,9 @@ QuizLive is a portable Kahoot-like web app for live quiz games.
 - Players see answer buttons, feedback, score, and ranking.
 - Results export as CSV, JSON, or XLSX while the room is active.
 - Quiz export/import works with an editable XLSX template from the host builder, including metadata and media URLs.
-- Host can save quizzes to the archive, search by metadata/tags, load them later, or duplicate them as drafts.
+- Host can save quizzes to a small library with folder, private/public visibility, metadata search, loading, and draft duplication.
 - Optional team mode automatically assigns players to teams and shows a team leaderboard.
-- Questions can include public image or video URLs.
+- Questions can include public image/video URLs, and image files can be uploaded from the host editor.
 - Finished games are saved to historical results with CSV/JSON/XLSX export.
 
 ## Local setup
@@ -84,7 +84,7 @@ With `PUBLIC_BASE_URL`, the QR code and copied player link use the public URL.
 
 ## Persistence
 
-QuizLive can store saved quizzes and historical results in either Neon Postgres or a small local JSON store.
+QuizLive can store saved quizzes, uploaded images, and historical results in either Neon Postgres or a small local JSON store.
 
 When `DATABASE_URL` is set, QuizLive uses Postgres and creates the archive tables automatically on startup. This is the recommended setup for Render Free because the database survives sleeps, restarts, and redeploys.
 
@@ -109,7 +109,7 @@ Without `DATABASE_URL`, QuizLive falls back to the local JSON store. By default,
 .data/quizlive-store.json
 ```
 
-On Render Free, this local store is temporary because free web services use an ephemeral filesystem. Saved quizzes and historical results can be lost when the service sleeps, restarts, or redeploys.
+On Render Free, this local store is temporary because free web services use an ephemeral filesystem. Saved quizzes, uploaded images, and historical results can be lost when the service sleeps, restarts, or redeploys.
 
 As another option, a paid Render service can use a persistent disk by setting `DATA_DIR` to the disk mount path, for example:
 
@@ -160,6 +160,5 @@ Then redeploy. QR codes and copied player links will use the custom public URL.
 For a production version, the next useful upgrades are:
 
 - user accounts for hosts
-- media uploads for questions
-- public/private quiz library
+- shared public quiz discovery between hosts
 - Dockerfile for consistent deployment

@@ -436,6 +436,55 @@ textarea {
   background: #fff;
 }
 
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  width: fit-content;
+}
+
+.segmented button {
+  min-height: 2rem;
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.segmented button.active {
+  background: var(--ink);
+  color: #fff;
+}
+
+.media-field {
+  align-content: start;
+}
+
+.media-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.file-input {
+  padding: 0.55rem;
+}
+
+.media-thumb {
+  width: 100%;
+  max-height: 8rem;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .mini-title {
   margin: 0;
   font-size: 1rem;
@@ -726,6 +775,11 @@ textarea {
   align-items: center;
   gap: 0.6rem;
   margin-top: 1rem;
+}
+
+.meta-row.compact {
+  gap: 0.35rem;
+  margin-top: 0.45rem;
 }
 
 .timer {

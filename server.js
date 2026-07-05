@@ -26,6 +26,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, ".data");
 const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
 const HOST_SESSION_COOKIE = "quizlive_host";
 const HOST_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const MAX_MEDIA_BYTES = 1.5 * 1024 * 1024;
 const QUESTION_TYPE_LABELS = {
   multiple: "Multipla",
   true_false: "Vero/Falso",
@@ -173,6 +174,35 @@ app.post("/api/quiz/import.xlsx", requireHostHttp, (req, res) => {
     res.json({ ok: true, quiz });
   } catch (error) {
     res.status(400).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/api/media", requireHostHttp, async (req, res) => {
+  try {
+    const parsed = parseImageDataUrl(req.body && req.body.file);
+    const saved = await saveMediaToStore(parsed);
+    res.json({ ok: true, url: `/api/media/${saved.id}`, id: saved.id, mime: saved.mime, size: saved.size });
+  } catch (error) {
+    if (isArchiveFailure(error)) {
+      sendArchiveError(res, error);
+      return;
+    }
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/media/:id", async (req, res) => {
+  try {
+    const media = await findMedia(req.params.id);
+    if (!media) {
+      res.status(404).send("Media not found");
+      return;
+    }
+    res.setHeader("content-type", media.mime);
+    res.setHeader("cache-control", "public, max-age=31536000, immutable");
+    res.send(Buffer.from(media.data, "base64"));
+  } catch (error) {
+    sendArchiveError(res, error);
   }
 });
 
@@ -1025,6 +1055,8 @@ function resultsToJson(room) {
     subject: room.quiz.subject,
     level: room.quiz.level,
     language: room.quiz.language,
+    folder: room.quiz.folder,
+    visibility: room.quiz.visibility,
     tags: room.quiz.tags,
     teamMode: Boolean(room.quiz.teamMode),
     exportedAt: new Date().toISOString(),
@@ -1099,6 +1131,8 @@ async function listQuizzesFromStore() {
       questionCount: item.questionCount,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
+      folder: item.quiz && item.quiz.folder || "",
+      visibility: item.quiz && item.quiz.visibility || "private",
       quiz: item.quiz
     }))
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -1142,6 +1176,33 @@ async function deleteQuizFromStore(id) {
   store.quizzes.splice(index, 1);
   persistStore();
   return true;
+}
+
+async function saveMediaToStore(media) {
+  await ensureArchiveReady();
+  const id = createArchiveId("media");
+  const saved = {
+    id,
+    mime: media.mime,
+    data: media.data,
+    size: media.size,
+    createdAt: new Date().toISOString()
+  };
+  if (pgPool) return saveMediaToPostgres(saved);
+
+  store.media.unshift(saved);
+  store.media = store.media
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, 300);
+  persistStore();
+  return saved;
+}
+
+async function findMedia(id) {
+  await ensureArchiveReady();
+  const normalizedId = normalizeArchiveId(id);
+  if (pgPool) return findMediaFromPostgres(normalizedId);
+  return store.media.find((item) => item.id === normalizedId) || null;
 }
 
 async function listResultsFromStore() {
@@ -1286,6 +1347,8 @@ function resultToWorkbook(result) {
     ["Materia", normalized.subject || ""],
     ["Livello", normalized.level || ""],
     ["Lingua", normalized.language || ""],
+    ["Cartella", normalized.folder || ""],
+    ["Visibilita", normalized.visibility || ""],
     ["Tag", Array.isArray(normalized.tags) ? normalized.tags.join(", ") : ""],
     ["Team mode", normalized.teamMode ? "si" : "no"],
     ["Creato", normalized.createdAt || ""],
@@ -1436,6 +1499,8 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Materia", normalizedQuiz.subject],
     ["Livello", normalizedQuiz.level],
     ["Lingua", normalizedQuiz.language],
+    ["Cartella", normalizedQuiz.folder],
+    ["Visibilita", normalizedQuiz.visibility],
     ["Tag", normalizedQuiz.tags.join(", ")],
     ["Team mode", normalizedQuiz.teamMode ? "si" : "no"],
     [],
@@ -1481,7 +1546,8 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Team mode", "Scrivi si per dividere automaticamente i giocatori in squadre."],
     ["Tipo", "Usa multipla, vero_falso, veloce oppure risposte_multiple."],
     ["Corretta", "Scrivi A, B, C, D, E o F. Per risposte_multiple usa piu lettere, ad esempio A,C."],
-    ["Media", "Immagine URL e Video URL accettano link http/https pubblici."],
+    ["Libreria", "Cartella organizza l'archivio. Visibilita accetta privata o pubblica."],
+    ["Media", "Immagine URL accetta link http/https o media caricati da QuizLive. Video URL accetta link http/https pubblici."],
     ["Vero/Falso", "Per vero_falso usa A per Vero oppure B per Falso. Le risposte verranno normalizzate."],
     ["Limiti", "Massimo 50 domande, 2-6 risposte, tempo da 5 a 90 secondi."]
   ]);
@@ -1498,6 +1564,8 @@ function workbookToQuiz(workbook) {
   const subjectRow = rows.find((row) => normalizeCell(row[0]) === "materia");
   const levelRow = rows.find((row) => normalizeCell(row[0]) === "livello");
   const languageRow = rows.find((row) => normalizeCell(row[0]) === "lingua");
+  const folderRow = rows.find((row) => normalizeCell(row[0]) === "cartella");
+  const visibilityRow = rows.find((row) => normalizeCell(row[0]) === "visibilita" || normalizeCell(row[0]) === "visibility");
   const tagsRow = rows.find((row) => normalizeCell(row[0]) === "tag");
   const teamModeRow = rows.find((row) => normalizeCell(row[0]) === "team_mode");
   const title = String(titleRow && titleRow[1] || "QuizLive").trim().slice(0, 80) || "QuizLive";
@@ -1541,6 +1609,8 @@ function workbookToQuiz(workbook) {
     subject: subjectRow && subjectRow[1],
     level: levelRow && levelRow[1],
     language: languageRow && languageRow[1],
+    folder: folderRow && folderRow[1],
+    visibility: visibilityRow && visibilityRow[1],
     tags: tagsRow && tagsRow[1],
     teamMode: yesValue(teamModeRow && teamModeRow[1]),
     questions
@@ -1625,6 +1695,8 @@ function templateQuiz() {
     subject: "Materia",
     level: "Classe o livello",
     language: "Italiano",
+    folder: "Esempi",
+    visibility: "private",
     tags: ["modello", "ripasso"],
     teamMode: false,
     questions: [
@@ -1704,8 +1776,18 @@ async function initPostgresArchive() {
       result jsonb not null
     )
   `);
+  await pgPool.query(`
+    create table if not exists quizlive_media (
+      id text primary key,
+      mime text not null,
+      data text not null,
+      size integer not null,
+      created_at timestamptz not null
+    )
+  `);
   await pgPool.query("create index if not exists quizlive_quizzes_updated_at_idx on quizlive_quizzes (updated_at desc)");
   await pgPool.query("create index if not exists quizlive_results_ended_at_idx on quizlive_results (ended_at desc)");
+  await pgPool.query("create index if not exists quizlive_media_created_at_idx on quizlive_media (created_at desc)");
 }
 
 async function listQuizzesFromPostgres() {
@@ -1721,6 +1803,8 @@ async function listQuizzesFromPostgres() {
     questionCount: row.question_count,
     createdAt: isoDate(row.created_at),
     updatedAt: isoDate(row.updated_at),
+    folder: row.quiz && row.quiz.folder || "",
+    visibility: row.quiz && row.quiz.visibility || "private",
     quiz: row.quiz
   }));
 }
@@ -1751,6 +1835,32 @@ async function saveQuizToPostgres(id, quiz) {
 async function deleteQuizFromPostgres(id) {
   const response = await pgPool.query("delete from quizlive_quizzes where id = $1", [id]);
   return response.rowCount > 0;
+}
+
+async function saveMediaToPostgres(media) {
+  await pgPool.query(`
+    insert into quizlive_media (id, mime, data, size, created_at)
+    values ($1, $2, $3, $4, $5)
+    on conflict (id) do update set
+      mime = excluded.mime,
+      data = excluded.data,
+      size = excluded.size,
+      created_at = excluded.created_at
+  `, [media.id, media.mime, media.data, media.size, media.createdAt]);
+  return media;
+}
+
+async function findMediaFromPostgres(id) {
+  const response = await pgPool.query("select id, mime, data, size, created_at from quizlive_media where id = $1", [id]);
+  if (!response.rows[0]) return null;
+  const row = response.rows[0];
+  return {
+    id: row.id,
+    mime: row.mime,
+    data: row.data,
+    size: row.size,
+    createdAt: isoDate(row.created_at)
+  };
 }
 
 async function listResultsFromPostgres() {
@@ -1946,7 +2056,8 @@ function normalizeStore(input) {
   return {
     version: 1,
     quizzes: Array.isArray(source.quizzes) ? source.quizzes.filter(isStoredQuiz).slice(0, 100) : [],
-    results: Array.isArray(source.results) ? source.results.filter(isStoredResult).slice(0, 200) : []
+    results: Array.isArray(source.results) ? source.results.filter(isStoredResult).slice(0, 200) : [],
+    media: Array.isArray(source.media) ? source.media.filter(isStoredMedia).slice(0, 300) : []
   };
 }
 
@@ -1963,6 +2074,13 @@ function isStoredResult(item) {
     typeof item.code === "string" &&
     Array.isArray(item.questions) &&
     Array.isArray(item.leaderboard);
+}
+
+function isStoredMedia(item) {
+  return item &&
+    typeof item.id === "string" &&
+    /^image\/(?:png|jpeg|webp|gif)$/.test(item.mime || "") &&
+    typeof item.data === "string";
 }
 
 function createArchiveId(prefix) {
@@ -1997,6 +2115,8 @@ function normalizeQuiz(input) {
   const subject = normalizeShortText(source.subject, 40);
   const level = normalizeShortText(source.level, 40);
   const language = normalizeShortText(source.language || "Italiano", 32) || "Italiano";
+  const folder = normalizeShortText(source.folder, 40);
+  const visibility = normalizeQuizVisibility(source.visibility);
   const tags = normalizeTags(source.tags);
   const teamMode = Boolean(source.teamMode);
   const questions = Array.isArray(source.questions) ? source.questions : [];
@@ -2006,7 +2126,7 @@ function normalizeQuiz(input) {
     throw new Error("Il quiz deve avere almeno una domanda");
   }
 
-  return { title, subject, level, language, tags, teamMode, questions: normalizedQuestions };
+  return { title, subject, level, language, folder, visibility, tags, teamMode, questions: normalizedQuestions };
 }
 
 function normalizeQuestion(item, index) {
@@ -2034,7 +2154,7 @@ function normalizeQuestion(item, index) {
   return {
     type,
     text,
-    imageUrl: normalizeMediaUrl(item && item.imageUrl),
+    imageUrl: normalizeImageUrl(item && item.imageUrl),
     videoUrl: normalizeMediaUrl(item && item.videoUrl),
     answers: normalizedAnswers,
     correctIndex,
@@ -2053,6 +2173,33 @@ function normalizeTags(value) {
     .map((tag) => normalizeShortText(tag, 24))
     .filter(Boolean)))
     .slice(0, 8);
+}
+
+function normalizeQuizVisibility(value) {
+  const key = normalizeCell(value || "private");
+  return key === "pubblica" || key === "public" ? "public" : "private";
+}
+
+function parseImageDataUrl(value) {
+  const raw = String(value || "");
+  const match = raw.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([a-zA-Z0-9+/=\s]+)$/);
+  if (!match) throw new Error("Carica un'immagine PNG, JPG, WebP o GIF");
+  const data = match[2].replace(/\s/g, "");
+  const buffer = Buffer.from(data, "base64");
+  if (!buffer.length) throw new Error("Immagine vuota");
+  if (buffer.length > MAX_MEDIA_BYTES) throw new Error("Immagine troppo grande: massimo 1.5 MB");
+  return {
+    mime: match[1],
+    data: buffer.toString("base64"),
+    size: buffer.length
+  };
+}
+
+function normalizeImageUrl(value) {
+  const raw = normalizeShortText(value, 500);
+  if (!raw) return "";
+  if (/^\/api\/media\/[a-zA-Z0-9_-]{8,80}$/.test(raw)) return raw;
+  return normalizeMediaUrl(raw);
 }
 
 function normalizeMediaUrl(value) {
@@ -2227,6 +2374,8 @@ function defaultQuiz() {
     subject: "Tecnologia",
     level: "Demo",
     language: "Italiano",
+    folder: "Demo",
+    visibility: "private",
     tags: ["demo", "live"],
     teamMode: false,
     questions: [

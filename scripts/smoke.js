@@ -5,12 +5,15 @@ const serverUrl = process.env.SERVER_URL || "http://127.0.0.1:3000";
 const expectedArchive = process.env.EXPECTED_ARCHIVE || "";
 const hostPassword = process.env.HOST_PASSWORD || "";
 let authCookie = "";
+const tinyPngDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 const quiz = {
   title: "Smoke Test",
   subject: "Science",
   level: "Grade 7",
   language: "English",
+  folder: "Smoke Library",
+  visibility: "public",
   tags: ["smoke", "team"],
   teamMode: true,
   questions: [
@@ -67,6 +70,13 @@ async function main() {
       decliningPlayer.latestState = state;
     });
 
+    const uploadedMedia = await postJson("/api/media", { file: tinyPngDataUrl, filename: "tiny.png" });
+    assert.equal(uploadedMedia.ok, true);
+    assert.match(uploadedMedia.url, /^\/api\/media\/media-/);
+    const uploadedMediaBinary = await getBinary(uploadedMedia.url);
+    assert.ok(uploadedMediaBinary.length > 0);
+    quiz.questions[0].imageUrl = uploadedMedia.url;
+
     const screenWatching = await emitAck(screen, "screen:watch", {});
     assert.equal(screenWatching.ok, true);
     assert.equal(screenWatching.waiting, true);
@@ -85,11 +95,13 @@ async function main() {
     assert.equal(importedQuiz.quiz.subject, "Science");
     assert.equal(importedQuiz.quiz.level, "Grade 7");
     assert.equal(importedQuiz.quiz.language, "English");
+    assert.equal(importedQuiz.quiz.folder, "Smoke Library");
+    assert.equal(importedQuiz.quiz.visibility, "public");
     assert.deepEqual(importedQuiz.quiz.tags, ["smoke", "team"]);
     assert.equal(importedQuiz.quiz.teamMode, true);
     assert.equal(importedQuiz.quiz.questions[0].type, "speed");
     assert.equal(importedQuiz.quiz.questions[0].answers[0], "Yes");
-    assert.equal(importedQuiz.quiz.questions[0].imageUrl, "https://example.com/ready.png");
+    assert.equal(importedQuiz.quiz.questions[0].imageUrl, uploadedMedia.url);
     assert.equal(importedQuiz.quiz.questions[1].type, "multiple_select");
     assert.deepEqual(importedQuiz.quiz.questions[1].correctIndexes, [0, 1, 3]);
 
@@ -97,7 +109,10 @@ async function main() {
     assert.ok(templateXlsx.length > 1000);
 
     const archive = await getJson("/api/archive/quizzes");
-    assert.ok(archive.quizzes.some((item) => item.id === savedQuiz.quiz.id));
+    const archivedQuiz = archive.quizzes.find((item) => item.id === savedQuiz.quiz.id);
+    assert.ok(archivedQuiz);
+    assert.equal(archivedQuiz.visibility, "public");
+    assert.equal(archivedQuiz.folder, "Smoke Library");
 
     const created = await emitAck(host, "host:create", { quiz });
     assert.equal(created.ok, true);

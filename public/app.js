@@ -1,6 +1,7 @@
 const socket = io();
 
 const PLAYER_SESSION_STORAGE_KEY = "quizlive_player_session";
+const MAX_IMAGE_UPLOAD_BYTES = 1.5 * 1024 * 1024;
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const answerClasses = ["answer-a", "answer-b", "answer-c", "answer-d", "answer-e", "answer-f"];
 const questionTypes = [
@@ -29,6 +30,7 @@ let local = {
   savedQuizzes: [],
   savedResults: [],
   archiveSearch: "",
+  archiveVisibility: "all",
   currentQuizId: null,
   joinCode: initialJoinCode(),
   screenCode: initialScreenCode(),
@@ -292,8 +294,21 @@ function renderQuizBuilder() {
           <input data-quiz-meta="language" value="${escapeAttr(local.quiz.language || "Italiano")}" maxlength="32" />
         </label>
         <label class="stack">
+          <span>Cartella</span>
+          <input data-quiz-meta="folder" value="${escapeAttr(local.quiz.folder || "")}" maxlength="40" placeholder="Es. 2B ripasso" />
+        </label>
+      </div>
+      <div class="grid-2">
+        <label class="stack">
           <span>Tag</span>
           <input data-quiz-tags value="${escapeAttr((local.quiz.tags || []).join(", "))}" maxlength="160" placeholder="ripasso, verifica" />
+        </label>
+        <label class="stack">
+          <span>Visibilita</span>
+          <select data-quiz-meta="visibility">
+            <option value="private" ${quizVisibility(local.quiz.visibility) === "private" ? "selected" : ""}>Privata</option>
+            <option value="public" ${quizVisibility(local.quiz.visibility) === "public" ? "selected" : ""}>Pubblica</option>
+          </select>
         </label>
       </div>
       <label class="toggle-row">
@@ -322,10 +337,15 @@ function renderQuestionEditor(question, questionIndex) {
         <textarea data-question-text data-question-index="${questionIndex}" maxlength="240">${escapeHtml(question.text)}</textarea>
       </label>
       <div class="grid-2">
-        <label class="stack">
-          <span>Immagine URL</span>
+        <div class="stack media-field">
+          <span>Immagine</span>
           <input data-question-media="imageUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.imageUrl || "")}" maxlength="500" placeholder="https://..." />
-        </label>
+          <div class="media-actions">
+            <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+            ${question.imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
+          </div>
+          ${question.imageUrl ? `<img class="media-thumb" src="${escapeAttr(question.imageUrl)}" alt="Anteprima immagine domanda" />` : ""}
+        </div>
         <label class="stack">
           <span>Video URL</span>
           <input data-question-media="videoUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.videoUrl || "")}" maxlength="500" placeholder="https://..." />
@@ -396,7 +416,14 @@ function renderArchiveBox() {
         </div>
         <button class="btn small ghost" data-action="refresh-archive" ${local.archiveLoading ? "disabled" : ""}>Aggiorna</button>
       </div>
-      <input data-archive-search value="${escapeAttr(local.archiveSearch)}" placeholder="Cerca titolo, materia, livello, lingua o tag" />
+      <input data-archive-search value="${escapeAttr(local.archiveSearch)}" placeholder="Cerca titolo, cartella, materia, livello, lingua o tag" />
+      <div class="segmented">
+        ${archiveVisibilityOptions().map((option) => `
+          <button class="${local.archiveVisibility === option.value ? "active" : ""}" data-action="set-archive-visibility" data-archive-visibility="${option.value}">
+            ${option.label}
+          </button>
+        `).join("")}
+      </div>
       ${local.archiveLoading ? `<div class="empty compact">Caricamento archivio...</div>` : `
         <div class="archive-grid">
           <section class="stack">
@@ -423,6 +450,10 @@ function renderSavedQuizzes() {
           <div>
             <strong>${escapeHtml(item.title)}</strong>
             <p class="subtle">${renderQuizMetaLine(item.quiz)}${item.questionCount} domande - ${formatDate(item.updatedAt)}</p>
+            <div class="meta-row compact">
+              ${item.quiz && item.quiz.folder ? `<span class="status-pill compact">${escapeHtml(item.quiz.folder)}</span>` : ""}
+              <span class="status-pill compact">${quizVisibilityLabel(item.quiz && item.quiz.visibility)}</span>
+            </div>
           </div>
           <div class="toolbar">
             <button class="btn small ghost" data-action="load-saved-quiz" data-quiz-id="${escapeAttr(item.id)}">Carica</button>
@@ -459,14 +490,42 @@ function renderSavedResults() {
 
 function filteredSavedQuizzes() {
   const query = normalizeSearch(local.archiveSearch);
-  if (!query) return local.savedQuizzes;
-  return local.savedQuizzes.filter((item) => normalizeSearch([
-    item.title,
-    item.quiz && item.quiz.subject,
-    item.quiz && item.quiz.level,
-    item.quiz && item.quiz.language,
-    item.quiz && Array.isArray(item.quiz.tags) ? item.quiz.tags.join(" ") : ""
-  ].join(" ")).includes(query));
+  const visibility = local.archiveVisibility || "all";
+  return local.savedQuizzes.filter((item) => {
+    const quiz = item.quiz || {};
+    if (visibility !== "all" && quizVisibility(quiz.visibility) !== visibility) return false;
+    if (!query) return true;
+    return normalizeSearch([
+      item.title,
+      quiz.folder,
+      quiz.subject,
+      quiz.level,
+      quiz.language,
+      quizVisibilityLabel(quiz.visibility),
+      Array.isArray(quiz.tags) ? quiz.tags.join(" ") : ""
+    ].join(" ")).includes(query);
+  });
+}
+
+function archiveVisibilityOptions() {
+  return [
+    { value: "all", label: "Tutti" },
+    { value: "private", label: "Privati" },
+    { value: "public", label: "Pubblici" }
+  ];
+}
+
+function setArchiveVisibility(value) {
+  local.archiveVisibility = archiveVisibilityOptions().some((option) => option.value === value) ? value : "all";
+  render();
+}
+
+function quizVisibility(value) {
+  return normalizeSearch(value) === "public" || normalizeSearch(value) === "pubblica" ? "public" : "private";
+}
+
+function quizVisibilityLabel(value) {
+  return quizVisibility(value) === "public" ? "Pubblica" : "Privata";
 }
 
 function renderQuizMetaLine(quiz) {
@@ -1061,9 +1120,11 @@ function bindEvents() {
     });
   });
   document.querySelectorAll("[data-quiz-meta]").forEach((element) => {
-    element.addEventListener("input", () => {
+    const updateMeta = () => {
       local.quiz[element.dataset.quizMeta] = element.value;
-    });
+    };
+    element.addEventListener("input", updateMeta);
+    element.addEventListener("change", updateMeta);
   });
   document.querySelectorAll("[data-quiz-tags]").forEach((element) => {
     element.addEventListener("input", () => {
@@ -1085,6 +1146,9 @@ function bindEvents() {
       const question = local.quiz.questions[Number(element.dataset.questionIndex)];
       question[element.dataset.questionMedia] = element.value;
     });
+  });
+  document.querySelectorAll("[data-question-image-upload]").forEach((element) => {
+    element.addEventListener("change", () => uploadQuestionImage(element));
   });
   document.querySelectorAll("[data-question-time]").forEach((element) => {
     element.addEventListener("input", () => {
@@ -1191,12 +1255,14 @@ function handleAction(event) {
 
   if (action === "add-question") addQuestion();
   if (action === "remove-question") removeQuestion(Number(target.dataset.questionIndex));
+  if (action === "clear-question-image") clearQuestionImage(Number(target.dataset.questionIndex));
   if (action === "toggle-import") {
     local.importOpen = !local.importOpen;
     local.importText = local.importText || JSON.stringify(local.quiz, null, 2);
     render();
   }
   if (action === "toggle-archive") toggleArchive();
+  if (action === "set-archive-visibility") setArchiveVisibility(target.dataset.archiveVisibility);
   if (action === "refresh-archive") loadArchive();
   if (action === "apply-import") applyImport();
   if (action === "apply-import-xlsx") importQuizXlsx();
@@ -1252,6 +1318,48 @@ function addQuestion() {
 function removeQuestion(index) {
   if (local.quiz.questions.length <= 1) return;
   local.quiz.questions.splice(index, 1);
+  render();
+}
+
+async function uploadQuestionImage(input) {
+  const questionIndex = Number(input.dataset.questionIndex);
+  const question = local.quiz.questions[questionIndex];
+  const file = input.files && input.files[0];
+  if (!question || !file) return;
+  if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type || "")) {
+    showToast("Carica PNG, JPG, WebP o GIF");
+    input.value = "";
+    return;
+  }
+  if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+    showToast("Immagine troppo grande: massimo 1.5 MB");
+    input.value = "";
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const response = await fetch("/api/media", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ file: dataUrl, filename: file.name })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Upload non riuscito");
+    question.imageUrl = data.url;
+    showToast("Immagine caricata");
+    render();
+  } catch (error) {
+    showToast(error.message || "Upload non riuscito");
+    input.value = "";
+  }
+}
+
+function clearQuestionImage(index) {
+  const question = local.quiz.questions[index];
+  if (!question) return;
+  question.imageUrl = "";
   render();
 }
 
@@ -1938,6 +2046,8 @@ function cleanQuiz(input) {
     subject: String(source.subject || "").trim().slice(0, 40),
     level: String(source.level || "").trim().slice(0, 40),
     language: String(source.language || "Italiano").trim().slice(0, 32) || "Italiano",
+    folder: String(source.folder || "").trim().slice(0, 40),
+    visibility: quizVisibility(source.visibility),
     tags: parseTags(source.tags),
     teamMode: Boolean(source.teamMode),
     questions: questions.map((question, index) => {
@@ -1950,7 +2060,7 @@ function cleanQuiz(input) {
       return {
         type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
-        imageUrl: normalizeMediaUrl(question.imageUrl),
+        imageUrl: normalizeImageUrl(question.imageUrl),
         videoUrl: normalizeMediaUrl(question.videoUrl),
         answers,
         correctIndex: correctIndexes[0] || 0,
@@ -2006,6 +2116,13 @@ function parseTags(value) {
     .map((tag) => String(tag || "").trim().slice(0, 24))
     .filter(Boolean)))
     .slice(0, 8);
+}
+
+function normalizeImageUrl(value) {
+  const raw = String(value || "").trim().slice(0, 500);
+  if (!raw) return "";
+  if (/^\/api\/media\/[a-zA-Z0-9_-]{8,80}$/.test(raw)) return raw;
+  return normalizeMediaUrl(raw);
 }
 
 function normalizeMediaUrl(value) {
@@ -2301,6 +2418,8 @@ function defaultQuiz() {
     subject: "Tecnologia",
     level: "Demo",
     language: "Italiano",
+    folder: "Demo",
+    visibility: "private",
     tags: ["demo", "live"],
     teamMode: false,
     questions: [
