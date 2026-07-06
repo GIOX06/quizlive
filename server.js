@@ -947,7 +947,7 @@ function submitAnswer(room, player, payload) {
   const isPartial = scoreResult.partial;
   const elapsed = Math.max(0, answeredAt - room.questionStartedAt);
   const duration = Math.max(1, question.timeLimit * 1000);
-  const scoreProfile = questionScoreProfile(question.type);
+  const scoreProfile = questionScoreProfile(question);
   const speedBonus = scoreResult.ratio > 0 ? Math.max(0, Math.round(scoreProfile.speedBonus * (1 - elapsed / duration))) : 0;
 
   if (isCorrect) {
@@ -996,6 +996,7 @@ function serializeRoom(room, socket) {
     role,
     status: room.status,
     title: room.quiz.title,
+    description: room.quiz.description,
     subject: room.quiz.subject,
     level: room.quiz.level,
     language: room.quiz.language,
@@ -1025,6 +1026,7 @@ function serializeRoom(room, socket) {
             count: answerCountMode ? countAnswers(answerMap, index) : undefined
           })),
           timeLimit: question.timeLimit,
+          points: question.points || 0,
           correctIndex: revealMode ? question.correctIndex : undefined,
           correctIndexes: revealMode ? correctIndexes(question) : undefined,
           selectionCount: selectionCount(question),
@@ -1184,23 +1186,30 @@ function scoreAnswer(question, answerIndexes) {
   return { correct: false, partial: false, ratio: 0 };
 }
 
-function questionScoreProfile(type) {
+function questionScoreProfile(questionOrType) {
+  const type = typeof questionOrType === "string" ? questionOrType : questionOrType && questionOrType.type;
   if (type === "speed") {
-    return { base: 250, speedBonus: 1000, streakStep: 30, maxStreakBonus: 150 };
+    return scoreProfileWithCustomBase({ base: 250, speedBonus: 1000, streakStep: 30, maxStreakBonus: 150 }, questionOrType);
   }
   if (type === "multiple_select") {
-    return { base: 700, speedBonus: 450, streakStep: 40, maxStreakBonus: 220 };
+    return scoreProfileWithCustomBase({ base: 700, speedBonus: 450, streakStep: 40, maxStreakBonus: 220 }, questionOrType);
   }
   if (type === "true_false") {
-    return { base: 450, speedBonus: 450, streakStep: 40, maxStreakBonus: 200 };
+    return scoreProfileWithCustomBase({ base: 450, speedBonus: 450, streakStep: 40, maxStreakBonus: 200 }, questionOrType);
   }
-  return { base: 500, speedBonus: 500, streakStep: 50, maxStreakBonus: 250 };
+  return scoreProfileWithCustomBase({ base: 500, speedBonus: 500, streakStep: 50, maxStreakBonus: 250 }, questionOrType);
+}
+
+function scoreProfileWithCustomBase(profile, questionOrType) {
+  const points = typeof questionOrType === "object" ? normalizeQuestionPoints(questionOrType.points) : 0;
+  return points ? { ...profile, base: points } : profile;
 }
 
 function resultsToJson(room) {
   return {
     code: room.code,
     title: room.quiz.title,
+    description: room.quiz.description,
     subject: room.quiz.subject,
     level: room.quiz.level,
     language: room.quiz.language,
@@ -1222,6 +1231,7 @@ function resultsToJson(room) {
       answers: question.answers,
       correctIndex: question.correctIndex,
       correctIndexes: correctIndexes(question),
+      points: question.points || 0,
       stats: questionStats(question, room.answers.get(questionIndex) || new Map(), activePlayers(room).length),
       responses: Array.from(room.answers.get(questionIndex) || new Map()).map(([playerId, answer]) => {
         const player = room.players.get(playerId);
@@ -1655,6 +1665,7 @@ function quizToWorkbook(quiz, isTemplate) {
   const rows = [
     ["QuizLive - quiz"],
     ["Titolo", normalizedQuiz.title],
+    ["Descrizione", normalizedQuiz.description],
     ["Materia", normalizedQuiz.subject],
     ["Livello", normalizedQuiz.level],
     ["Lingua", normalizedQuiz.language],
@@ -1663,7 +1674,7 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Tag", normalizedQuiz.tags.join(", ")],
     ["Team mode", normalizedQuiz.teamMode ? "si" : "no"],
     [],
-    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Corretta", "Immagine URL", "Alt immagine", "Credito immagine", "Link fotografo", "Link foto", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
+    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Punti", "Corretta", "Immagine URL", "Alt immagine", "Credito immagine", "Link fotografo", "Link foto", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
   ];
 
   normalizedQuiz.questions.forEach((question, index) => {
@@ -1672,6 +1683,7 @@ function quizToWorkbook(quiz, isTemplate) {
       questionTypeForWorkbook(question.type),
       question.text,
       question.timeLimit,
+      question.points || "",
       correctIndexes(question).map((answerIndex) => answerLetters[answerIndex] || "A").join(","),
       question.imageUrl || "",
       question.imageAlt || "",
@@ -1691,6 +1703,7 @@ function quizToWorkbook(quiz, isTemplate) {
     { wch: 44 },
     { wch: 14 },
     { wch: 10 },
+    { wch: 10 },
     { wch: 34 },
     { wch: 28 },
     { wch: 22 },
@@ -1709,9 +1722,11 @@ function quizToWorkbook(quiz, isTemplate) {
   const instructions = XLSX.utils.aoa_to_sheet([
     ["Come compilare"],
     ["Titolo", "Scrivi il titolo nella cella B2 del foglio QuizLive."],
+    ["Descrizione", "Scrivi una breve descrizione nella cella B3, se serve."],
     ["Materia/Livello/Lingua/Tag", "Usa questi campi per ordinare la libreria quiz."],
     ["Team mode", "Scrivi si per dividere automaticamente i giocatori in squadre."],
     ["Tipo", "Usa multipla, vero_falso, veloce oppure risposte_multiple."],
+    ["Punti", "Lascia vuoto per standard oppure usa 250, 500, 750, 1000 o 1500."],
     ["Corretta", "Scrivi A, B, C, D, E o F. Per risposte_multiple usa piu lettere, ad esempio A,C."],
     ["Libreria", "Cartella organizza l'archivio. Visibilita accetta privata o pubblica."],
     ["Media", "Immagine URL accetta link http/https o media caricati da QuizLive. Video URL accetta link http/https pubblici."],
@@ -1728,6 +1743,7 @@ function workbookToQuiz(workbook) {
   if (!sheetName) throw new Error("Il file XLSX non contiene fogli");
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
   const titleRow = rows.find((row) => normalizeCell(row[0]) === "titolo");
+  const descriptionRow = rows.find((row) => normalizeCell(row[0]) === "descrizione" || normalizeCell(row[0]) === "description");
   const subjectRow = rows.find((row) => normalizeCell(row[0]) === "materia");
   const levelRow = rows.find((row) => normalizeCell(row[0]) === "livello");
   const languageRow = rows.find((row) => normalizeCell(row[0]) === "lingua");
@@ -1747,6 +1763,7 @@ function workbookToQuiz(workbook) {
   const typeIndex = indexFor("tipo");
   const textIndex = indexFor("domanda", "testo_domanda");
   const timeIndex = indexFor("tempo_secondi", "tempo", "secondi");
+  const pointsIndex = indexFor("punti", "points");
   const correctIndex = indexFor("corretta", "risposta_corretta");
   const imageIndex = indexFor("immagine_url", "image_url", "immagine");
   const imageAltIndex = indexFor("alt_immagine", "image_alt");
@@ -1776,12 +1793,14 @@ function workbookToQuiz(workbook) {
       videoUrl: row[videoIndex] || "",
       answers: normalizedAnswers,
       correctIndexes: parseCorrectIndexes(row[correctIndex], normalizedAnswers, type),
+      points: pointsIndex >= 0 ? Number(row[pointsIndex]) || 0 : 0,
       timeLimit: Number(row[timeIndex]) || 20
     };
   }).filter(Boolean);
 
   return normalizeQuiz({
     title,
+    description: descriptionRow && descriptionRow[1],
     subject: subjectRow && subjectRow[1],
     level: levelRow && levelRow[1],
     language: languageRow && languageRow[1],
@@ -1868,6 +1887,7 @@ function safeWorkbookName(title) {
 function templateQuiz() {
   return {
     title: "QuizLive modello",
+    description: "Modello compilabile per importare domande in QuizLive.",
     subject: "Materia",
     level: "Classe o livello",
     language: "Italiano",
@@ -2288,6 +2308,7 @@ function getPlayerRoom(socket) {
 function normalizeQuiz(input) {
   const source = input && typeof input === "object" ? input : defaultQuiz();
   const title = String(source.title || "QuizLive").trim().slice(0, 80) || "QuizLive";
+  const description = normalizeShortText(source.description, 220);
   const subject = normalizeShortText(source.subject, 40);
   const level = normalizeShortText(source.level, 40);
   const language = normalizeShortText(source.language || "Italiano", 32) || "Italiano";
@@ -2302,7 +2323,7 @@ function normalizeQuiz(input) {
     throw new Error("Il quiz deve avere almeno una domanda");
   }
 
-  return { title, subject, level, language, folder, visibility, tags, teamMode, questions: normalizedQuestions };
+  return { title, description, subject, level, language, folder, visibility, tags, teamMode, questions: normalizedQuestions };
 }
 
 function normalizeQuestion(item, index) {
@@ -2326,6 +2347,7 @@ function normalizeQuestion(item, index) {
   const correctIndex = normalizedCorrectIndexes[0] || 0;
   const rawTime = Number(item && item.timeLimit);
   const timeLimit = Number.isFinite(rawTime) ? Math.min(90, Math.max(5, Math.round(rawTime))) : 20;
+  const points = normalizeQuestionPoints(item && item.points);
 
   return {
     type,
@@ -2340,6 +2362,7 @@ function normalizeQuestion(item, index) {
     answers: normalizedAnswers,
     correctIndex,
     correctIndexes: normalizedCorrectIndexes,
+    points,
     timeLimit
   };
 }
@@ -2661,6 +2684,11 @@ function normalizeCorrectIndexes(item, answers, type) {
   return type === "multiple_select" ? indexes : [indexes[0]];
 }
 
+function normalizeQuestionPoints(value) {
+  const points = Math.round(Number(value) || 0);
+  return [0, 250, 500, 750, 1000, 1500].includes(points) ? points : 0;
+}
+
 function normalizeQuestionType(value) {
   const key = String(value || "multiple")
     .trim()
@@ -2806,6 +2834,7 @@ function sendAck(ack, payload) {
 function defaultQuiz() {
   return {
     title: "Demo QuizLive",
+    description: "Quiz dimostrativo per provare host, telefoni e monitor pubblico.",
     subject: "Tecnologia",
     level: "Demo",
     language: "Italiano",

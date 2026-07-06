@@ -632,6 +632,270 @@ textarea {
   box-shadow: none;
 }
 
+.host-builder-shell {
+  gap: 1rem;
+}
+
+.builder-studio {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.52fr) minmax(28rem, 1.95fr) minmax(18rem, 0.72fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.builder-deck,
+.builder-properties {
+  position: sticky;
+  top: 6.3rem;
+  max-height: calc(100vh - 7.4rem);
+  overflow: auto;
+}
+
+.builder-card-list {
+  display: grid;
+  gap: 0.65rem;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.builder-slide {
+  display: grid;
+  gap: 0.5rem;
+  min-height: 8rem;
+  padding: 0.7rem;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--stage-ink, var(--ink));
+  text-align: left;
+}
+
+.builder-slide.active {
+  border-color: #ff9f43;
+  box-shadow: 0 0 0 3px rgba(255, 159, 67, 0.18);
+}
+
+.builder-slide-head,
+.builder-slide-body,
+.builder-properties-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.builder-slide-head span {
+  color: var(--stage-muted, var(--muted));
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.builder-slide-body {
+  justify-content: flex-start;
+}
+
+.builder-slide-time,
+.builder-slide-media {
+  width: 2.4rem;
+  height: 2.4rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 139, 45, 0.25);
+  border-radius: 8px;
+  color: var(--stage-muted, var(--muted));
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.builder-slide-media {
+  border-style: dashed;
+}
+
+.builder-slide p {
+  margin: 0;
+  min-height: 2.3rem;
+  color: inherit;
+  font-size: 0.88rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.builder-slide-lines {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.builder-slide-lines span {
+  min-height: 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+  text-indent: -999px;
+}
+
+.builder-deck-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.builder-live-preview {
+  min-height: calc(100vh - 8rem);
+  display: grid;
+  align-content: start;
+  gap: 1.25rem;
+  padding: clamp(1rem, 2.5vw, 1.6rem);
+  border: 1px solid rgba(255, 139, 45, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(rgba(7, 7, 8, 0.32), rgba(7, 7, 8, 0.72)),
+    radial-gradient(circle at 20% 10%, rgba(255, 138, 45, 0.34), transparent 24rem),
+    linear-gradient(145deg, #120b08, #261209 50%, #0b0b0d);
+  box-shadow: 0 24px 58px rgba(0, 0, 0, 0.34);
+}
+
+.builder-question-input {
+  min-height: 7.4rem;
+  resize: none;
+  overflow: hidden;
+  border-width: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #172026;
+  text-align: center;
+  font-size: clamp(1.2rem, 2.25vw, 2.05rem);
+  font-weight: 900;
+  line-height: 1.12;
+}
+
+.builder-question-input::placeholder {
+  color: rgba(23, 32, 38, 0.5);
+}
+
+.builder-media-drop {
+  width: min(100%, 48rem);
+  min-height: 20rem;
+  display: grid;
+  gap: 0.75rem;
+  justify-self: center;
+  align-content: center;
+  justify-items: center;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.builder-media-drop img {
+  width: min(100%, 44rem);
+  max-height: 22rem;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.builder-media-drop input[data-question-media] {
+  max-width: 44rem;
+}
+
+.builder-media-empty {
+  min-height: 12rem;
+  display: grid;
+  place-items: center;
+  gap: 0.7rem;
+  color: var(--stage-ink, #fff);
+  text-align: center;
+}
+
+.builder-media-empty span {
+  width: 4rem;
+  height: 4rem;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #172026;
+  font-size: 2.2rem;
+}
+
+.builder-answer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.builder-answer-card {
+  display: grid;
+  grid-template-columns: 3.4rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+  min-height: 6rem;
+  padding: 0.65rem;
+  border-radius: 8px;
+  color: #fff;
+}
+
+.builder-answer-card input[data-answer-text] {
+  border: 0;
+  background: rgba(255, 255, 255, 0.94);
+  color: #172026;
+  font-weight: 850;
+}
+
+.builder-answer-symbol {
+  width: 3.4rem;
+  height: 4.8rem;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  font-size: 1.65rem;
+  font-weight: 950;
+}
+
+.builder-correct-toggle {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #fff;
+  font-weight: 900;
+}
+
+.builder-correct-toggle input {
+  width: auto;
+  accent-color: var(--green);
+}
+
+.builder-answer-card .btn {
+  grid-column: 2;
+  width: fit-content;
+}
+
+.builder-add-answer {
+  justify-self: center;
+}
+
+.builder-properties {
+  align-content: start;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.settings-dialog {
+  width: min(100%, 46rem);
+  max-height: min(90vh, 48rem);
+  overflow: auto;
+}
+
 .archive-panel {
   border-top: 1px solid var(--line);
   padding-top: 1rem;
@@ -1527,8 +1791,19 @@ textarea {
 
 @media (max-width: 860px) {
   .split,
-  .game-layout {
+  .game-layout,
+  .builder-studio {
     grid-template-columns: 1fr;
+  }
+
+  .builder-deck,
+  .builder-properties {
+    position: static;
+    max-height: none;
+  }
+
+  .builder-card-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .screen-lobby-grid,
@@ -1577,6 +1852,8 @@ textarea {
   .grid-3,
   .grid-4,
   .answers-grid,
+  .builder-answer-grid,
+  .builder-card-list,
   .archive-grid,
   .stat-grid,
   .podium {

@@ -33,6 +33,8 @@ let local = {
   archiveVisibility: "all",
   imageSuggestions: {},
   imageGenerating: {},
+  builderQuestionIndex: 0,
+  quizSettingsOpen: false,
   hostEditingRoom: false,
   currentQuizId: null,
   joinCode: initialJoinCode(),
@@ -223,13 +225,14 @@ function renderCastScreenButton() {
 function renderHostHome() {
   const editingRoom = local.hostEditingRoom && local.room && local.room.role === "host";
   return `
-    <section class="stack">
+    <section class="host-builder-shell stack">
       <div class="host-header">
         <div>
           <h1 class="section-title">${editingRoom ? `Cambia quiz stanza ${escapeHtml(local.room.code)}` : "Crea partita"}</h1>
-          <p class="subtle">${editingRoom ? "Carica o modifica un quiz mantenendo stesso codice, monitor e giocatori." : "Quiz, lobby, timer, punteggio e risultati esportabili."}</p>
+          <p class="subtle">${editingRoom ? "Modifica quiz mantenendo codice, monitor e giocatori." : `${local.quiz.questions.length} domande - ${escapeHtml(local.quiz.subject || "Nessuna materia")}`}</p>
         </div>
         <div class="toolbar">
+          <button class="btn ghost" data-action="toggle-quiz-settings">Impostazioni</button>
           ${editingRoom ? `<button class="btn ghost" data-action="cancel-room-edit">Torna lobby</button>` : ""}
           <button class="btn ghost" data-action="open-waiting-screen">Apri monitor</button>
           ${renderCastScreenButton()}
@@ -237,21 +240,10 @@ function renderHostHome() {
           <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
         </div>
       </div>
-      <div class="panel stack">
-        ${renderQuizBuilder()}
-        <div class="toolbar">
-          <button class="btn primary" data-action="create-room">${editingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
-          <button class="btn gold" data-action="quick-start-room">${editingRoom ? "Aggiorna e avvia" : "Avvia subito"}</button>
-          <button class="btn teal" data-action="save-quiz">Salva quiz</button>
-          <button class="btn ghost" data-action="add-question">Aggiungi domanda</button>
-          <button class="btn ghost" data-action="toggle-import">Import XLSX</button>
-          <button class="btn ghost" data-action="download-template-xlsx">Modello XLSX</button>
-          <button class="btn ghost" data-action="download-quiz-xlsx">Export XLSX</button>
-          <button class="btn ghost" data-action="toggle-archive">Archivio</button>
-        </div>
-        ${local.importOpen ? renderImportBox() : ""}
-        ${local.archiveOpen ? renderArchiveBox() : ""}
-      </div>
+      ${renderQuizBuilder()}
+      ${local.quizSettingsOpen ? renderQuizSettingsDialog() : ""}
+      ${local.importOpen ? renderImportBox() : ""}
+      ${local.archiveOpen ? renderArchiveBox() : ""}
     </section>
   `;
 }
@@ -292,50 +284,252 @@ function renderHostAccess() {
 }
 
 function renderQuizBuilder() {
+  const questionIndex = selectedBuilderQuestionIndex();
+  const question = local.quiz.questions[questionIndex];
   return `
-    <div class="stack">
-      <label class="stack">
-        <span>Titolo</span>
-        <input data-quiz-title value="${escapeAttr(local.quiz.title)}" maxlength="80" />
-      </label>
-      <div class="grid-4">
-        <label class="stack">
-          <span>Materia</span>
-          <input data-quiz-meta="subject" value="${escapeAttr(local.quiz.subject || "")}" maxlength="40" placeholder="Es. Matematica" />
-        </label>
-        <label class="stack">
-          <span>Livello/Classe</span>
-          <input data-quiz-meta="level" value="${escapeAttr(local.quiz.level || "")}" maxlength="40" placeholder="Es. 2 media" />
-        </label>
-        <label class="stack">
-          <span>Lingua</span>
-          <input data-quiz-meta="language" value="${escapeAttr(local.quiz.language || "Italiano")}" maxlength="32" />
-        </label>
-        <label class="stack">
-          <span>Cartella</span>
-          <input data-quiz-meta="folder" value="${escapeAttr(local.quiz.folder || "")}" maxlength="40" placeholder="Es. 2B ripasso" />
-        </label>
-      </div>
-      <div class="grid-2">
-        <label class="stack">
-          <span>Tag</span>
-          <input data-quiz-tags value="${escapeAttr((local.quiz.tags || []).join(", "))}" maxlength="160" placeholder="ripasso, verifica" />
-        </label>
-        <label class="stack">
-          <span>Visibilita</span>
-          <select data-quiz-meta="visibility">
-            <option value="private" ${quizVisibility(local.quiz.visibility) === "private" ? "selected" : ""}>Privata</option>
-            <option value="public" ${quizVisibility(local.quiz.visibility) === "public" ? "selected" : ""}>Pubblica</option>
-          </select>
-        </label>
-      </div>
-      <label class="toggle-row">
-        <input data-quiz-team-mode type="checkbox" ${local.quiz.teamMode ? "checked" : ""} />
-        <span>Team mode: dividi automaticamente i giocatori in squadre</span>
-      </label>
-      ${local.quiz.questions.map(renderQuestionEditor).join("")}
+    <div class="builder-studio">
+      ${renderQuestionDeck(questionIndex)}
+      <section class="builder-preview stack">
+        ${question ? renderQuestionPreviewEditor(question, questionIndex) : `<div class="empty">Aggiungi una domanda</div>`}
+      </section>
+      ${question ? renderQuestionProperties(question, questionIndex) : ""}
     </div>
   `;
+}
+
+function selectedBuilderQuestionIndex() {
+  const count = local.quiz.questions.length;
+  if (!count) return 0;
+  const index = Math.min(Math.max(Number(local.builderQuestionIndex) || 0, 0), count - 1);
+  local.builderQuestionIndex = index;
+  return index;
+}
+
+function renderQuestionDeck(selectedIndex) {
+  return `
+    <aside class="builder-deck panel stack">
+      <div>
+        <p class="screen-kicker">Quiz</p>
+        <h2 class="mini-title">${escapeHtml(local.quiz.title || "QuizLive")}</h2>
+      </div>
+      <div class="builder-card-list">
+        ${local.quiz.questions.map((question, index) => renderQuestionSlideCard(question, index, selectedIndex)).join("")}
+      </div>
+      <div class="stack">
+        <button class="btn blue" data-action="add-question">Aggiungi</button>
+        <button class="btn primary" data-action="create-room">${local.hostEditingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
+        <button class="btn gold" data-action="quick-start-room">${local.hostEditingRoom ? "Aggiorna e avvia" : "Avvia subito"}</button>
+        <button class="btn teal" data-action="save-quiz">Salva quiz</button>
+      </div>
+      <div class="builder-deck-tools">
+        <button class="btn small ghost" data-action="toggle-import">Import XLSX</button>
+        <button class="btn small ghost" data-action="download-template-xlsx">Modello</button>
+        <button class="btn small ghost" data-action="download-quiz-xlsx">Export</button>
+        <button class="btn small ghost" data-action="toggle-archive">Archivio</button>
+      </div>
+    </aside>
+  `;
+}
+
+function renderQuestionSlideCard(question, index, selectedIndex) {
+  const answers = editableAnswers(question).slice(0, 4);
+  const title = String(question.text || `Domanda ${index + 1}`).trim();
+  const hasMedia = Boolean(question.imageUrl || question.videoUrl);
+  return `
+    <button class="builder-slide ${index === selectedIndex ? "active" : ""}" data-action="select-builder-question" data-question-index="${index}">
+      <div class="builder-slide-head">
+        <strong>${index + 1}</strong>
+        <span>${escapeHtml(questionTypeLabel(question.type))}</span>
+      </div>
+      <div class="builder-slide-body">
+        <span class="builder-slide-time">${Number(question.timeLimit) || 20}</span>
+        <span class="builder-slide-media">${hasMedia ? "IMG" : "+"}</span>
+      </div>
+      <p>${escapeHtml(title || "Nuova domanda")}</p>
+      <div class="builder-slide-lines">
+        ${answers.map((answer) => `<span>${answer ? escapeHtml(answer) : ""}</span>`).join("")}
+      </div>
+    </button>
+  `;
+}
+
+function renderQuestionPreviewEditor(question, questionIndex) {
+  const questionType = normalizeQuestionType(question.type);
+  return `
+    <article class="builder-live-preview">
+      <textarea class="builder-question-input" data-question-text data-question-index="${questionIndex}" maxlength="240" placeholder="Inizia a digitare la domanda">${escapeHtml(question.text)}</textarea>
+      ${renderBuilderMediaPanel(question, questionIndex)}
+      ${renderBuilderAnswerCards(question, questionIndex, questionType)}
+    </article>
+  `;
+}
+
+function renderBuilderMediaPanel(question, questionIndex) {
+  const imageUrl = question.imageUrl || "";
+  return `
+    <div class="builder-media-drop">
+      ${imageUrl
+        ? `<img src="${escapeAttr(imageUrl)}" alt="Anteprima immagine domanda" />`
+        : `<div class="builder-media-empty">
+            <span>+</span>
+            <strong>Trova e inserisci contenuto multimediale</strong>
+          </div>`}
+      <div class="media-actions">
+        <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+        <button class="btn small ghost" data-action="suggest-question-images" data-question-index="${questionIndex}" ${imageSuggestionState(questionIndex).loading ? "disabled" : ""}>${imageSuggestionState(questionIndex).loading ? "Cerco..." : "Suggerisci immagini"}</button>
+        <button class="btn small ghost" data-action="generate-question-image" data-question-index="${questionIndex}" ${imageGeneratingState(questionIndex).loading ? "disabled" : ""}>${imageGeneratingState(questionIndex).loading ? "Genero..." : "Genera gratis"}</button>
+        ${imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
+      </div>
+      <input data-question-media="imageUrl" data-question-index="${questionIndex}" value="${escapeAttr(imageUrl)}" maxlength="500" placeholder="https:// immagine" />
+      ${renderImageSuggestions(questionIndex)}
+    </div>
+  `;
+}
+
+function renderBuilderAnswerCards(question, questionIndex, questionType) {
+  const answers = editableAnswers(question);
+  const correctIndexes = correctIndexesForQuestion(question, answers);
+  return `
+    <div class="builder-answer-grid">
+      ${answers.map((answer, answerIndex) => {
+        const correct = correctIndexes.includes(answerIndex);
+        const optional = answerIndex > 1 ? " facoltativa" : "";
+        return `
+          <div class="builder-answer-card answer-${letterClass(answerIndex)}">
+            <span class="builder-answer-symbol">${answerShape(answerIndex)}</span>
+            <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" placeholder="Aggiungi risposta ${answerIndex + 1}${optional}" ${questionType === "true_false" ? "readonly" : ""} />
+            <label class="builder-correct-toggle">
+              ${questionType === "multiple_select"
+                ? `<input type="checkbox" data-correct-checkbox data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${correct ? "checked" : ""} />`
+                : `<input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${correct ? "checked" : ""} />`}
+              Corretta
+            </label>
+            ${questionType !== "true_false" && answers.length > 2 ? `<button class="btn small ghost" data-action="remove-answer" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi</button>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+    ${questionType !== "true_false" && answers.length < 6 ? `<button class="btn ghost builder-add-answer" data-action="add-answer" data-question-index="${questionIndex}">Aggiungi altre risposte</button>` : ""}
+  `;
+}
+
+function renderQuestionProperties(question, questionIndex) {
+  const questionType = normalizeQuestionType(question.type);
+  const answers = editableAnswers(question);
+  const correctIndexes = correctIndexesForQuestion(question, answers);
+  return `
+    <aside class="builder-properties panel stack">
+      <div class="builder-properties-head">
+        <h2 class="section-title">Proprieta domanda</h2>
+        <button class="btn small ghost" data-action="remove-question" data-question-index="${questionIndex}" ${local.quiz.questions.length <= 1 ? "disabled" : ""}>Elimina</button>
+      </div>
+      <label class="stack">
+        <span>Tipo di domanda</span>
+        <select data-question-type data-question-index="${questionIndex}">
+          ${questionTypes.map((type) => `<option value="${type.value}" ${questionType === type.value ? "selected" : ""}>${type.label}</option>`).join("")}
+        </select>
+      </label>
+      <label class="stack">
+        <span>Limite di tempo</span>
+        <input data-question-time data-question-index="${questionIndex}" type="number" min="5" max="90" value="${question.timeLimit}" />
+      </label>
+      <button class="btn small ghost" data-action="apply-time-all" data-question-index="${questionIndex}">Applica a tutte</button>
+      <label class="stack">
+        <span>Punti</span>
+        <select data-question-points data-question-index="${questionIndex}">
+          ${pointOptions().map((option) => `<option value="${option.value}" ${Number(question.points || 0) === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+        </select>
+      </label>
+      <label class="stack">
+        <span>${questionType === "multiple_select" ? "Risposte corrette" : "Risposta corretta"}</span>
+        ${questionType === "multiple_select"
+          ? `<div class="readonly-field">${correctIndexes.length} selezionate</div>`
+          : `<select data-question-correct data-question-index="${questionIndex}">
+              ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${correctIndexes[0] === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || `Risposta ${answerIndex + 1}`)}</option>`).join("")}
+            </select>`}
+      </label>
+      <label class="stack">
+        <span>Video URL</span>
+        <input data-question-media="videoUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.videoUrl || "")}" maxlength="500" placeholder="https://..." />
+      </label>
+    </aside>
+  `;
+}
+
+function renderQuizSettingsDialog() {
+  return `
+    <div class="settings-backdrop">
+      <section class="settings-dialog panel stack">
+        <div class="builder-properties-head">
+          <div>
+            <h2 class="section-title">Impostazioni quiz</h2>
+            <p class="subtle">Titolo, descrizione, archivio e visibilita.</p>
+          </div>
+          <button class="btn small ghost" data-action="close-quiz-settings">Chiudi</button>
+        </div>
+        <label class="stack">
+          <span>Titolo</span>
+          <input data-quiz-title value="${escapeAttr(local.quiz.title)}" maxlength="80" />
+        </label>
+        <label class="stack">
+          <span>Descrizione</span>
+          <textarea data-quiz-meta="description" maxlength="220" placeholder="Breve descrizione o obiettivo del quiz">${escapeHtml(local.quiz.description || "")}</textarea>
+        </label>
+        <div class="grid-2">
+          <label class="stack">
+            <span>Materia</span>
+            <input data-quiz-meta="subject" value="${escapeAttr(local.quiz.subject || "")}" maxlength="40" placeholder="Es. Matematica" />
+          </label>
+          <label class="stack">
+            <span>Livello/Classe</span>
+            <input data-quiz-meta="level" value="${escapeAttr(local.quiz.level || "")}" maxlength="40" placeholder="Es. 2 media" />
+          </label>
+        </div>
+        <div class="grid-2">
+          <label class="stack">
+            <span>Lingua</span>
+            <input data-quiz-meta="language" value="${escapeAttr(local.quiz.language || "Italiano")}" maxlength="32" />
+          </label>
+          <label class="stack">
+            <span>Cartella</span>
+            <input data-quiz-meta="folder" value="${escapeAttr(local.quiz.folder || "")}" maxlength="40" placeholder="Es. 2B ripasso" />
+          </label>
+        </div>
+        <div class="grid-2">
+          <label class="stack">
+            <span>Tag</span>
+            <input data-quiz-tags value="${escapeAttr((local.quiz.tags || []).join(", "))}" maxlength="160" placeholder="ripasso, verifica" />
+          </label>
+          <label class="stack">
+            <span>Visibilita</span>
+            <select data-quiz-meta="visibility">
+              <option value="private" ${quizVisibility(local.quiz.visibility) === "private" ? "selected" : ""}>Privata</option>
+              <option value="public" ${quizVisibility(local.quiz.visibility) === "public" ? "selected" : ""}>Pubblica</option>
+            </select>
+          </label>
+        </div>
+        <label class="toggle-row">
+          <input data-quiz-team-mode type="checkbox" ${local.quiz.teamMode ? "checked" : ""} />
+          <span>Team mode: dividi automaticamente i giocatori in squadre</span>
+        </label>
+      </section>
+    </div>
+  `;
+}
+
+function answerShape(index) {
+  return ["▲", "◆", "●", "■", "⬟", "★"][index] || "●";
+}
+
+function pointOptions() {
+  return [
+    { value: 0, label: "Standard" },
+    { value: 250, label: "250 punti" },
+    { value: 500, label: "500 punti" },
+    { value: 750, label: "750 punti" },
+    { value: 1000, label: "1000 punti" },
+    { value: 1500, label: "1500 punti" }
+  ];
 }
 
 function renderQuestionEditor(question, questionIndex) {
@@ -1232,6 +1426,11 @@ function bindEvents() {
       local.quiz.questions[Number(element.dataset.questionIndex)].timeLimit = Number(element.value);
     });
   });
+  document.querySelectorAll("[data-question-points]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.quiz.questions[Number(element.dataset.questionIndex)].points = Number(element.value) || 0;
+    });
+  });
   document.querySelectorAll("[data-archive-search]").forEach((element) => {
     element.addEventListener("input", () => {
       local.archiveSearch = element.value;
@@ -1332,6 +1531,18 @@ function handleAction(event) {
 
   if (action === "add-question") addQuestion();
   if (action === "remove-question") removeQuestion(Number(target.dataset.questionIndex));
+  if (action === "select-builder-question") selectBuilderQuestion(Number(target.dataset.questionIndex));
+  if (action === "toggle-quiz-settings") {
+    local.quizSettingsOpen = !local.quizSettingsOpen;
+    render();
+  }
+  if (action === "close-quiz-settings") {
+    local.quizSettingsOpen = false;
+    render();
+  }
+  if (action === "add-answer") addAnswer(Number(target.dataset.questionIndex));
+  if (action === "remove-answer") removeAnswer(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
+  if (action === "apply-time-all") applyTimeToAllQuestions(Number(target.dataset.questionIndex));
   if (action === "suggest-question-images") suggestQuestionImages(Number(target.dataset.questionIndex));
   if (action === "generate-question-image") generateQuestionImage(Number(target.dataset.questionIndex));
   if (action === "select-suggested-image") selectSuggestedImage(Number(target.dataset.questionIndex), Number(target.dataset.imageIndex));
@@ -1392,8 +1603,10 @@ function addQuestion() {
     text: "Nuova domanda",
     answers: ["Risposta A", "Risposta B", "Risposta C", "Risposta D"],
     correctIndex: 0,
+    points: 0,
     timeLimit: 20
   });
+  local.builderQuestionIndex = local.quiz.questions.length - 1;
   render();
 }
 
@@ -1402,6 +1615,50 @@ function removeQuestion(index) {
   local.quiz.questions.splice(index, 1);
   local.imageSuggestions = {};
   local.imageGenerating = {};
+  local.builderQuestionIndex = Math.min(Math.max(0, index - 1), local.quiz.questions.length - 1);
+  render();
+}
+
+function selectBuilderQuestion(index) {
+  if (index < 0 || index >= local.quiz.questions.length) return;
+  local.builderQuestionIndex = index;
+  render();
+}
+
+function addAnswer(questionIndex) {
+  const question = local.quiz.questions[questionIndex];
+  if (!question || normalizeQuestionType(question.type) === "true_false") return;
+  question.answers = editableAnswers(question).slice(0, 6);
+  if (question.answers.length >= 6) return;
+  question.answers.push("");
+  render();
+}
+
+function removeAnswer(questionIndex, answerIndex) {
+  const question = local.quiz.questions[questionIndex];
+  if (!question || normalizeQuestionType(question.type) === "true_false") return;
+  const answers = editableAnswers(question);
+  if (answers.length <= 2) return;
+  const previousCorrect = correctIndexesForQuestion(question, answers);
+  answers.splice(answerIndex, 1);
+  question.answers = answers;
+  const current = previousCorrect
+    .filter((index) => index !== answerIndex)
+    .map((index) => index > answerIndex ? index - 1 : index)
+    .filter((index) => index >= 0 && index < answers.length);
+  question.correctIndexes = current.length ? Array.from(new Set(current)).sort((a, b) => a - b) : [0];
+  question.correctIndex = question.correctIndexes[0] || 0;
+  render();
+}
+
+function applyTimeToAllQuestions(questionIndex) {
+  const source = local.quiz.questions[questionIndex];
+  if (!source) return;
+  const timeLimit = Math.min(90, Math.max(5, Math.round(Number(source.timeLimit) || 20)));
+  local.quiz.questions.forEach((question) => {
+    question.timeLimit = timeLimit;
+  });
+  showToast("Tempo applicato a tutte");
   render();
 }
 
@@ -2262,6 +2519,7 @@ function cleanQuiz(input) {
   const questions = Array.isArray(source.questions) ? source.questions : [];
   return {
     title: String(source.title || "QuizLive").trim().slice(0, 80) || "QuizLive",
+    description: String(source.description || "").trim().slice(0, 220),
     subject: String(source.subject || "").trim().slice(0, 40),
     level: String(source.level || "").trim().slice(0, 40),
     language: String(source.language || "Italiano").trim().slice(0, 32) || "Italiano",
@@ -2289,6 +2547,7 @@ function cleanQuiz(input) {
         answers,
         correctIndex: correctIndexes[0] || 0,
         correctIndexes,
+        points: normalizeQuestionPoints(question.points),
         timeLimit: Math.min(90, Math.max(5, Math.round(Number(question.timeLimit) || 20)))
       };
     }).filter((question) => question.text && question.answers.length >= 2)
@@ -2329,6 +2588,11 @@ function normalizeCorrectIndexes(question, answers, type) {
 
 function correctIndexesForQuestion(question, answers) {
   return normalizeCorrectIndexes(question, answers, normalizeQuestionType(question.type));
+}
+
+function normalizeQuestionPoints(value) {
+  const points = Math.round(Number(value) || 0);
+  return [0, 250, 500, 750, 1000, 1500].includes(points) ? points : 0;
 }
 
 function selectionCount(question) {
@@ -2644,6 +2908,7 @@ function escapeAttr(value) {
 function defaultQuiz() {
   return {
     title: "Demo QuizLive",
+    description: "Quiz dimostrativo per provare host, telefoni e monitor pubblico.",
     subject: "Tecnologia",
     level: "Demo",
     language: "Italiano",
