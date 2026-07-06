@@ -144,7 +144,17 @@ function renderMain() {
 }
 
 function shell(main, topbar) {
-  return `<div class="shell">${topbar}<main class="main">${main}</main></div>`;
+  return `<div class="shell shell-${shellSurface()}">${topbar}<main class="main">${main}</main></div>`;
+}
+
+function shellSurface() {
+  if (local.hostEditingRoom && local.room && local.room.role === "host") return "host";
+  if (local.room && local.room.role === "host") return "host";
+  if (local.room && local.room.role === "screen") return "screen";
+  if (local.mode === "host") return "host";
+  if (local.mode === "screen") return "screen";
+  if (local.room && local.room.role === "player") return "player";
+  return "join";
 }
 
 function renderJoinHome() {

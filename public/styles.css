@@ -76,6 +76,235 @@ textarea {
   flex-direction: column;
 }
 
+.shell-host,
+.shell-screen {
+  --stage-ink: #fff7ed;
+  --stage-muted: #cbbfb2;
+  --stage-panel: rgba(18, 18, 20, 0.88);
+  --stage-panel-strong: rgba(32, 30, 30, 0.92);
+  --stage-line: rgba(255, 139, 45, 0.28);
+  --stage-soft: rgba(255, 255, 255, 0.08);
+  color: var(--stage-ink);
+  background:
+    radial-gradient(circle at 16% 0%, rgba(255, 138, 45, 0.32), transparent 30rem),
+    radial-gradient(circle at 100% 10%, rgba(239, 91, 91, 0.22), transparent 28rem),
+    linear-gradient(145deg, #050505 0%, #111113 48%, #2b170d 100%);
+}
+
+.shell-host .topbar,
+.shell-screen .topbar {
+  border-bottom-color: rgba(255, 139, 45, 0.18);
+  background: rgba(7, 7, 8, 0.78);
+  color: var(--stage-ink);
+}
+
+.shell-host .brand-name,
+.shell-screen .brand-name,
+.shell-host .section-title,
+.shell-screen .section-title,
+.shell-host .question-title,
+.shell-screen .question-title,
+.shell-host strong,
+.shell-screen strong,
+.shell-host label,
+.shell-screen label,
+.shell-host .mini-title,
+.shell-screen .mini-title,
+.shell-host .name,
+.shell-screen .name,
+.shell-host .score,
+.shell-screen .score {
+  color: var(--stage-ink);
+}
+
+.shell-host .subtle,
+.shell-screen .subtle,
+.shell-host .screen-kicker,
+.shell-screen .screen-kicker,
+.shell-host .radio-label,
+.shell-screen .radio-label,
+.shell-host .media-credit,
+.shell-screen .media-credit,
+.shell-host .summary-stats,
+.shell-screen .summary-stats,
+.shell-host .stat-tile span,
+.shell-screen .stat-tile span,
+.shell-host .segmented button,
+.shell-screen .segmented button {
+  color: var(--stage-muted);
+}
+
+.shell-host .panel,
+.shell-host .builder-question,
+.shell-host .question-card,
+.shell-host .player-row,
+.shell-host .leader-row,
+.shell-screen .panel,
+.shell-screen .question-card,
+.shell-screen .leader-row {
+  background: linear-gradient(180deg, var(--stage-panel-strong), var(--stage-panel));
+  border-color: var(--stage-line);
+  box-shadow: 0 24px 58px rgba(0, 0, 0, 0.34);
+}
+
+.shell-host .builder-question,
+.shell-host .panel.flat {
+  box-shadow: none;
+}
+
+.shell-host input,
+.shell-host textarea,
+.shell-host select,
+.shell-screen input,
+.shell-screen textarea,
+.shell-screen select {
+  background: rgba(7, 7, 8, 0.78);
+  border-color: rgba(255, 139, 45, 0.24);
+  color: var(--stage-ink);
+}
+
+.shell-host input::placeholder,
+.shell-host textarea::placeholder,
+.shell-screen input::placeholder,
+.shell-screen textarea::placeholder {
+  color: rgba(255, 247, 237, 0.46);
+}
+
+.shell-host input:focus,
+.shell-host textarea:focus,
+.shell-host select:focus,
+.shell-screen input:focus,
+.shell-screen textarea:focus,
+.shell-screen select:focus {
+  border-color: rgba(255, 159, 67, 0.72);
+  box-shadow: 0 0 0 3px rgba(255, 139, 45, 0.16);
+}
+
+.shell-host .status-pill,
+.shell-screen .status-pill,
+.shell-host .room-code,
+.shell-screen .room-code,
+.shell-host .readonly-field,
+.shell-screen .readonly-field {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 139, 45, 0.26);
+  color: var(--stage-ink);
+}
+
+.shell-host .room-code,
+.shell-screen .room-code,
+.shell-screen .screen-code {
+  color: #ff9f43;
+}
+
+.shell-host .status-pill.local,
+.shell-screen .status-pill.local,
+.shell-host .qr-note.local,
+.shell-screen .qr-note.local {
+  color: #ffd18f;
+}
+
+.shell-host .status-pill.public,
+.shell-screen .status-pill.public,
+.shell-host .qr-note.public,
+.shell-screen .qr-note.public {
+  color: #9ff1dc;
+}
+
+.shell-host .btn.ghost,
+.shell-screen .btn.ghost {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 139, 45, 0.3);
+  color: var(--stage-ink);
+}
+
+.shell-host .btn.ghost:hover,
+.shell-screen .btn.ghost:hover {
+  background: rgba(255, 139, 45, 0.14);
+}
+
+.shell-host .qr-panel,
+.shell-screen .qr-panel,
+.shell-host .archive-item,
+.shell-host .segmented,
+.shell-host .multi-helper,
+.shell-host .stat-tile,
+.shell-host .question-summary,
+.shell-screen .screen-strip-item {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 139, 45, 0.22);
+  color: var(--stage-ink);
+}
+
+.shell-host .qr-code,
+.shell-screen .qr-code {
+  background: #fff;
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.shell-host .screen-title,
+.shell-screen .screen-title {
+  color: var(--stage-ink);
+}
+
+.shell-host .time-track,
+.shell-screen .time-track,
+.shell-host .meter,
+.shell-screen .meter {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.shell-host .timer,
+.shell-screen .timer,
+.shell-host .rank,
+.shell-screen .rank {
+  background: linear-gradient(145deg, #ff8a2d, #ef5b5b);
+  color: #fff;
+}
+
+.shell-host .leader-row.self,
+.shell-screen .leader-row.self {
+  border-color: rgba(31, 157, 138, 0.68);
+  background: rgba(31, 157, 138, 0.16);
+}
+
+.shell-host .team-row,
+.shell-screen .team-row {
+  background: rgba(31, 157, 138, 0.14);
+  border-color: rgba(31, 157, 138, 0.42);
+}
+
+.shell-host .team-pill,
+.shell-screen .team-pill {
+  background: rgba(31, 157, 138, 0.24);
+  color: #bff6e8;
+}
+
+.shell-host .empty,
+.shell-screen .empty {
+  color: var(--stage-muted);
+  border-color: rgba(255, 139, 45, 0.28);
+}
+
+.shell-host .question-media img,
+.shell-host .question-media video,
+.shell-host .question-media iframe,
+.shell-screen .question-media img,
+.shell-screen .question-media video,
+.shell-screen .question-media iframe {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 139, 45, 0.24);
+}
+
+.shell-host .answer-c,
+.shell-screen .answer-c,
+.shell-host .btn.gold,
+.shell-screen .btn.gold,
+.shell-host .podium-place:nth-child(1),
+.shell-screen .podium-place:nth-child(1) {
+  color: #172026;
+}
+
 .topbar {
   display: flex;
   align-items: center;
