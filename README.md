@@ -148,6 +148,25 @@ On Render, add `PEXELS_API_KEY` from the service Environment page, then redeploy
 
 Suggested images keep photographer credit and a Pexels link with the quiz.
 
+## AI image generation
+
+The host editor can also generate a new teaching image for a question with OpenAI. QuizLive builds the prompt from subject, level, question text, and the correct answer, then stores the generated image in its media archive.
+
+```text
+OPENAI_API_KEY=your-openai-api-key
+```
+
+Optional environment variables:
+
+```text
+OPENAI_IMAGE_MODEL=gpt-image-1-mini
+OPENAI_IMAGE_SIZE=1536x1024
+OPENAI_IMAGE_QUALITY=low
+OPENAI_IMAGE_FORMAT=jpeg
+```
+
+On Render, add `OPENAI_API_KEY` from the service Environment page, then redeploy. The key is used only by the server; phones, players, and browser clients never receive it. Without this key the manual image URL, upload, and Pexels tools still work, and the AI generation button shows a setup message.
+
 ### Render Blueprint
 
 The repository includes `render.yaml` for a Render web service:

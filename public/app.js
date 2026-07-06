@@ -32,6 +32,7 @@ let local = {
   archiveSearch: "",
   archiveVisibility: "all",
   imageSuggestions: {},
+  imageGenerating: {},
   hostEditingRoom: false,
   currentQuizId: null,
   joinCode: initialJoinCode(),
@@ -350,6 +351,7 @@ function renderQuestionEditor(question, questionIndex) {
           <div class="media-actions">
             <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
             <button class="btn small ghost" data-action="suggest-question-images" data-question-index="${questionIndex}" ${imageSuggestionState(questionIndex).loading ? "disabled" : ""}>${imageSuggestionState(questionIndex).loading ? "Cerco..." : "Suggerisci immagini"}</button>
+            <button class="btn small ghost" data-action="generate-question-image" data-question-index="${questionIndex}" ${imageGeneratingState(questionIndex).loading ? "disabled" : ""}>${imageGeneratingState(questionIndex).loading ? "Genero..." : "Genera IA"}</button>
             ${question.imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
           </div>
           ${question.imageUrl ? `<img class="media-thumb" src="${escapeAttr(question.imageUrl)}" alt="Anteprima immagine domanda" />` : ""}
@@ -400,6 +402,10 @@ function renderQuestionEditor(question, questionIndex) {
 
 function imageSuggestionState(questionIndex) {
   return local.imageSuggestions[questionIndex] || { loading: false, images: [], query: "", error: "" };
+}
+
+function imageGeneratingState(questionIndex) {
+  return local.imageGenerating[questionIndex] || { loading: false };
 }
 
 function renderImageSuggestions(questionIndex) {
@@ -753,6 +759,9 @@ function renderQuestionMedia(question) {
 function renderImageCredit(question) {
   if (!question || !question.imageCredit) return "";
   const provider = question.imageProvider || "Pexels";
+  if (provider.toLowerCase() === "openai") {
+    return `<p class="media-credit">Immagine generata con OpenAI</p>`;
+  }
   const credit = question.imageCreditUrl
     ? `<a href="${escapeAttr(question.imageCreditUrl)}" target="_blank" rel="noopener">${escapeHtml(question.imageCredit)}</a>`
     : escapeHtml(question.imageCredit);
@@ -1313,6 +1322,7 @@ function handleAction(event) {
   if (action === "add-question") addQuestion();
   if (action === "remove-question") removeQuestion(Number(target.dataset.questionIndex));
   if (action === "suggest-question-images") suggestQuestionImages(Number(target.dataset.questionIndex));
+  if (action === "generate-question-image") generateQuestionImage(Number(target.dataset.questionIndex));
   if (action === "select-suggested-image") selectSuggestedImage(Number(target.dataset.questionIndex), Number(target.dataset.imageIndex));
   if (action === "clear-question-image") clearQuestionImage(Number(target.dataset.questionIndex));
   if (action === "toggle-import") {
@@ -1380,6 +1390,7 @@ function removeQuestion(index) {
   if (local.quiz.questions.length <= 1) return;
   local.quiz.questions.splice(index, 1);
   local.imageSuggestions = {};
+  local.imageGenerating = {};
   render();
 }
 
@@ -1454,6 +1465,40 @@ async function suggestQuestionImages(index) {
     showToast(local.imageSuggestions[index].error);
   }
   render();
+}
+
+async function generateQuestionImage(index) {
+  const question = local.quiz.questions[index];
+  if (!question) return;
+  local.imageGenerating[index] = { loading: true };
+  render();
+
+  try {
+    const response = await fetch("/api/images/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        quiz: cleanQuiz(local.quiz),
+        question
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Generazione immagine non riuscita");
+    question.imageUrl = data.url || "";
+    question.imageAlt = `Immagine generata per: ${question.text || "domanda"}`.slice(0, 160);
+    question.imageCredit = "OpenAI";
+    question.imageCreditUrl = "";
+    question.imageProvider = data.providerLabel || "OpenAI";
+    question.imagePageUrl = "";
+    local.imageSuggestions[index] = { loading: false, images: [], query: "", error: "" };
+    showToast("Immagine IA generata");
+  } catch (error) {
+    showToast(error.message || "Generazione immagine non riuscita");
+  } finally {
+    local.imageGenerating[index] = { loading: false };
+    render();
+  }
 }
 
 function selectSuggestedImage(questionIndex, imageIndex) {

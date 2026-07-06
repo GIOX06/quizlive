@@ -23,6 +23,11 @@ const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || ""
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const HOST_PASSWORD = String(process.env.HOST_PASSWORD || "");
 const PEXELS_API_KEY = String(process.env.PEXELS_API_KEY || "");
+const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "");
+const OPENAI_IMAGE_MODEL = normalizeShortText(process.env.OPENAI_IMAGE_MODEL || "gpt-image-1-mini", 40);
+const OPENAI_IMAGE_SIZE = normalizeShortText(process.env.OPENAI_IMAGE_SIZE || "1536x1024", 20);
+const OPENAI_IMAGE_QUALITY = normalizeShortText(process.env.OPENAI_IMAGE_QUALITY || "low", 20);
+const OPENAI_IMAGE_FORMAT = normalizeOpenAIImageFormat(process.env.OPENAI_IMAGE_FORMAT || "jpeg");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, ".data");
 const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
 const HOST_SESSION_COOKIE = "quizlive_host";
@@ -242,6 +247,55 @@ app.post("/api/images/search", requireHostHttp, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: "Ricerca immagini non disponibile" });
+  }
+});
+
+app.post("/api/images/generate", requireHostHttp, async (req, res) => {
+  try {
+    const prompt = buildOpenAIImagePrompt(req.body || {});
+    if (req.body && req.body.dryRun) {
+      res.json({
+        ok: true,
+        dryRun: true,
+        provider: "openai",
+        providerLabel: "OpenAI",
+        model: OPENAI_IMAGE_MODEL,
+        size: OPENAI_IMAGE_SIZE,
+        quality: OPENAI_IMAGE_QUALITY,
+        outputFormat: OPENAI_IMAGE_FORMAT,
+        prompt
+      });
+      return;
+    }
+
+    if (!OPENAI_API_KEY) {
+      res.status(501).json({
+        ok: false,
+        error: "Aggiungi OPENAI_API_KEY su Render per generare immagini IA",
+        prompt
+      });
+      return;
+    }
+
+    const generated = await generateOpenAIImage(prompt);
+    const saved = await saveMediaToStore(generated);
+    res.json({
+      ok: true,
+      provider: "openai",
+      providerLabel: "OpenAI",
+      model: OPENAI_IMAGE_MODEL,
+      url: `/api/media/${saved.id}`,
+      id: saved.id,
+      mime: saved.mime,
+      size: saved.size,
+      prompt
+    });
+  } catch (error) {
+    if (isArchiveFailure(error)) {
+      sendArchiveError(res, error);
+      return;
+    }
+    res.status(500).json({ ok: false, error: error.message || "Generazione immagine non disponibile" });
   }
 });
 
@@ -2324,6 +2378,96 @@ function buildImageSearchQuery(payload) {
   ].filter(Boolean).join(" ")).slice(0, 7);
   const queryWords = Array.from(new Set([...subjectWords, ...questionWords]));
   return queryWords.length ? queryWords.join(" ") : "education classroom";
+}
+
+function buildOpenAIImagePrompt(payload) {
+  const quiz = payload && payload.quiz && typeof payload.quiz === "object" ? payload.quiz : {};
+  const question = payload && payload.question && typeof payload.question === "object" ? payload.question : {};
+  const subject = normalizeShortText(quiz.subject, 80) || "materia scolastica";
+  const level = normalizeShortText(quiz.level, 80) || "studenti";
+  const language = normalizeShortText(quiz.language, 40) || "Italiano";
+  const questionText = normalizeShortText(question.text, 320) || "domanda didattica";
+  const correctText = normalizeShortText(correctAnswerTextForSearch(question), 180);
+  const concept = correctText || normalizeShortText(buildImageSearchQuery(payload), 160) || questionText;
+  return [
+    "Crea una immagine didattica orizzontale per una domanda di QuizLive.",
+    `Materia: ${subject}.`,
+    `Livello: ${level}.`,
+    `Lingua del contesto: ${language}.`,
+    `Domanda: ${questionText}.`,
+    `Concetto o risposta corretta da rappresentare: ${concept}.`,
+    "Stile: chiaro, moderno, adatto a studenti, utile su un monitor condiviso.",
+    "Evita testo leggibile, watermark, loghi, brand e persone riconoscibili non necessarie."
+  ].join(" ");
+}
+
+async function generateOpenAIImage(prompt) {
+  const body = {
+    model: OPENAI_IMAGE_MODEL,
+    prompt,
+    size: OPENAI_IMAGE_SIZE,
+    quality: OPENAI_IMAGE_QUALITY,
+    output_format: OPENAI_IMAGE_FORMAT
+  };
+
+  const response = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data && data.error && data.error.message
+      ? String(data.error.message)
+      : "Generazione immagine non disponibile";
+    throw new Error(message);
+  }
+
+  const item = data && Array.isArray(data.data) ? data.data[0] : null;
+  if (item && item.b64_json) return mediaFromImageBase64(item.b64_json, imageMimeFromOpenAIFormat(OPENAI_IMAGE_FORMAT));
+  if (item && item.url) return mediaFromImageUrl(item.url);
+  throw new Error("OpenAI non ha restituito un'immagine");
+}
+
+async function mediaFromImageUrl(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Download immagine generata non riuscito");
+  const mime = normalizeGeneratedImageMime(response.headers.get("content-type"));
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return mediaFromImageBuffer(buffer, mime);
+}
+
+function mediaFromImageBase64(base64, mime) {
+  return mediaFromImageBuffer(Buffer.from(String(base64 || ""), "base64"), mime);
+}
+
+function mediaFromImageBuffer(buffer, mime) {
+  if (!buffer.length) throw new Error("Immagine generata vuota");
+  return {
+    mime: normalizeGeneratedImageMime(mime),
+    data: buffer.toString("base64"),
+    size: buffer.length
+  };
+}
+
+function normalizeGeneratedImageMime(value) {
+  const mime = String(value || "").split(";")[0].trim().toLowerCase();
+  return /^image\/(?:png|jpeg|webp)$/.test(mime) ? mime : "image/png";
+}
+
+function normalizeOpenAIImageFormat(value) {
+  const format = String(value || "").trim().toLowerCase();
+  return ["png", "jpeg", "webp"].includes(format) ? format : "jpeg";
+}
+
+function imageMimeFromOpenAIFormat(value) {
+  const format = String(value || "").trim().toLowerCase();
+  if (format === "jpeg") return "image/jpeg";
+  if (format === "webp") return "image/webp";
+  return "image/png";
 }
 
 function correctAnswerTextForSearch(question) {
