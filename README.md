@@ -148,24 +148,40 @@ On Render, add `PEXELS_API_KEY` from the service Environment page, then redeploy
 
 Suggested images keep photographer credit and a Pexels link with the quiz.
 
-## AI image generation
+## Free AI image generation
 
-The host editor can also generate a new teaching image for a question with OpenAI. QuizLive builds the prompt from subject, level, question text, and the correct answer, then stores the generated image in its media archive.
+The host editor can also generate a new teaching image for a question with Cloudflare Workers AI. QuizLive builds the prompt from subject, level, question text, and the correct answer, then stores the generated image in its media archive.
 
 ```text
-OPENAI_API_KEY=your-openai-api-key
+CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+CLOUDFLARE_API_TOKEN=your-workers-ai-token
 ```
 
 Optional environment variables:
 
 ```text
+CLOUDFLARE_IMAGE_MODEL=@cf/black-forest-labs/flux-1-schnell
+CLOUDFLARE_IMAGE_STEPS=4
+```
+
+On Render, add `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` from the service Environment page, then redeploy. The token is used only by the server; phones, players, and browser clients never receive it. Without these values the manual image URL, upload, Pexels tools, and OpenAI advanced mode still work, and the generation button shows a setup message.
+
+Cloudflare Workers AI includes a daily free allocation. Keep the Render service on the Cloudflare free plan if you want generation to stop at the daily limit instead of becoming a paid feature.
+
+## OpenAI image generation
+
+OpenAI remains available as an advanced paid provider. To use it instead of Cloudflare, set:
+
+```text
+IMAGE_GENERATION_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key
 OPENAI_IMAGE_MODEL=gpt-image-1-mini
 OPENAI_IMAGE_SIZE=1536x1024
 OPENAI_IMAGE_QUALITY=low
 OPENAI_IMAGE_FORMAT=jpeg
 ```
 
-On Render, add `OPENAI_API_KEY` from the service Environment page, then redeploy. The key is used only by the server; phones, players, and browser clients never receive it. Without this key the manual image URL, upload, and Pexels tools still work, and the AI generation button shows a setup message.
+Do not enable OpenAI if you want QuizLive to stay at zero API cost.
 
 ### Render Blueprint
 

@@ -351,7 +351,7 @@ function renderQuestionEditor(question, questionIndex) {
           <div class="media-actions">
             <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
             <button class="btn small ghost" data-action="suggest-question-images" data-question-index="${questionIndex}" ${imageSuggestionState(questionIndex).loading ? "disabled" : ""}>${imageSuggestionState(questionIndex).loading ? "Cerco..." : "Suggerisci immagini"}</button>
-            <button class="btn small ghost" data-action="generate-question-image" data-question-index="${questionIndex}" ${imageGeneratingState(questionIndex).loading ? "disabled" : ""}>${imageGeneratingState(questionIndex).loading ? "Genero..." : "Genera IA"}</button>
+            <button class="btn small ghost" data-action="generate-question-image" data-question-index="${questionIndex}" ${imageGeneratingState(questionIndex).loading ? "disabled" : ""}>${imageGeneratingState(questionIndex).loading ? "Genero..." : "Genera gratis"}</button>
             ${question.imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
           </div>
           ${question.imageUrl ? `<img class="media-thumb" src="${escapeAttr(question.imageUrl)}" alt="Anteprima immagine domanda" />` : ""}
@@ -759,8 +759,9 @@ function renderQuestionMedia(question) {
 function renderImageCredit(question) {
   if (!question || !question.imageCredit) return "";
   const provider = question.imageProvider || "Pexels";
-  if (provider.toLowerCase() === "openai") {
-    return `<p class="media-credit">Immagine generata con OpenAI</p>`;
+  const providerKey = provider.toLowerCase();
+  if (providerKey === "openai" || providerKey.includes("cloudflare")) {
+    return `<p class="media-credit">Immagine generata con ${escapeHtml(provider)}</p>`;
   }
   const credit = question.imageCreditUrl
     ? `<a href="${escapeAttr(question.imageCreditUrl)}" target="_blank" rel="noopener">${escapeHtml(question.imageCredit)}</a>`
@@ -1487,12 +1488,12 @@ async function generateQuestionImage(index) {
     if (!response.ok || !data.ok) throw new Error(data.error || "Generazione immagine non riuscita");
     question.imageUrl = data.url || "";
     question.imageAlt = `Immagine generata per: ${question.text || "domanda"}`.slice(0, 160);
-    question.imageCredit = "OpenAI";
+    question.imageCredit = data.providerLabel || "Cloudflare Workers AI";
     question.imageCreditUrl = "";
-    question.imageProvider = data.providerLabel || "OpenAI";
+    question.imageProvider = data.providerLabel || "Cloudflare Workers AI";
     question.imagePageUrl = "";
     local.imageSuggestions[index] = { loading: false, images: [], query: "", error: "" };
-    showToast("Immagine IA generata");
+    showToast("Immagine generata");
   } catch (error) {
     showToast(error.message || "Generazione immagine non riuscita");
   } finally {

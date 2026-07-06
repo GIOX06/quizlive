@@ -113,7 +113,8 @@ async function main() {
     });
     assert.equal(generatedImageDryRun.status, 200);
     assert.equal(generatedImageDryRun.data.ok, true);
-    assert.equal(generatedImageDryRun.data.provider, "openai");
+    assert.equal(generatedImageDryRun.data.provider, "cloudflare");
+    assert.match(generatedImageDryRun.data.model, /flux-1-schnell/);
     assert.match(generatedImageDryRun.data.prompt, /Geografia/);
     assert.match(generatedImageDryRun.data.prompt, /pianeta rosso/);
     assert.match(generatedImageDryRun.data.prompt, /Marte/);

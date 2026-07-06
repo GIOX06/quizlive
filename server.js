@@ -23,6 +23,11 @@ const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || ""
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const HOST_PASSWORD = String(process.env.HOST_PASSWORD || "");
 const PEXELS_API_KEY = String(process.env.PEXELS_API_KEY || "");
+const IMAGE_GENERATION_PROVIDER = normalizeImageGenerationProvider(process.env.IMAGE_GENERATION_PROVIDER || "cloudflare");
+const CLOUDFLARE_ACCOUNT_ID = normalizeCloudflareAccountId(process.env.CLOUDFLARE_ACCOUNT_ID || "");
+const CLOUDFLARE_API_TOKEN = String(process.env.CLOUDFLARE_API_TOKEN || "");
+const CLOUDFLARE_IMAGE_MODEL = normalizeCloudflareImageModel(process.env.CLOUDFLARE_IMAGE_MODEL || "@cf/black-forest-labs/flux-1-schnell");
+const CLOUDFLARE_IMAGE_STEPS = Math.min(8, Math.max(1, Math.round(Number(process.env.CLOUDFLARE_IMAGE_STEPS) || 4)));
 const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "");
 const OPENAI_IMAGE_MODEL = normalizeShortText(process.env.OPENAI_IMAGE_MODEL || "gpt-image-1-mini", 40);
 const OPENAI_IMAGE_SIZE = normalizeShortText(process.env.OPENAI_IMAGE_SIZE || "1536x1024", 20);
@@ -252,38 +257,25 @@ app.post("/api/images/search", requireHostHttp, async (req, res) => {
 
 app.post("/api/images/generate", requireHostHttp, async (req, res) => {
   try {
-    const prompt = buildOpenAIImagePrompt(req.body || {});
+    const provider = normalizeImageGenerationProvider(req.body && req.body.provider || IMAGE_GENERATION_PROVIDER);
+    const prompt = buildAiImagePrompt(req.body || {});
     if (req.body && req.body.dryRun) {
       res.json({
         ok: true,
         dryRun: true,
-        provider: "openai",
-        providerLabel: "OpenAI",
-        model: OPENAI_IMAGE_MODEL,
-        size: OPENAI_IMAGE_SIZE,
-        quality: OPENAI_IMAGE_QUALITY,
-        outputFormat: OPENAI_IMAGE_FORMAT,
+        ...imageGenerationProviderInfo(provider),
         prompt
       });
       return;
     }
 
-    if (!OPENAI_API_KEY) {
-      res.status(501).json({
-        ok: false,
-        error: "Aggiungi OPENAI_API_KEY su Render per generare immagini IA",
-        prompt
-      });
-      return;
-    }
-
-    const generated = await generateOpenAIImage(prompt);
+    const generated = provider === "openai"
+      ? await generateOpenAIImage(prompt)
+      : await generateCloudflareImage(prompt);
     const saved = await saveMediaToStore(generated);
     res.json({
       ok: true,
-      provider: "openai",
-      providerLabel: "OpenAI",
-      model: OPENAI_IMAGE_MODEL,
+      ...imageGenerationProviderInfo(provider),
       url: `/api/media/${saved.id}`,
       id: saved.id,
       mime: saved.mime,
@@ -293,6 +285,10 @@ app.post("/api/images/generate", requireHostHttp, async (req, res) => {
   } catch (error) {
     if (isArchiveFailure(error)) {
       sendArchiveError(res, error);
+      return;
+    }
+    if (/CLOUDFLARE_ACCOUNT_ID|CLOUDFLARE_API_TOKEN|OPENAI_API_KEY/.test(error.message || "")) {
+      res.status(501).json({ ok: false, error: error.message, provider: IMAGE_GENERATION_PROVIDER });
       return;
     }
     res.status(500).json({ ok: false, error: error.message || "Generazione immagine non disponibile" });
@@ -2380,7 +2376,7 @@ function buildImageSearchQuery(payload) {
   return queryWords.length ? queryWords.join(" ") : "education classroom";
 }
 
-function buildOpenAIImagePrompt(payload) {
+function buildAiImagePrompt(payload) {
   const quiz = payload && payload.quiz && typeof payload.quiz === "object" ? payload.quiz : {};
   const question = payload && payload.question && typeof payload.question === "object" ? payload.question : {};
   const subject = normalizeShortText(quiz.subject, 80) || "materia scolastica";
@@ -2401,7 +2397,76 @@ function buildOpenAIImagePrompt(payload) {
   ].join(" ");
 }
 
+function imageGenerationProviderInfo(provider) {
+  if (provider === "openai") {
+    return {
+      provider: "openai",
+      providerLabel: "OpenAI",
+      model: OPENAI_IMAGE_MODEL,
+      size: OPENAI_IMAGE_SIZE,
+      quality: OPENAI_IMAGE_QUALITY,
+      outputFormat: OPENAI_IMAGE_FORMAT
+    };
+  }
+
+  return {
+    provider: "cloudflare",
+    providerLabel: "Cloudflare Workers AI",
+    model: CLOUDFLARE_IMAGE_MODEL,
+    steps: CLOUDFLARE_IMAGE_STEPS,
+    outputFormat: "jpeg"
+  };
+}
+
+async function generateCloudflareImage(prompt) {
+  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
+    throw new Error("Configura CLOUDFLARE_ACCOUNT_ID e CLOUDFLARE_API_TOKEN su Render per generare immagini gratis con Cloudflare Workers AI");
+  }
+
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${CLOUDFLARE_IMAGE_MODEL}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`
+    },
+    body: JSON.stringify({
+      prompt,
+      steps: CLOUDFLARE_IMAGE_STEPS,
+      seed: Math.floor(Math.random() * 2147483647)
+    })
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.toLowerCase().startsWith("image/")) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!response.ok) throw new Error("Generazione Cloudflare non disponibile");
+    return mediaFromImageBuffer(buffer, contentType);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.success === false) {
+    const message = cloudflareErrorMessage(data) || "Generazione Cloudflare non disponibile";
+    throw new Error(message);
+  }
+
+  const base64 = data && data.result && data.result.image || data && data.image;
+  if (!base64) throw new Error("Cloudflare non ha restituito un'immagine");
+  return mediaFromImageBase64(base64, "image/jpeg");
+}
+
+function cloudflareErrorMessage(data) {
+  const errors = data && Array.isArray(data.errors) ? data.errors : [];
+  const firstError = errors.find(Boolean);
+  if (firstError && firstError.message) return String(firstError.message);
+  if (data && data.error) return String(data.error);
+  return "";
+}
+
 async function generateOpenAIImage(prompt) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("Aggiungi OPENAI_API_KEY su Render per generare immagini con OpenAI");
+  }
+
   const body = {
     model: OPENAI_IMAGE_MODEL,
     prompt,
@@ -2461,6 +2526,23 @@ function normalizeGeneratedImageMime(value) {
 function normalizeOpenAIImageFormat(value) {
   const format = String(value || "").trim().toLowerCase();
   return ["png", "jpeg", "webp"].includes(format) ? format : "jpeg";
+}
+
+function normalizeImageGenerationProvider(value) {
+  const provider = String(value || "").trim().toLowerCase();
+  return provider === "openai" ? "openai" : "cloudflare";
+}
+
+function normalizeCloudflareAccountId(value) {
+  const accountId = String(value || "").trim();
+  return /^[a-f0-9]{32}$/i.test(accountId) ? accountId : "";
+}
+
+function normalizeCloudflareImageModel(value) {
+  const model = String(value || "").trim();
+  return /^@cf\/[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(model)
+    ? model
+    : "@cf/black-forest-labs/flux-1-schnell";
 }
 
 function imageMimeFromOpenAIFormat(value) {
