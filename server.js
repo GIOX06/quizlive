@@ -22,13 +22,13 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const HOST_PASSWORD = String(process.env.HOST_PASSWORD || "");
-const PEXELS_API_KEY = String(process.env.PEXELS_API_KEY || "");
+const PEXELS_API_KEY = normalizeSecretToken(process.env.PEXELS_API_KEY || "");
 const IMAGE_GENERATION_PROVIDER = normalizeImageGenerationProvider(process.env.IMAGE_GENERATION_PROVIDER || "cloudflare");
 const CLOUDFLARE_ACCOUNT_ID = normalizeCloudflareAccountId(process.env.CLOUDFLARE_ACCOUNT_ID || "");
-const CLOUDFLARE_API_TOKEN = String(process.env.CLOUDFLARE_API_TOKEN || "");
+const CLOUDFLARE_API_TOKEN = normalizeSecretToken(process.env.CLOUDFLARE_API_TOKEN || "");
 const CLOUDFLARE_IMAGE_MODEL = normalizeCloudflareImageModel(process.env.CLOUDFLARE_IMAGE_MODEL || "@cf/black-forest-labs/flux-1-schnell");
 const CLOUDFLARE_IMAGE_STEPS = Math.min(8, Math.max(1, Math.round(Number(process.env.CLOUDFLARE_IMAGE_STEPS) || 4)));
-const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "");
+const OPENAI_API_KEY = normalizeSecretToken(process.env.OPENAI_API_KEY || "");
 const OPENAI_IMAGE_MODEL = normalizeShortText(process.env.OPENAI_IMAGE_MODEL || "gpt-image-1-mini", 40);
 const OPENAI_IMAGE_SIZE = normalizeShortText(process.env.OPENAI_IMAGE_SIZE || "1536x1024", 20);
 const OPENAI_IMAGE_QUALITY = normalizeShortText(process.env.OPENAI_IMAGE_QUALITY || "low", 20);
@@ -2348,6 +2348,20 @@ function normalizeShortText(value, maxLength) {
   return String(value || "").trim().slice(0, maxLength);
 }
 
+function normalizeSecretToken(value) {
+  let token = String(value || "").trim();
+  if ((token.startsWith("\"") && token.endsWith("\"")) || (token.startsWith("'") && token.endsWith("'"))) {
+    token = token.slice(1, -1).trim();
+  }
+  return token.replace(/^Bearer\s+/i, "").trim();
+}
+
+function validateSecretToken(token, name) {
+  if (/\s/.test(String(token || "")) || /[\u0000-\u001F\u007F]/.test(String(token || ""))) {
+    throw new Error(`${name} contiene spazi, a capo o caratteri invisibili: su Render incolla solo il token pulito`);
+  }
+}
+
 function normalizeTags(value) {
   const raw = Array.isArray(value) ? value : String(value || "").split(/[,;]+/);
   return Array.from(new Set(raw
@@ -2422,6 +2436,7 @@ async function generateCloudflareImage(prompt) {
   if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
     throw new Error("Configura CLOUDFLARE_ACCOUNT_ID e CLOUDFLARE_API_TOKEN su Render per generare immagini gratis con Cloudflare Workers AI");
   }
+  validateSecretToken(CLOUDFLARE_API_TOKEN, "CLOUDFLARE_API_TOKEN");
 
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${CLOUDFLARE_IMAGE_MODEL}`, {
     method: "POST",
@@ -2466,6 +2481,7 @@ async function generateOpenAIImage(prompt) {
   if (!OPENAI_API_KEY) {
     throw new Error("Aggiungi OPENAI_API_KEY su Render per generare immagini con OpenAI");
   }
+  validateSecretToken(OPENAI_API_KEY, "OPENAI_API_KEY");
 
   const body = {
     model: OPENAI_IMAGE_MODEL,
