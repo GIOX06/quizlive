@@ -2485,13 +2485,15 @@ function buildAiImagePrompt(payload) {
   const answerText = normalizeShortText(payload && payload.answerText, 180);
   if (answerText) {
     return [
-      "Crea una immagine didattica orizzontale per una opzione di risposta di QuizLive.",
+      "Crea una immagine didattica orizzontale per una singola opzione di risposta di QuizLive.",
+      `Soggetto principale e unico dell'immagine: ${answerText}.`,
       `Materia: ${subject}.`,
       `Livello: ${level}.`,
       `Lingua del contesto: ${language}.`,
-      `Domanda: ${questionText}.`,
-      `Opzione da rappresentare: ${answerText}.`,
-      "L'immagine deve aiutare a riconoscere questa risposta senza indicare se e corretta o sbagliata.",
+      `Domanda solo come contesto, non come soggetto: ${questionText}.`,
+      `Opzione del tasto da rappresentare: ${answerText}.`,
+      "Rappresenta il soggetto della risposta, non la domanda intera e non la risposta corretta se e diversa.",
+      "Non aggiungere simboli di vero/falso, spunte, croci o indizi sul fatto che l'opzione sia corretta.",
       "Stile: chiaro, moderno, adatto a studenti, leggibile su telefono e monitor condiviso.",
       "Evita testo leggibile, watermark, loghi, brand e persone riconoscibili non necessarie."
     ].join(" ");

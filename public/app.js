@@ -54,6 +54,8 @@ let screenPresentationRequest = null;
 let screenPresentationUrl = "";
 let screenPresentationConnection = null;
 let builderDragIndex = null;
+let builderDragAutoScrollFrame = null;
+let builderDragAutoScrollSpeed = 0;
 let screenPresentationDisconnecting = false;
 
 const app = document.getElementById("app");
@@ -1932,6 +1934,12 @@ function reorderQuestion(fromIndex, insertIndex) {
 }
 
 function bindBuilderDeckDragEvents() {
+  const deckList = document.querySelector("[data-builder-card-list]");
+  if (deckList) {
+    deckList.addEventListener("dragover", handleBuilderDeckDragOver);
+    deckList.addEventListener("drop", handleBuilderDeckDrop);
+    deckList.addEventListener("dragleave", handleBuilderDeckDragLeave);
+  }
   document.querySelectorAll(".builder-slide[draggable='true']").forEach((card) => {
     card.addEventListener("dragstart", handleBuilderDragStart);
     card.addEventListener("dragover", handleBuilderDragOver);
@@ -1965,6 +1973,7 @@ function handleBuilderDragOver(event) {
   const card = event.currentTarget;
   const index = Number(card.dataset.questionIndex);
   clearBuilderDragIndicators(card);
+  updateBuilderDragAutoScroll(event.clientY);
   if (index === builderDragIndex) return;
   const box = card.getBoundingClientRect();
   const before = event.clientY < box.top + box.height / 2;
@@ -1978,19 +1987,58 @@ function handleBuilderDragLeave(event) {
 function handleBuilderDrop(event) {
   if (builderDragIndex === null) return;
   event.preventDefault();
+  event.stopPropagation();
   const card = event.currentTarget;
   const targetIndex = Number(card.dataset.questionIndex);
   const box = card.getBoundingClientRect();
   const before = event.clientY < box.top + box.height / 2;
   const fromIndex = builderDragIndex;
   builderDragIndex = null;
+  stopBuilderDragAutoScroll();
   clearBuilderDragIndicators();
   reorderQuestion(fromIndex, before ? targetIndex : targetIndex + 1);
 }
 
 function handleBuilderDragEnd() {
   builderDragIndex = null;
+  stopBuilderDragAutoScroll();
   clearBuilderDragIndicators();
+}
+
+function handleBuilderDeckDragOver(event) {
+  if (builderDragIndex === null) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  updateBuilderDragAutoScroll(event.clientY);
+  if (event.target && event.target.closest && event.target.closest(".builder-slide")) return;
+  clearBuilderDragIndicators();
+}
+
+function handleBuilderDeckDrop(event) {
+  if (builderDragIndex === null) return;
+  if (event.target && event.target.closest && event.target.closest(".builder-slide")) return;
+  event.preventDefault();
+  const fromIndex = builderDragIndex;
+  const deckList = event.currentTarget;
+  const cards = Array.from(deckList.querySelectorAll(".builder-slide"));
+  const firstCard = cards[0];
+  const lastCard = cards[cards.length - 1];
+  const insertIndex = firstCard && event.clientY < firstCard.getBoundingClientRect().top
+    ? 0
+    : lastCard && event.clientY > lastCard.getBoundingClientRect().bottom
+      ? local.quiz.questions.length
+      : local.quiz.questions.length;
+  builderDragIndex = null;
+  stopBuilderDragAutoScroll();
+  clearBuilderDragIndicators();
+  reorderQuestion(fromIndex, insertIndex);
+}
+
+function handleBuilderDeckDragLeave(event) {
+  const deckList = event.currentTarget;
+  const nextTarget = event.relatedTarget;
+  if (nextTarget && deckList.contains(nextTarget)) return;
+  stopBuilderDragAutoScroll();
 }
 
 function clearBuilderDragIndicators(exceptCard) {
@@ -1998,6 +2046,43 @@ function clearBuilderDragIndicators(exceptCard) {
     if (card === exceptCard) return;
     card.classList.remove("dragging", "drag-over-before", "drag-over-after");
   });
+}
+
+function updateBuilderDragAutoScroll(clientY) {
+  const deckList = document.querySelector("[data-builder-card-list]");
+  if (!deckList) return;
+  const box = deckList.getBoundingClientRect();
+  const threshold = Math.min(96, Math.max(48, box.height * 0.18));
+  let speed = 0;
+  if (clientY < box.top + threshold) {
+    speed = -Math.ceil(((box.top + threshold - clientY) / threshold) * 18);
+  } else if (clientY > box.bottom - threshold) {
+    speed = Math.ceil(((clientY - (box.bottom - threshold)) / threshold) * 18);
+  }
+  builderDragAutoScrollSpeed = Math.max(-22, Math.min(22, speed));
+  if (builderDragAutoScrollSpeed) startBuilderDragAutoScroll();
+  else stopBuilderDragAutoScroll();
+}
+
+function startBuilderDragAutoScroll() {
+  if (builderDragAutoScrollFrame) return;
+  const step = () => {
+    const deckList = document.querySelector("[data-builder-card-list]");
+    if (!deckList || !builderDragAutoScrollSpeed || builderDragIndex === null) {
+      builderDragAutoScrollFrame = null;
+      return;
+    }
+    deckList.scrollTop += builderDragAutoScrollSpeed;
+    builderDragAutoScrollFrame = requestAnimationFrame(step);
+  };
+  builderDragAutoScrollFrame = requestAnimationFrame(step);
+}
+
+function stopBuilderDragAutoScroll() {
+  builderDragAutoScrollSpeed = 0;
+  if (!builderDragAutoScrollFrame) return;
+  cancelAnimationFrame(builderDragAutoScrollFrame);
+  builderDragAutoScrollFrame = null;
 }
 
 function handleBuilderKeyboard(event) {

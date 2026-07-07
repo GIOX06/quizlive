@@ -146,7 +146,8 @@ async function main() {
     assert.equal(generatedAnswerImageDryRun.status, 200);
     assert.equal(generatedAnswerImageDryRun.data.ok, true);
     assert.match(generatedAnswerImageDryRun.data.prompt, /opzione di risposta/i);
-    assert.match(generatedAnswerImageDryRun.data.prompt, /Opzione da rappresentare: Marte/);
+    assert.match(generatedAnswerImageDryRun.data.prompt, /Soggetto principale e unico dell'immagine: Marte/);
+    assert.match(generatedAnswerImageDryRun.data.prompt, /Opzione del tasto da rappresentare: Marte/);
 
     const screenWatching = await emitAck(screen, "screen:watch", {});
     assert.equal(screenWatching.ok, true);
