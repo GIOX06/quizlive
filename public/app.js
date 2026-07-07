@@ -997,12 +997,7 @@ function renderHostGame(room) {
         ${room.status === "ended" ? renderEnded(room, true) : ""}
       </div>
       <aside class="panel stack">
-        <div class="toolbar">
-          ${room.exports ? `<a class="btn ghost" href="${room.exports.csv}">CSV</a><a class="btn ghost" href="${room.exports.json}">JSON</a><a class="btn ghost" href="${room.exports.xlsx}">XLSX</a>` : ""}
-          ${room.status === "ended" ? `<button class="btn ghost" data-action="release-screens">Monitor in attesa</button>` : ""}
-          ${room.status === "ended" ? `<button class="btn ghost" data-action="back-to-builder">Cambia quiz</button>` : ""}
-          <button class="btn ghost" data-action="reset-room">Reset</button>
-        </div>
+        ${renderHostSideActions(room)}
         <div>
           <h2 class="section-title">Giocatori</h2>
           <p class="subtle">${escapeHtml(pendingText)}</p>
@@ -1012,6 +1007,16 @@ function renderHostGame(room) {
         ${renderHostPlayers(room)}
       </aside>
     </section>
+  `;
+}
+
+function renderHostSideActions(room) {
+  if (room.status !== "ended") return "";
+  return `
+    <div class="toolbar">
+      <button class="btn ghost" data-action="release-screens">Monitor in attesa</button>
+      <button class="btn ghost" data-action="back-to-builder">Cambia quiz</button>
+    </div>
   `;
 }
 
@@ -1025,15 +1030,10 @@ function renderHostLobby(room) {
       <div class="qr-panel">
         <img class="qr-code" src="${escapeAttr(qrCodeSrc(room.code))}" alt="QR code ingresso giocatori" />
         <div class="qr-meta">
-          <span class="status-pill">Codice ${escapeHtml(room.code)}</span>
-          <span class="status-pill ${playerAccessClass()}">${escapeHtml(playerBaseLabel())}</span>
-          <button class="btn ghost" data-action="copy-player-link">Copia link</button>
           <button class="btn ghost" data-action="open-player-link">Apri giocatore</button>
-          <button class="btn ghost" data-action="copy-screen-link">Copia monitor</button>
           <button class="btn ghost" data-action="open-screen-link">Apri monitor</button>
           ${renderCastScreenButton()}
         </div>
-        <p class="qr-note ${playerAccessClass()}">${escapeHtml(playerAccessNotice())}</p>
       </div>
       <div class="toolbar">
         <button class="btn primary" data-action="start-game" ${room.totalQuestions < 1 ? "disabled" : ""}>Avvia quiz</button>
