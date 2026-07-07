@@ -8,7 +8,8 @@ const questionTypes = [
   { value: "multiple", label: "Scelta multipla" },
   { value: "true_false", label: "Vero/Falso" },
   { value: "speed", label: "Risposta veloce" },
-  { value: "multiple_select", label: "Risposte multiple" }
+  { value: "multiple_select", label: "Risposte multiple" },
+  { value: "slide", label: "Slide" }
 ];
 let local = {
   mode: initialMode(),
@@ -34,6 +35,8 @@ let local = {
   imageSuggestions: {},
   imageGenerating: {},
   builderQuestionIndex: 0,
+  builderEditing: false,
+  mediaDialog: null,
   quizSettingsOpen: false,
   hostEditingRoom: false,
   currentQuizId: null,
@@ -106,6 +109,8 @@ window.addEventListener("hashchange", () => {
 setInterval(() => {
   if (local.room && local.room.status === "question") updateLiveTimers();
 }, 250);
+
+window.addEventListener("keydown", handleBuilderKeyboard);
 
 function render() {
   app.innerHTML = shell(renderMain(), renderTopbar());
@@ -251,6 +256,7 @@ function renderHostHome() {
       </div>
       ${renderQuizBuilder()}
       ${local.quizSettingsOpen ? renderQuizSettingsDialog() : ""}
+      ${local.mediaDialog ? renderMediaDialog() : ""}
       ${local.importOpen ? renderImportBox() : ""}
       ${local.archiveOpen ? renderArchiveBox() : ""}
     </section>
@@ -295,13 +301,14 @@ function renderHostAccess() {
 function renderQuizBuilder() {
   const questionIndex = selectedBuilderQuestionIndex();
   const question = local.quiz.questions[questionIndex];
+  const editing = Boolean(local.builderEditing);
   return `
     <div class="builder-studio">
       ${renderQuestionDeck(questionIndex)}
       <section class="builder-preview stack">
-        ${question ? renderQuestionPreviewEditor(question, questionIndex) : `<div class="empty">Aggiungi una domanda</div>`}
+        ${question ? editing ? renderQuestionPreviewEditor(question, questionIndex) : renderQuestionHostPreview(question, questionIndex) : `<div class="empty">Aggiungi una domanda</div>`}
       </section>
-      ${question ? renderQuestionProperties(question, questionIndex) : ""}
+      ${question ? editing ? renderQuestionProperties(question, questionIndex) : renderQuestionReadOnlyProperties(question, questionIndex) : ""}
     </div>
   `;
 }
@@ -316,7 +323,7 @@ function selectedBuilderQuestionIndex() {
 
 function renderQuestionDeck(selectedIndex) {
   return `
-    <aside class="builder-deck panel stack">
+    <aside class="builder-deck panel stack" data-builder-deck>
       <div>
         <p class="screen-kicker">Quiz</p>
         <h2 class="mini-title">${escapeHtml(local.quiz.title || "QuizLive")}</h2>
@@ -326,6 +333,7 @@ function renderQuestionDeck(selectedIndex) {
       </div>
       <div class="stack">
         <button class="btn blue" data-action="add-question">Aggiungi</button>
+        <button class="btn ghost" data-action="add-slide">Aggiungi slide</button>
         <button class="btn primary" data-action="create-room">${local.hostEditingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
         <button class="btn gold" data-action="quick-start-room">${local.hostEditingRoom ? "Aggiorna e avvia" : "Avvia subito"}</button>
         <button class="btn teal" data-action="save-quiz">Salva quiz</button>
@@ -343,20 +351,28 @@ function renderQuestionDeck(selectedIndex) {
 function renderQuestionSlideCard(question, index, selectedIndex) {
   const questionType = normalizeQuestionType(question.type);
   const hasMedia = Boolean(question.imageUrl || question.videoUrl);
+  const active = index === selectedIndex;
   return `
-    <button class="builder-slide ${index === selectedIndex ? "active" : ""}" data-action="select-builder-question" data-question-index="${index}">
-      <div class="builder-slide-head">
-        <strong>${index + 1}</strong>
-        <span>${escapeHtml(questionTypeLabel(questionType))}</span>
+    <article class="builder-slide ${active ? "active" : ""} ${active && local.builderEditing ? "editing" : ""}">
+      <button class="builder-slide-select" data-action="select-builder-question" data-question-index="${index}" aria-label="Domanda ${index + 1}">
+        <div class="builder-slide-head">
+          <strong>${index + 1}</strong>
+          <span>${escapeHtml(questionTypeLabel(questionType))}</span>
+        </div>
+        <div class="builder-slide-preview">
+          ${renderQuestionTypeSilhouette(questionType)}
+        </div>
+        <div class="builder-slide-body">
+          <span class="builder-slide-time">${questionType === "slide" ? "SLD" : `${Number(question.timeLimit) || 20}s`}</span>
+          <span class="builder-slide-media">${hasMedia ? "IMG" : "+"}</span>
+        </div>
+      </button>
+      <div class="builder-slide-actions">
+        <button class="builder-icon-btn" data-action="edit-builder-question" data-question-index="${index}" aria-label="Modifica domanda ${index + 1}">&#9998;</button>
+        <button class="builder-icon-btn" data-action="move-question" data-question-index="${index}" data-direction="-1" ${index === 0 ? "disabled" : ""} aria-label="Sposta su">&#8593;</button>
+        <button class="builder-icon-btn" data-action="move-question" data-question-index="${index}" data-direction="1" ${index >= local.quiz.questions.length - 1 ? "disabled" : ""} aria-label="Sposta giu">&#8595;</button>
       </div>
-      <div class="builder-slide-preview">
-        ${renderQuestionTypeSilhouette(questionType)}
-      </div>
-      <div class="builder-slide-body">
-        <span class="builder-slide-time">${Number(question.timeLimit) || 20}s</span>
-        <span class="builder-slide-media">${hasMedia ? "IMG" : "+"}</span>
-      </div>
-    </button>
+    </article>
   `;
 }
 
@@ -370,11 +386,15 @@ function renderQuestionTypeSilhouette(type) {
   if (type === "multiple_select") {
     return `<div class="question-silhouette multi-select"><span></span><span></span><span></span><span></span></div>`;
   }
+  if (type === "slide") {
+    return `<div class="question-silhouette slide"><span></span><span></span><span></span></div>`;
+  }
   return `<div class="question-silhouette multiple"><span></span><span></span><span></span><span></span></div>`;
 }
 
 function renderQuestionPreviewEditor(question, questionIndex) {
   const questionType = normalizeQuestionType(question.type);
+  if (questionType === "slide") return renderSlideEditor(question, questionIndex);
   return `
     <article class="builder-live-preview">
       <textarea class="builder-question-input" data-question-text data-question-index="${questionIndex}" maxlength="240" placeholder="Inizia a digitare la domanda">${escapeHtml(question.text)}</textarea>
@@ -384,24 +404,26 @@ function renderQuestionPreviewEditor(question, questionIndex) {
   `;
 }
 
-function renderBuilderMediaPanel(question, questionIndex) {
-  const imageUrl = question.imageUrl || "";
+function renderSlideEditor(question, questionIndex) {
   return `
-    <div class="builder-media-drop">
+    <article class="builder-live-preview builder-slide-editor">
+      <textarea class="builder-question-input" data-question-text data-question-index="${questionIndex}" maxlength="120" placeholder="Titolo slide">${escapeHtml(question.text)}</textarea>
+      <textarea class="builder-slide-subtitle" data-question-subtitle data-question-index="${questionIndex}" maxlength="220" placeholder="Sottotitolo">${escapeHtml(question.subtitle || "")}</textarea>
+      ${renderBuilderMediaPanel(question, questionIndex)}
+    </article>
+  `;
+}
+
+function renderBuilderMediaPanel(question, questionIndex) {
+  const imageUrl = normalizeImageUrl(question.imageUrl);
+  return `
+    <div class="builder-media-drop ${imageUrl ? "has-media" : ""}">
       ${imageUrl
         ? `<img src="${escapeAttr(imageUrl)}" alt="Anteprima immagine domanda" />`
         : `<div class="builder-media-empty">
-            <span>+</span>
-            <strong>Trova e inserisci contenuto multimediale</strong>
+            <button class="builder-media-button" data-action="open-question-image-dialog" data-question-index="${questionIndex}" type="button">Immagine</button>
           </div>`}
-      <div class="media-actions">
-        <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
-        <button class="btn small ghost" data-action="suggest-question-images" data-question-index="${questionIndex}" ${imageSuggestionState(questionIndex).loading ? "disabled" : ""}>${imageSuggestionState(questionIndex).loading ? "Cerco..." : "Suggerisci immagini"}</button>
-        <button class="btn small ghost" data-action="generate-question-image" data-question-index="${questionIndex}" ${imageGeneratingState(questionIndex).loading ? "disabled" : ""}>${imageGeneratingState(questionIndex).loading ? "Genero..." : "Genera gratis"}</button>
-        ${imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
-      </div>
-      <input data-question-media="imageUrl" data-question-index="${questionIndex}" value="${escapeAttr(imageUrl)}" maxlength="500" placeholder="https:// immagine" />
-      ${renderImageSuggestions(questionIndex)}
+      ${imageUrl ? `<button class="builder-media-button floating" data-action="open-question-image-dialog" data-question-index="${questionIndex}" type="button">Immagine</button>` : ""}
     </div>
   `;
 }
@@ -441,16 +463,74 @@ function renderBuilderAnswerCards(question, questionIndex, questionType) {
 
 function renderBuilderAnswerImageTools(questionIndex, answerIndex, rawImageUrl, imageUrl) {
   return `
-    <div class="builder-answer-image-tools">
-      <div class="builder-answer-image-preview">
-        ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="Anteprima immagine risposta" />` : `<span>Immagine</span>`}
+    <button class="builder-answer-image-button ${imageUrl ? "has-image" : ""}" data-action="open-answer-image-dialog" data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="button">
+      ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="" />` : ""}
+      <span>Immagine</span>
+    </button>
+  `;
+}
+
+function renderQuestionHostPreview(question, questionIndex) {
+  const questionType = normalizeQuestionType(question.type);
+  if (questionType === "slide") return renderSlideHostPreview(question, questionIndex);
+  const answers = editableAnswers(question);
+  const answerImages = answerImagesForQuestion(question, answers.length);
+  return `
+    <article class="builder-live-preview builder-preview-only">
+      <div class="builder-preview-question">
+        <p class="screen-kicker">Anteprima</p>
+        <h2>${escapeHtml(question.text || `Domanda ${questionIndex + 1}`)}</h2>
       </div>
-      <div class="builder-answer-image-controls">
-        <input class="file-input" data-answer-image-upload data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
-        <input data-answer-image-url data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(rawImageUrl)}" maxlength="500" placeholder="https:// immagine risposta" />
-        ${imageUrl ? `<button class="btn small ghost" data-action="clear-answer-image" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi immagine</button>` : ""}
+      ${renderBuilderPreviewMedia(question)}
+      <div class="answers-grid builder-preview-answers">
+        ${answers.map((answer, answerIndex) => renderAnswerDisplay({
+          index: answerIndex,
+          text: answer || `Risposta ${answerIndex + 1}`,
+          imageUrl: normalizeImageUrl(answerImages[answerIndex])
+        })).join("")}
       </div>
+    </article>
+  `;
+}
+
+function renderSlideHostPreview(question, questionIndex) {
+  return `
+    <article class="builder-live-preview builder-preview-only builder-preview-slide">
+      <div class="builder-preview-question">
+        <p class="screen-kicker">Slide ${questionIndex + 1}</p>
+        <h2>${escapeHtml(question.text || "Nuova slide")}</h2>
+        ${question.subtitle ? `<p>${escapeHtml(question.subtitle)}</p>` : ""}
+      </div>
+      ${renderBuilderPreviewMedia(question)}
+    </article>
+  `;
+}
+
+function renderBuilderPreviewMedia(question) {
+  const imageUrl = normalizeImageUrl(question.imageUrl);
+  if (!imageUrl) return `<div class="builder-preview-media empty-media"></div>`;
+  return `
+    <div class="builder-preview-media">
+      <img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(question.imageAlt || "")}" />
     </div>
+  `;
+}
+
+function renderQuestionReadOnlyProperties(question, questionIndex) {
+  const questionType = normalizeQuestionType(question.type);
+  const answers = questionType === "slide" ? [] : editableAnswers(question);
+  const correctCount = questionType === "slide" ? 0 : correctIndexesForQuestion(question, answers).length;
+  return `
+    <aside class="builder-properties panel stack preview-properties">
+      <div>
+        <h2 class="section-title">Anteprima</h2>
+        <p class="subtle">${escapeHtml(questionTypeLabel(questionType))}</p>
+      </div>
+      <div class="readonly-field">${questionType === "slide" ? "Slide" : `${answers.length} risposte`}</div>
+      ${questionType !== "slide" ? `<div class="readonly-field">${correctCount} corrette</div>` : ""}
+      ${questionType !== "slide" ? `<div class="readonly-field">${Number(question.timeLimit) || 20} secondi</div>` : ""}
+      <button class="btn ghost" data-action="edit-builder-question" data-question-index="${questionIndex}">Modifica</button>
+    </aside>
   `;
 }
 
@@ -470,30 +550,99 @@ function renderQuestionProperties(question, questionIndex) {
           ${questionTypes.map((type) => `<option value="${type.value}" ${questionType === type.value ? "selected" : ""}>${type.label}</option>`).join("")}
         </select>
       </label>
-      <label class="stack">
-        <span>Limite di tempo</span>
-        <input data-question-time data-question-index="${questionIndex}" type="number" min="5" max="90" value="${question.timeLimit}" />
-      </label>
-      <button class="btn small ghost" data-action="apply-time-all" data-question-index="${questionIndex}">Applica a tutte</button>
-      <label class="stack">
-        <span>Punti</span>
-        <select data-question-points data-question-index="${questionIndex}">
-          ${pointOptions().map((option) => `<option value="${option.value}" ${Number(question.points || 0) === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
-        </select>
-      </label>
-      <label class="stack">
-        <span>${questionType === "multiple_select" ? "Risposte corrette" : "Risposta corretta"}</span>
-        ${questionType === "multiple_select"
-          ? `<div class="readonly-field">${correctIndexes.length} selezionate</div>`
-          : `<select data-question-correct data-question-index="${questionIndex}">
-              ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${correctIndexes[0] === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || `Risposta ${answerIndex + 1}`)}</option>`).join("")}
-            </select>`}
-      </label>
-      <label class="stack">
-        <span>Video URL</span>
-        <input data-question-media="videoUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.videoUrl || "")}" maxlength="500" placeholder="https://..." />
-      </label>
+      ${questionType !== "slide" ? `
+        <label class="stack">
+          <span>Limite di tempo</span>
+          <input data-question-time data-question-index="${questionIndex}" type="number" min="5" max="90" value="${question.timeLimit}" />
+        </label>
+        <button class="btn small ghost" data-action="apply-time-all" data-question-index="${questionIndex}">Applica a tutte</button>
+        <label class="stack">
+          <span>Punti</span>
+          <select data-question-points data-question-index="${questionIndex}">
+            ${pointOptions().map((option) => `<option value="${option.value}" ${Number(question.points || 0) === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+          </select>
+        </label>
+        <label class="stack">
+          <span>${questionType === "multiple_select" ? "Risposte corrette" : "Risposta corretta"}</span>
+          ${questionType === "multiple_select"
+            ? `<div class="readonly-field">${correctIndexes.length} selezionate</div>`
+            : `<select data-question-correct data-question-index="${questionIndex}">
+                ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${correctIndexes[0] === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || `Risposta ${answerIndex + 1}`)}</option>`).join("")}
+              </select>`}
+        </label>
+      ` : ""}
+      ${questionType !== "slide" ? `
+        <label class="stack">
+          <span>Video URL</span>
+          <input data-question-media="videoUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.videoUrl || "")}" maxlength="500" placeholder="https://..." />
+        </label>
+      ` : ""}
     </aside>
+  `;
+}
+
+function renderMediaDialog() {
+  const dialog = local.mediaDialog || {};
+  const questionIndex = Number(dialog.questionIndex);
+  const question = local.quiz.questions[questionIndex];
+  if (!question) return "";
+  const isAnswer = dialog.target === "answer";
+  const answerIndex = Number(dialog.answerIndex);
+  const answerImages = isAnswer ? answerImagesForQuestion(question, editableAnswers(question).length) : [];
+  const rawImageUrl = isAnswer ? answerImages[answerIndex] || "" : question.imageUrl || "";
+  const imageUrl = normalizeImageUrl(rawImageUrl);
+  const title = isAnswer ? `Immagine risposta ${answerLetters[answerIndex] || answerIndex + 1}` : "Immagine principale";
+  return `
+    <div class="settings-backdrop">
+      <section class="settings-dialog media-dialog panel stack">
+        <div class="builder-properties-head">
+          <div>
+            <h2 class="section-title">${escapeHtml(title)}</h2>
+            <p class="subtle">${escapeHtml(question.text || local.quiz.title || "QuizLive")}</p>
+          </div>
+          <button class="btn small ghost" data-action="close-media-dialog">Chiudi</button>
+        </div>
+        <div class="media-dialog-preview">
+          ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(isAnswer ? "" : question.imageAlt || "")}" />` : `<span>Immagine</span>`}
+        </div>
+        ${isAnswer ? renderAnswerMediaDialogFields(questionIndex, answerIndex, rawImageUrl, imageUrl) : renderQuestionMediaDialogFields(question, questionIndex, imageUrl)}
+      </section>
+    </div>
+  `;
+}
+
+function renderQuestionMediaDialogFields(question, questionIndex, imageUrl) {
+  return `
+    <div class="media-dialog-grid">
+      <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+      <input data-question-media="imageUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.imageUrl || "")}" maxlength="500" placeholder="https:// immagine" />
+    </div>
+    <label class="stack">
+      <span>Testo immagine</span>
+      <input data-question-media="imageAlt" data-question-index="${questionIndex}" value="${escapeAttr(question.imageAlt || "")}" maxlength="160" />
+    </label>
+    <label class="stack">
+      <span>Credito</span>
+      <input data-question-media="imageCredit" data-question-index="${questionIndex}" value="${escapeAttr(question.imageCredit || "")}" maxlength="80" />
+    </label>
+    <div class="media-actions">
+      <button class="btn small ghost" data-action="suggest-question-images" data-question-index="${questionIndex}" ${imageSuggestionState(questionIndex).loading ? "disabled" : ""}>${imageSuggestionState(questionIndex).loading ? "Cerco..." : "Suggerisci immagini"}</button>
+      <button class="btn small ghost" data-action="generate-question-image" data-question-index="${questionIndex}" ${imageGeneratingState(questionIndex).loading ? "disabled" : ""}>${imageGeneratingState(questionIndex).loading ? "Genero..." : "Genera gratis"}</button>
+      ${imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
+    </div>
+    ${renderImageSuggestions(questionIndex)}
+  `;
+}
+
+function renderAnswerMediaDialogFields(questionIndex, answerIndex, rawImageUrl, imageUrl) {
+  return `
+    <div class="media-dialog-grid">
+      <input class="file-input" data-answer-image-upload data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+      <input data-answer-image-url data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(rawImageUrl)}" maxlength="500" placeholder="https:// immagine risposta" />
+    </div>
+    <div class="media-actions">
+      ${imageUrl ? `<button class="btn small ghost" data-action="clear-answer-image" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi</button>` : ""}
+    </div>
   `;
 }
 
@@ -555,78 +704,6 @@ function pointOptions() {
     { value: 1000, label: "1000 punti" },
     { value: 1500, label: "1500 punti" }
   ];
-}
-
-function renderQuestionEditor(question, questionIndex) {
-  const questionType = normalizeQuestionType(question.type);
-  const answers = editableAnswers(question);
-  const selectedCorrect = Math.min(Math.max(Number(question.correctIndex) || 0, 0), Math.max(answers.length - 1, 0));
-  const selectedCorrectIndexes = correctIndexesForQuestion(question, answers);
-  return `
-    <article class="builder-question stack" data-question-index="${questionIndex}">
-      <div class="question-head">
-        <strong>Domanda ${questionIndex + 1}</strong>
-        <span class="status-pill compact">${escapeHtml(questionTypeLabel(questionType))}</span>
-        <button class="btn small ghost" data-action="remove-question" data-question-index="${questionIndex}" ${local.quiz.questions.length <= 1 ? "disabled" : ""}>Rimuovi</button>
-      </div>
-      <label class="stack">
-        <span>Testo domanda</span>
-        <textarea data-question-text data-question-index="${questionIndex}" maxlength="240">${escapeHtml(question.text)}</textarea>
-      </label>
-      <div class="grid-2">
-        <div class="stack media-field">
-          <span>Immagine</span>
-          <input data-question-media="imageUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.imageUrl || "")}" maxlength="500" placeholder="https://..." />
-          <div class="media-actions">
-            <input class="file-input" data-question-image-upload data-question-index="${questionIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
-            <button class="btn small ghost" data-action="suggest-question-images" data-question-index="${questionIndex}" ${imageSuggestionState(questionIndex).loading ? "disabled" : ""}>${imageSuggestionState(questionIndex).loading ? "Cerco..." : "Suggerisci immagini"}</button>
-            <button class="btn small ghost" data-action="generate-question-image" data-question-index="${questionIndex}" ${imageGeneratingState(questionIndex).loading ? "disabled" : ""}>${imageGeneratingState(questionIndex).loading ? "Genero..." : "Genera gratis"}</button>
-            ${question.imageUrl ? `<button class="btn small ghost" data-action="clear-question-image" data-question-index="${questionIndex}">Rimuovi</button>` : ""}
-          </div>
-          ${question.imageUrl ? `<img class="media-thumb" src="${escapeAttr(question.imageUrl)}" alt="Anteprima immagine domanda" />` : ""}
-          ${renderImageSuggestions(questionIndex)}
-        </div>
-        <label class="stack">
-          <span>Video URL</span>
-          <input data-question-media="videoUrl" data-question-index="${questionIndex}" value="${escapeAttr(question.videoUrl || "")}" maxlength="500" placeholder="https://..." />
-        </label>
-      </div>
-      <div class="grid-3">
-        <label class="stack">
-          <span>Tipo</span>
-          <select data-question-type data-question-index="${questionIndex}">
-            ${questionTypes.map((type) => `<option value="${type.value}" ${questionType === type.value ? "selected" : ""}>${type.label}</option>`).join("")}
-          </select>
-        </label>
-        <label class="stack">
-          <span>Tempo</span>
-          <input data-question-time data-question-index="${questionIndex}" type="number" min="5" max="90" value="${question.timeLimit}" />
-        </label>
-        <label class="stack">
-          <span>${questionType === "multiple_select" ? "Risposte da scegliere" : "Risposta corretta"}</span>
-          ${questionType === "multiple_select"
-            ? `<div class="readonly-field">${selectedCorrectIndexes.length}</div>`
-            : `<select data-question-correct data-question-index="${questionIndex}">
-                ${answers.map((answer, answerIndex) => `<option value="${answerIndex}" ${selectedCorrect === answerIndex ? "selected" : ""}>${answerLetters[answerIndex]} ${escapeHtml(answer || "")}</option>`).join("")}
-              </select>`}
-        </label>
-      </div>
-      <div class="stack">
-        ${answers.map((answer, answerIndex) => `
-          <div class="answer-editor">
-            <span class="answer-key ${letterClass(answerIndex)}">${answerLetters[answerIndex]}</span>
-            <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" ${questionType === "true_false" ? "readonly" : ""} />
-            <label class="radio-label">
-              ${questionType === "multiple_select"
-                ? `<input type="checkbox" data-correct-checkbox data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${selectedCorrectIndexes.includes(answerIndex) ? "checked" : ""} />`
-                : `<input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${selectedCorrect === answerIndex ? "checked" : ""} />`}
-              Corretta
-            </label>
-          </div>
-        `).join("")}
-      </div>
-    </article>
-  `;
 }
 
 function imageSuggestionState(questionIndex) {
@@ -926,6 +1003,7 @@ function renderScreenLobby(room) {
 
 function renderScreenQuestion(room) {
   const question = room.question;
+  if (normalizeQuestionType(question.type) === "slide") return renderScreenSlide(room);
   return `
     <article class="question-card screen-question">
       <div class="question-main">
@@ -942,6 +1020,20 @@ function renderScreenQuestion(room) {
       <div class="answers-grid screen-answers">
         ${question.answers.map(renderAnswerDisplay).join("")}
       </div>
+    </article>
+  `;
+}
+
+function renderScreenSlide(room) {
+  const question = room.question;
+  return `
+    <article class="question-card screen-question slide-card">
+      <div class="question-main slide-main">
+        <p class="screen-kicker">Slide ${room.currentIndex + 1}/${room.totalQuestions}</p>
+        <h1 class="screen-title">${escapeHtml(question.text)}</h1>
+        ${question.subtitle ? `<p class="screen-subtitle">${escapeHtml(question.subtitle)}</p>` : ""}
+      </div>
+      ${renderQuestionMedia(question)}
     </article>
   `;
 }
@@ -1071,6 +1163,7 @@ function renderSubmitMultiple(question) {
 
 function renderHostQuestion(room) {
   const question = room.question;
+  if (normalizeQuestionType(question.type) === "slide") return renderHostSlide(room);
   return `
     <article class="question-card">
       <div class="question-main">
@@ -1090,6 +1183,23 @@ function renderHostQuestion(room) {
     </article>
     <div class="toolbar">
       <button class="btn gold" data-action="reveal-question">Mostra risposta</button>
+    </div>
+  `;
+}
+
+function renderHostSlide(room) {
+  const question = room.question;
+  return `
+    <article class="question-card slide-card">
+      <div class="question-main slide-main">
+        <p class="screen-kicker">Slide ${room.currentIndex + 1}/${room.totalQuestions}</p>
+        <h1 class="question-title">${escapeHtml(question.text)}</h1>
+        ${question.subtitle ? `<p class="screen-subtitle">${escapeHtml(question.subtitle)}</p>` : ""}
+      </div>
+      ${renderQuestionMedia(question)}
+    </article>
+    <div class="toolbar">
+      <button class="btn primary" data-action="next-question">${room.currentIndex + 1 >= room.totalQuestions ? "Classifica finale" : "Prossima"}</button>
     </div>
   `;
 }
@@ -1162,6 +1272,7 @@ function renderPlayerWaiting(room) {
 
 function renderPlayerQuestion(room) {
   const question = room.question;
+  if (normalizeQuestionType(question.type) === "slide") return renderPlayerSlide(room);
   return `
     <article class="question-card">
       <div class="question-main">
@@ -1180,6 +1291,20 @@ function renderPlayerQuestion(room) {
       </div>
     </article>
     ${question.type === "multiple_select" && !question.answered ? renderSubmitMultiple(question) : ""}
+  `;
+}
+
+function renderPlayerSlide(room) {
+  const question = room.question;
+  return `
+    <article class="question-card slide-card">
+      <div class="question-main slide-main">
+        <p class="screen-kicker">Slide ${room.currentIndex + 1}/${room.totalQuestions}</p>
+        <h1 class="question-title">${escapeHtml(question.text)}</h1>
+        ${question.subtitle ? `<p class="screen-subtitle">${escapeHtml(question.subtitle)}</p>` : ""}
+      </div>
+      ${renderQuestionMedia(question)}
+    </article>
   `;
 }
 
@@ -1464,6 +1589,11 @@ function bindEvents() {
       local.quiz.questions[Number(element.dataset.questionIndex)].text = element.value;
     });
   });
+  document.querySelectorAll("[data-question-subtitle]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.quiz.questions[Number(element.dataset.questionIndex)].subtitle = element.value;
+    });
+  });
   document.querySelectorAll("[data-question-media]").forEach((element) => {
     element.addEventListener("input", () => {
       const question = local.quiz.questions[Number(element.dataset.questionIndex)];
@@ -1514,6 +1644,13 @@ function bindEvents() {
         question.answerImages = [];
         question.correctIndex = Math.min(Number(question.correctIndex) || 0, 1);
         question.correctIndexes = [question.correctIndex];
+      } else if (question.type === "slide") {
+        question.answers = [];
+        question.answerImages = [];
+        question.correctIndex = 0;
+        question.correctIndexes = [];
+        question.points = 0;
+        question.videoUrl = "";
       } else if (question.type === "multiple_select") {
         question.answers = question.answers && question.answers.length >= 2 ? question.answers : ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
         question.answerImages = answerImagesForQuestion(question, editableAnswers(question).length);
@@ -1603,8 +1740,11 @@ function handleAction(event) {
   const target = event.currentTarget;
 
   if (action === "add-question") addQuestion();
+  if (action === "add-slide") addSlide();
   if (action === "remove-question") removeQuestion(Number(target.dataset.questionIndex));
   if (action === "select-builder-question") selectBuilderQuestion(Number(target.dataset.questionIndex));
+  if (action === "edit-builder-question") editBuilderQuestion(Number(target.dataset.questionIndex));
+  if (action === "move-question") moveQuestion(Number(target.dataset.questionIndex), Number(target.dataset.direction));
   if (action === "toggle-quiz-settings") {
     local.quizSettingsOpen = !local.quizSettingsOpen;
     render();
@@ -1621,6 +1761,9 @@ function handleAction(event) {
   if (action === "select-suggested-image") selectSuggestedImage(Number(target.dataset.questionIndex), Number(target.dataset.imageIndex));
   if (action === "clear-question-image") clearQuestionImage(Number(target.dataset.questionIndex));
   if (action === "clear-answer-image") clearAnswerImage(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
+  if (action === "open-question-image-dialog") openQuestionImageDialog(Number(target.dataset.questionIndex));
+  if (action === "open-answer-image-dialog") openAnswerImageDialog(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
+  if (action === "close-media-dialog") closeMediaDialog();
   if (action === "toggle-import") {
     local.importOpen = !local.importOpen;
     local.importText = local.importText || JSON.stringify(local.quiz, null, 2);
@@ -1682,6 +1825,25 @@ function addQuestion() {
     timeLimit: 20
   });
   local.builderQuestionIndex = local.quiz.questions.length - 1;
+  local.builderEditing = true;
+  render();
+}
+
+function addSlide() {
+  local.quiz.questions.push({
+    type: "slide",
+    text: "Nuova slide",
+    subtitle: "",
+    imageUrl: "",
+    answers: [],
+    answerImages: [],
+    correctIndex: 0,
+    correctIndexes: [],
+    points: 0,
+    timeLimit: 20
+  });
+  local.builderQuestionIndex = local.quiz.questions.length - 1;
+  local.builderEditing = true;
   render();
 }
 
@@ -1691,13 +1853,80 @@ function removeQuestion(index) {
   local.imageSuggestions = {};
   local.imageGenerating = {};
   local.builderQuestionIndex = Math.min(Math.max(0, index - 1), local.quiz.questions.length - 1);
+  local.builderEditing = false;
   render();
 }
 
 function selectBuilderQuestion(index) {
   if (index < 0 || index >= local.quiz.questions.length) return;
   local.builderQuestionIndex = index;
+  local.builderEditing = false;
   render();
+}
+
+function editBuilderQuestion(index) {
+  if (index < 0 || index >= local.quiz.questions.length) return;
+  local.builderQuestionIndex = index;
+  local.builderEditing = true;
+  render();
+}
+
+function navigateBuilderQuestion(direction) {
+  const count = local.quiz.questions.length;
+  if (!count) return;
+  const nextIndex = Math.min(Math.max(selectedBuilderQuestionIndex() + direction, 0), count - 1);
+  if (nextIndex === local.builderQuestionIndex && !local.builderEditing) return;
+  local.builderQuestionIndex = nextIndex;
+  local.builderEditing = false;
+  render();
+}
+
+function moveQuestion(index, direction) {
+  const questions = local.quiz.questions;
+  const targetIndex = index + (direction < 0 ? -1 : 1);
+  if (index < 0 || index >= questions.length || targetIndex < 0 || targetIndex >= questions.length) return;
+  const selected = selectedBuilderQuestionIndex();
+  const [question] = questions.splice(index, 1);
+  questions.splice(targetIndex, 0, question);
+  if (selected === index) {
+    local.builderQuestionIndex = targetIndex;
+  } else if (selected === targetIndex) {
+    local.builderQuestionIndex = index;
+  }
+  local.imageSuggestions = {};
+  local.imageGenerating = {};
+  render();
+}
+
+function handleBuilderKeyboard(event) {
+  if (!isHostBuilderVisible() || isTypingTarget(event.target)) return;
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    event.preventDefault();
+    const direction = event.key === "ArrowUp" ? -1 : 1;
+    if (event.shiftKey) moveQuestion(selectedBuilderQuestionIndex(), direction);
+    else navigateBuilderQuestion(direction);
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    editBuilderQuestion(selectedBuilderQuestionIndex());
+  }
+  if (event.key === "Escape" && local.builderEditing) {
+    event.preventDefault();
+    local.builderEditing = false;
+    render();
+  }
+}
+
+function isHostBuilderVisible() {
+  if (local.mode !== "host") return false;
+  if (local.room && local.room.role !== "host") return false;
+  if (local.mediaDialog || local.quizSettingsOpen || local.importOpen || local.archiveOpen) return false;
+  return Boolean(local.quiz && Array.isArray(local.quiz.questions));
+}
+
+function isTypingTarget(target) {
+  const tag = target && target.tagName ? target.tagName.toLowerCase() : "";
+  return tag === "input" || tag === "textarea" || tag === "select" || Boolean(target && target.isContentEditable);
 }
 
 function addAnswer(questionIndex) {
@@ -1910,6 +2139,24 @@ function clearAnswerImage(questionIndex, answerIndex) {
   const question = local.quiz.questions[questionIndex];
   if (!question || normalizeQuestionType(question.type) === "true_false") return;
   setAnswerImage(question, answerIndex, "");
+  render();
+}
+
+function openQuestionImageDialog(questionIndex) {
+  if (!local.quiz.questions[questionIndex]) return;
+  local.mediaDialog = { target: "question", questionIndex };
+  render();
+}
+
+function openAnswerImageDialog(questionIndex, answerIndex) {
+  const question = local.quiz.questions[questionIndex];
+  if (!question || normalizeQuestionType(question.type) === "true_false") return;
+  local.mediaDialog = { target: "answer", questionIndex, answerIndex };
+  render();
+}
+
+function closeMediaDialog() {
+  local.mediaDialog = null;
   render();
 }
 
@@ -2650,30 +2897,33 @@ function cleanQuiz(input) {
     teamMode: Boolean(source.teamMode),
     questions: questions.map((question, index) => {
       const type = normalizeQuestionType(question.type);
-      const answers = (type === "true_false" ? ["Vero", "Falso"] : paddedAnswers(question.answers))
+      const answers = (type === "slide" ? [] : type === "true_false" ? ["Vero", "Falso"] : paddedAnswers(question.answers))
         .map((answer) => String(answer || "").trim())
         .filter(Boolean)
         .slice(0, 6);
-      const correctIndexes = normalizeCorrectIndexes(question, answers, type);
+      const correctIndexes = type === "slide" ? [] : normalizeCorrectIndexes(question, answers, type);
       const answerImages = type === "true_false" ? [] : normalizeAnswerImages(question.answerImages, answers.length);
       return {
         type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
+        subtitle: String(question.subtitle || "").trim().slice(0, 220),
         imageUrl: normalizeImageUrl(question.imageUrl),
         imageAlt: String(question.imageAlt || "").trim().slice(0, 160),
         imageCredit: String(question.imageCredit || "").trim().slice(0, 80),
         imageCreditUrl: normalizeMediaUrl(question.imageCreditUrl),
         imageProvider: String(question.imageProvider || "").trim().slice(0, 32),
         imagePageUrl: normalizeMediaUrl(question.imagePageUrl),
-        videoUrl: normalizeMediaUrl(question.videoUrl),
+        videoUrl: type === "slide" ? "" : normalizeMediaUrl(question.videoUrl),
         answers,
         answerImages,
         correctIndex: correctIndexes[0] || 0,
         correctIndexes,
-        points: normalizeQuestionPoints(question.points),
+        points: type === "slide" ? 0 : normalizeQuestionPoints(question.points),
         timeLimit: Math.min(90, Math.max(5, Math.round(Number(question.timeLimit) || 20)))
       };
-    }).filter((question) => question.text && question.answers.length >= 2)
+    }).filter((question) => question.type === "slide"
+      ? Boolean(question.text || question.subtitle || question.imageUrl)
+      : question.text && question.answers.length >= 2)
   };
 }
 
@@ -2689,6 +2939,7 @@ function paddedAnswers(answers) {
 }
 
 function editableAnswers(question) {
+  if (normalizeQuestionType(question.type) === "slide") return [];
   if (normalizeQuestionType(question.type) === "true_false") return ["Vero", "Falso"];
   return paddedAnswers(question.answers);
 }
@@ -2710,6 +2961,7 @@ function normalizeAnswerImages(images, count) {
 }
 
 function normalizeCorrectIndexes(question, answers, type) {
+  if (type === "slide") return [];
   const source = Array.isArray(question.correctIndexes) && question.correctIndexes.length
     ? question.correctIndexes
     : [question.correctIndex];
@@ -2735,6 +2987,7 @@ function normalizeQuestionPoints(value) {
 }
 
 function selectionCount(question) {
+  if (normalizeQuestionType(question.type) === "slide") return 0;
   if (Number.isInteger(question.selectionCount) && question.selectionCount > 0) return question.selectionCount;
   const answers = Array.isArray(question.answers) ? question.answers : [];
   return normalizeQuestionType(question.type) === "multiple_select"
@@ -2777,6 +3030,7 @@ function normalizeQuestionType(type) {
   if (key === "vero_falso" || key === "verofalso" || key === "true_false" || key === "truefalse") return "true_false";
   if (key === "veloce" || key === "risposta_veloce" || key === "speed" || key === "fast") return "speed";
   if (key === "risposte_multiple" || key === "risposta_multipla" || key === "multiple_select" || key === "multi_select" || key === "multiple_correct") return "multiple_select";
+  if (key === "slide" || key === "diapositiva" || key === "titolo") return "slide";
   if (key === "multipla" || key === "scelta_multipla") return "multiple";
   return "multiple";
 }

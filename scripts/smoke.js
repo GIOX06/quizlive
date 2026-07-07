@@ -27,6 +27,14 @@ const quiz = {
       timeLimit: 8
     },
     {
+      type: "slide",
+      text: "New topic",
+      subtitle: "A transition slide for the room",
+      imageUrl: "",
+      answers: [],
+      timeLimit: 8
+    },
+    {
       type: "multiple_select",
       text: "Pick the live parts",
       answers: ["Host", "Phone", "Wallpaper", "Public screen"],
@@ -84,7 +92,8 @@ async function main() {
     quiz.questions[0].imageProvider = "Pexels";
     quiz.questions[0].imagePageUrl = "https://www.pexels.com/photo/smoke-test-123/";
     quiz.questions[0].answerImages = [uploadedMedia.url, "", "", ""];
-    quiz.questions[1].answerImages = [uploadedMedia.url, "", "", uploadedMedia.url];
+    quiz.questions[1].imageUrl = uploadedMedia.url;
+    quiz.questions[2].answerImages = [uploadedMedia.url, "", "", uploadedMedia.url];
 
     const imageSearch = await postJsonRaw("/api/images/search", {
       quiz: { subject: "Geografia" },
@@ -151,8 +160,11 @@ async function main() {
     assert.equal(importedQuiz.quiz.questions[0].imageUrl, uploadedMedia.url);
     assert.equal(importedQuiz.quiz.questions[0].imageCredit, "Smoke Photographer");
     assert.equal(importedQuiz.quiz.questions[0].imageProvider, "Pexels");
-    assert.equal(importedQuiz.quiz.questions[1].type, "multiple_select");
-    assert.deepEqual(importedQuiz.quiz.questions[1].correctIndexes, [0, 1, 3]);
+    assert.equal(importedQuiz.quiz.questions[1].type, "slide");
+    assert.equal(importedQuiz.quiz.questions[1].subtitle, "A transition slide for the room");
+    assert.equal(importedQuiz.quiz.questions[1].answers.length, 0);
+    assert.equal(importedQuiz.quiz.questions[2].type, "multiple_select");
+    assert.deepEqual(importedQuiz.quiz.questions[2].correctIndexes, [0, 1, 3]);
 
     const templateXlsx = await getBinary("/api/quiz-template.xlsx");
     assert.ok(templateXlsx.length > 1000);
@@ -275,6 +287,25 @@ async function main() {
       state.status === "reveal" &&
       state.question &&
       state.question.answers.some((answer) => answer.correct === true && answer.count === 1)
+    );
+
+    const nextSlide = await emitAck(host, "host:next", {});
+    assert.equal(nextSlide.ok, true);
+
+    await waitForState(player, (state) =>
+      state.role === "player" &&
+      state.status === "question" &&
+      state.question &&
+      state.question.type === "slide" &&
+      state.question.subtitle === "A transition slide for the room" &&
+      state.question.answers.length === 0
+    );
+    await waitForState(screen, (state) =>
+      state.role === "screen" &&
+      state.status === "question" &&
+      state.question &&
+      state.question.type === "slide" &&
+      state.question.answers.length === 0
     );
 
     const nextQuestion = await emitAck(host, "host:next", {});

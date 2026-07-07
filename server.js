@@ -42,7 +42,8 @@ const QUESTION_TYPE_LABELS = {
   multiple: "Multipla",
   true_false: "Vero/Falso",
   speed: "Veloce",
-  multiple_select: "Risposte multiple"
+  multiple_select: "Risposte multiple",
+  slide: "Slide"
 };
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const QUESTION_TYPE_ALIASES = {
@@ -63,7 +64,10 @@ const QUESTION_TYPE_ALIASES = {
   veloce: "speed",
   risposta_veloce: "speed",
   speed: "speed",
-  fast: "speed"
+  fast: "speed",
+  slide: "slide",
+  diapositiva: "slide",
+  titolo: "slide"
 };
 const rooms = new Map();
 const hostSessions = new Map();
@@ -712,12 +716,13 @@ function createRoom(quiz, hostSocketId) {
 function startQuestion(room, index) {
   clearRoomTimer(room);
   removeInactivePlayers(room, "Invito scaduto");
+  const question = room.quiz.questions[index];
   room.status = "question";
   room.currentIndex = index;
   room.questionStartedAt = Date.now();
-  room.questionEndsAt = room.questionStartedAt + room.quiz.questions[index].timeLimit * 1000;
+  room.questionEndsAt = question.type === "slide" ? null : room.questionStartedAt + question.timeLimit * 1000;
   room.answers.set(index, new Map());
-  room.timer = setTimeout(() => revealQuestion(room), room.quiz.questions[index].timeLimit * 1000 + 250);
+  room.timer = question.type === "slide" ? null : setTimeout(() => revealQuestion(room), question.timeLimit * 1000 + 250);
   emitRoom(room);
 }
 
@@ -923,6 +928,9 @@ function submitAnswer(room, player, payload) {
   if (!question) {
     return { ok: false, error: "Risposta non valida" };
   }
+  if (question.type === "slide") {
+    return { ok: false, error: "Questa slide non richiede risposta" };
+  }
 
   const answerIndexes = selectedAnswerIndexes(payload, question);
   const requiredSelections = selectionCount(question);
@@ -1012,6 +1020,7 @@ function serializeRoom(room, socket) {
           type: question.type,
           typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
           text: question.text,
+          subtitle: question.subtitle,
           imageUrl: question.imageUrl,
           imageAlt: question.imageAlt,
           imageCredit: question.imageCredit,
@@ -1123,6 +1132,7 @@ function questionSummaries(room) {
       type: question.type,
       typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
       text: question.text,
+      subtitle: question.subtitle,
       stats: questionStats(question, answerMap, playerCount),
       correctAnswers: correctIndexes(question).map((answerIndex) => ({
         index: answerIndex,
@@ -1156,6 +1166,7 @@ function uniqueAnswerIndexes(values) {
 }
 
 function correctIndexes(question) {
+  if (question && question.type === "slide") return [];
   if (Array.isArray(question.correctIndexes) && question.correctIndexes.length) {
     return uniqueAnswerIndexes(question.correctIndexes);
   }
@@ -1163,6 +1174,7 @@ function correctIndexes(question) {
 }
 
 function selectionCount(question) {
+  if (question.type === "slide") return 0;
   return question.type === "multiple_select" ? correctIndexes(question).length : 1;
 }
 
@@ -1189,6 +1201,9 @@ function scoreAnswer(question, answerIndexes) {
 
 function questionScoreProfile(questionOrType) {
   const type = typeof questionOrType === "string" ? questionOrType : questionOrType && questionOrType.type;
+  if (type === "slide") {
+    return scoreProfileWithCustomBase({ base: 0, speedBonus: 0, streakStep: 0, maxStreakBonus: 0 }, questionOrType);
+  }
   if (type === "speed") {
     return scoreProfileWithCustomBase({ base: 250, speedBonus: 1000, streakStep: 30, maxStreakBonus: 150 }, questionOrType);
   }
@@ -1222,6 +1237,7 @@ function resultsToJson(room) {
     questions: room.quiz.questions.map((question, questionIndex) => ({
       type: question.type,
       text: question.text,
+      subtitle: question.subtitle,
       imageUrl: question.imageUrl,
       imageAlt: question.imageAlt,
       imageCredit: question.imageCredit,
@@ -1435,6 +1451,7 @@ function resultFromRoom(room) {
       return {
         type: question.type,
         text: question.text,
+        subtitle: question.subtitle,
         imageUrl: question.imageUrl,
         imageAlt: question.imageAlt,
         imageCredit: question.imageCredit,
@@ -1443,6 +1460,7 @@ function resultFromRoom(room) {
         imagePageUrl: question.imagePageUrl,
         videoUrl: question.videoUrl,
         answers: question.answers,
+        answerImages: normalizedAnswerImages(question, question.answers.length),
         correctIndex: question.correctIndex,
         correctIndexes: correctIndexes(question),
         stats: questionStats(question, answerMap, board.length),
@@ -1618,6 +1636,7 @@ function appendSheet(workbook, name, rows, columns) {
 }
 
 function resultCorrectIndexes(question) {
+  if (question && question.type === "slide") return [];
   if (Array.isArray(question.correctIndexes) && question.correctIndexes.length) {
     return uniqueAnswerIndexes(question.correctIndexes);
   }
@@ -1686,7 +1705,7 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Tag", normalizedQuiz.tags.join(", ")],
     ["Team mode", normalizedQuiz.teamMode ? "si" : "no"],
     [],
-    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Punti", "Corretta", "Immagine URL", "Alt immagine", "Credito immagine", "Link fotografo", "Link foto", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F", "Immagine risposta A", "Immagine risposta B", "Immagine risposta C", "Immagine risposta D", "Immagine risposta E", "Immagine risposta F"]
+    ["Ordine", "Tipo", "Domanda", "Sottotitolo", "Tempo secondi", "Punti", "Corretta", "Immagine URL", "Alt immagine", "Credito immagine", "Link fotografo", "Link foto", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F", "Immagine risposta A", "Immagine risposta B", "Immagine risposta C", "Immagine risposta D", "Immagine risposta E", "Immagine risposta F"]
   ];
 
   normalizedQuiz.questions.forEach((question, index) => {
@@ -1695,6 +1714,7 @@ function quizToWorkbook(quiz, isTemplate) {
       index + 1,
       questionTypeForWorkbook(question.type),
       question.text,
+      question.subtitle || "",
       question.timeLimit,
       question.points || "",
       correctIndexes(question).map((answerIndex) => answerLetters[answerIndex] || "A").join(","),
@@ -1715,6 +1735,7 @@ function quizToWorkbook(quiz, isTemplate) {
     { wch: 8 },
     { wch: 16 },
     { wch: 44 },
+    { wch: 34 },
     { wch: 14 },
     { wch: 10 },
     { wch: 10 },
@@ -1745,7 +1766,8 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Descrizione", "Scrivi una breve descrizione nella cella B3, se serve."],
     ["Materia/Livello/Lingua/Tag", "Usa questi campi per ordinare la libreria quiz."],
     ["Team mode", "Scrivi si per dividere automaticamente i giocatori in squadre."],
-    ["Tipo", "Usa multipla, vero_falso, veloce oppure risposte_multiple."],
+    ["Tipo", "Usa multipla, vero_falso, veloce, risposte_multiple oppure slide."],
+    ["Slide", "Usa tipo slide per creare un passaggio con titolo, sottotitolo e foto, senza risposte."],
     ["Punti", "Lascia vuoto per standard oppure usa 250, 500, 750, 1000 o 1500."],
     ["Corretta", "Scrivi A, B, C, D, E o F. Per risposte_multiple usa piu lettere, ad esempio A,C."],
     ["Libreria", "Cartella organizza l'archivio. Visibilita accetta privata o pubblica."],
@@ -1782,6 +1804,7 @@ function workbookToQuiz(workbook) {
   const indexFor = (...names) => headers.findIndex((header) => names.includes(header));
   const typeIndex = indexFor("tipo");
   const textIndex = indexFor("domanda", "testo_domanda");
+  const subtitleIndex = indexFor("sottotitolo", "subtitle");
   const timeIndex = indexFor("tempo_secondi", "tempo", "secondi");
   const pointsIndex = indexFor("punti", "points");
   const correctIndex = indexFor("corretta", "risposta_corretta");
@@ -1817,6 +1840,7 @@ function workbookToQuiz(workbook) {
     return {
       type,
       text,
+      subtitle: subtitleIndex >= 0 ? row[subtitleIndex] || "" : "",
       imageUrl: row[imageIndex] || "",
       imageAlt: row[imageAltIndex] || "",
       imageCredit: row[imageCreditIndex] || "",
@@ -1826,7 +1850,7 @@ function workbookToQuiz(workbook) {
       videoUrl: row[videoIndex] || "",
       answers: normalizedAnswers,
       answerImages,
-      correctIndexes: parseCorrectIndexes(row[correctIndex], normalizedAnswers, type),
+      correctIndexes: type === "slide" ? [] : parseCorrectIndexes(row[correctIndex], normalizedAnswers, type),
       points: pointsIndex >= 0 ? Number(row[pointsIndex]) || 0 : 0,
       timeLimit: Number(row[timeIndex]) || 20
     };
@@ -1847,6 +1871,7 @@ function workbookToQuiz(workbook) {
 }
 
 function questionTypeForWorkbook(type) {
+  if (type === "slide") return "slide";
   if (type === "true_false") return "vero_falso";
   if (type === "speed") return "veloce";
   if (type === "multiple_select") return "risposte_multiple";
@@ -2363,8 +2388,9 @@ function normalizeQuiz(input) {
 function normalizeQuestion(item, index) {
   const type = normalizeQuestionType(item && item.type);
   const text = String(item && item.text ? item.text : `Domanda ${index + 1}`).trim().slice(0, 240);
+  const subtitle = normalizeShortText(item && item.subtitle, 220);
   const answers = Array.isArray(item && item.answers) ? item.answers : [];
-  let normalizedAnswers = answers
+  let normalizedAnswers = type === "slide" ? [] : answers
     .map((answer) => String(answer || "").trim().slice(0, 160))
     .filter(Boolean)
     .slice(0, 6);
@@ -2373,28 +2399,29 @@ function normalizeQuestion(item, index) {
     normalizedAnswers = ["Vero", "Falso"];
   }
 
-  if (normalizedAnswers.length < 2) {
+  if (type !== "slide" && normalizedAnswers.length < 2) {
     throw new Error(`La domanda ${index + 1} deve avere almeno due risposte`);
   }
 
-  const normalizedCorrectIndexes = normalizeCorrectIndexes(item, normalizedAnswers, type);
+  const normalizedCorrectIndexes = type === "slide" ? [] : normalizeCorrectIndexes(item, normalizedAnswers, type);
   const correctIndex = normalizedCorrectIndexes[0] || 0;
   const rawTime = Number(item && item.timeLimit);
   const timeLimit = Number.isFinite(rawTime) ? Math.min(90, Math.max(5, Math.round(rawTime))) : 20;
-  const points = normalizeQuestionPoints(item && item.points);
+  const points = type === "slide" ? 0 : normalizeQuestionPoints(item && item.points);
 
   return {
     type,
     text,
+    subtitle,
     imageUrl: normalizeImageUrl(item && item.imageUrl),
     imageAlt: normalizeShortText(item && item.imageAlt, 160),
     imageCredit: normalizeShortText(item && item.imageCredit, 80),
     imageCreditUrl: normalizeMediaUrl(item && item.imageCreditUrl),
     imageProvider: normalizeShortText(item && item.imageProvider, 32),
     imagePageUrl: normalizeMediaUrl(item && item.imagePageUrl),
-    videoUrl: normalizeMediaUrl(item && item.videoUrl),
+    videoUrl: type === "slide" ? "" : normalizeMediaUrl(item && item.videoUrl),
     answers: normalizedAnswers,
-    answerImages: type === "true_false" ? [] : normalizedAnswerImages(item, normalizedAnswers.length),
+    answerImages: type === "true_false" || type === "slide" ? [] : normalizedAnswerImages(item, normalizedAnswers.length),
     correctIndex,
     correctIndexes: normalizedCorrectIndexes,
     points,
@@ -2707,6 +2734,7 @@ function normalizeMediaUrl(value) {
 }
 
 function normalizeCorrectIndexes(item, answers, type) {
+  if (type === "slide") return [];
   const source = Array.isArray(item && item.correctIndexes) && item.correctIndexes.length
     ? item.correctIndexes
     : [item && item.correctIndex];
