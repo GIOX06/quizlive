@@ -337,6 +337,44 @@ async function main() {
       state.question.answers.some((answer) => answer.correct === true && answer.count === 1)
     );
 
+    const wagerOfferEvent = waitForSocketEvent(player, "live:event");
+    const wagerOffer = await emitAck(host, "host:wager-offer", {
+      playerId: rejoined.playerId,
+      stake: 100
+    });
+    assert.equal(wagerOffer.ok, true);
+    assert.equal(wagerOffer.wager.stake, 100);
+    assert.equal(wagerOffer.wager.questionNumber, 3);
+    const receivedWagerOffer = await wagerOfferEvent;
+    assert.equal(receivedWagerOffer.title, "Scommessa live");
+
+    const playerWagerState = await waitForState(player, (state) =>
+      state.wagerOffer &&
+      state.wagerOffer.id === wagerOffer.wager.id &&
+      state.wagerOffer.eligibleTargets.some((item) => item.nickname === "Smoke Decliner")
+    );
+    const chosenTarget = playerWagerState.wagerOffer.eligibleTargets.find((item) => item.nickname === "Smoke Decliner");
+    assert.ok(chosenTarget);
+
+    const wagerAcceptedEvent = waitForSocketEvent(screen, "live:event");
+    const acceptedWager = await emitAck(player, "player:wager-response", {
+      wagerId: wagerOffer.wager.id,
+      accept: true,
+      mode: "chosen",
+      targetPlayerId: chosenTarget.id
+    });
+    assert.equal(acceptedWager.ok, true);
+    assert.equal(acceptedWager.accepted, true);
+    assert.equal(acceptedWager.wager.multiplier, 2);
+    const receivedWagerAccepted = await wagerAcceptedEvent;
+    assert.equal(receivedWagerAccepted.title, "Scommessa accettata");
+
+    await waitForState(host, (state) =>
+      state.wagers &&
+      state.wagers.active &&
+      state.wagers.active.some((item) => item.bettorNickname === "Smoke Player" && item.targetNickname === "Smoke Decliner")
+    );
+
     const nextSlide = await emitAck(host, "host:next", {});
     assert.equal(nextSlide.ok, true);
 
@@ -375,11 +413,22 @@ async function main() {
     assert.equal(multiAnswered.ok, true);
     assert.equal(multiAnswered.correct, true);
 
+    const wagerResultEvent = waitForSocketEvent(screen, "live:event");
     const wrongMultiAnswered = await emitAck(decliningPlayer, "player:answer", { answerIndexes: [0, 2, 3] });
     assert.equal(wrongMultiAnswered.ok, true);
     assert.equal(wrongMultiAnswered.correct, false);
     assert.equal(wrongMultiAnswered.partial, true);
     assert.ok(wrongMultiAnswered.points > 0);
+    const receivedWagerResult = await wagerResultEvent;
+    assert.equal(receivedWagerResult.title, "Scommessa persa");
+
+    await waitForState(host, (state) =>
+      state.wagers &&
+      state.wagers.active &&
+      state.wagers.active.length === 0 &&
+      state.wagers.history &&
+      state.wagers.history.some((item) => item.bettorNickname === "Smoke Player" && item.delta === -100)
+    );
 
     const multiReveal = await emitAck(host, "host:reveal", {});
     assert.equal(multiReveal.ok, true);

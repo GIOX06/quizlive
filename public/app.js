@@ -50,6 +50,9 @@ let local = {
   playerAccessMode: "same-origin",
   liveEventMessage: "",
   liveEventTarget: "all",
+  liveWagerPlayerId: "",
+  liveWagerStake: 100,
+  wagerTargetId: "",
   liveEvent: null
 };
 let reconnectingForHostAuth = false;
@@ -421,7 +424,7 @@ function renderBuilderLiveEventsPreview() {
         <button class="btn blue small" disabled>Monitor</button>
       </div>
       <div class="live-preview-note">
-        Audio, vibrazione, messaggi pubblici e messaggi segreti si attivano quando esiste una stanza con telefoni o monitor collegati.
+        Audio, vibrazione, messaggi pubblici, messaggi segreti e Scommessa live si attivano quando esiste una stanza con telefoni o monitor collegati.
       </div>
       <button class="btn ghost small" data-action="create-room">Crea stanza per attivarli</button>
     </section>
@@ -1302,6 +1305,7 @@ function renderPlayerGame(room) {
   return `
     <section class="game-layout">
       <div class="stage">
+        ${renderPlayerWagerOffer(room)}
         ${room.status === "lobby" ? renderPlayerWaiting(room) : ""}
         ${room.status === "question" && question ? renderPlayerQuestion(room) : ""}
         ${room.status === "reveal" && question ? renderReveal(room, false) : ""}
@@ -1346,6 +1350,37 @@ function renderPlayerExcluded(room) {
         </div>
         <button class="btn teal" data-action="leave-room">Torna all'ingresso</button>
         <p class="subtle">Codice ${escapeHtml(room.code)}</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderPlayerWagerOffer(room) {
+  const offer = room.wagerOffer;
+  if (!offer) return "";
+  const targets = Array.isArray(offer.eligibleTargets) ? offer.eligibleTargets : [];
+  const selectedTarget = local.wagerTargetId && targets.some((target) => target.id === local.wagerTargetId)
+    ? local.wagerTargetId
+    : targets[0] && targets[0].id;
+  if (selectedTarget && selectedTarget !== local.wagerTargetId) local.wagerTargetId = selectedTarget;
+  return `
+    <section class="panel live-wager-offer stack">
+      <div>
+        <p class="screen-kicker">Scommessa live</p>
+        <h2 class="section-title">Punti in gioco: ${offer.stake}</h2>
+        <p class="subtle">Scommetti sulla prossima risposta: bersaglio casuale x3, bersaglio scelto x2.</p>
+      </div>
+      <div class="live-wager-actions">
+        <button class="btn gold" data-action="accept-wager-random" data-wager-id="${escapeAttr(offer.id)}">Casuale x3</button>
+        <button class="btn ghost" data-action="decline-wager" data-wager-id="${escapeAttr(offer.id)}">Rifiuta</button>
+      </div>
+      <div class="live-target-row">
+        <select data-wager-target aria-label="Giocatore bersaglio">
+          ${targets.map((target) => `
+            <option value="${escapeAttr(target.id)}" ${target.id === selectedTarget ? "selected" : ""}>${escapeHtml(target.nickname)}</option>
+          `).join("")}
+        </select>
+        <button class="btn teal" data-action="accept-wager-chosen" data-wager-id="${escapeAttr(offer.id)}" ${targets.length ? "" : "disabled"}>Scelgo io x2</button>
       </div>
     </section>
   `;
@@ -1569,7 +1604,59 @@ function renderHostLiveEvents(room) {
         </select>
         <button class="btn primary" data-action="send-live-message">Invia</button>
       </div>
+      ${renderHostWagerPanel(room, players)}
     </section>
+  `;
+}
+
+function renderHostWagerPanel(room, players) {
+  const availablePlayers = players.filter((player) => Number(player.score || 0) > 0 && player.connected);
+  const selectedPlayer = availablePlayers.find((player) => player.id === local.liveWagerPlayerId) || availablePlayers[0] || null;
+  const selectedPlayerId = selectedPlayer ? selectedPlayer.id : "";
+  const maxStake = selectedPlayer ? Math.max(1, Number(selectedPlayer.score || 0)) : 1;
+  const stake = Math.min(maxStake, Math.max(1, Number(local.liveWagerStake) || 100));
+  return `
+    <div class="live-wager-panel stack">
+      <div>
+        <h4 class="mini-title">Scommessa live</h4>
+        <p class="subtle">Invita un giocatore a puntare sulla prossima risposta.</p>
+      </div>
+      <div class="live-target-row">
+        <select data-live-wager-player aria-label="Giocatore scommettitore" ${availablePlayers.length ? "" : "disabled"}>
+          ${availablePlayers.length
+            ? availablePlayers.map((player) => `
+              <option value="${escapeAttr(player.id)}" ${player.id === selectedPlayerId ? "selected" : ""}>${escapeHtml(player.nickname)} - ${player.score} pt</option>
+            `).join("")
+            : `<option value="">Nessun giocatore con punti</option>`}
+        </select>
+        <input data-live-wager-stake type="number" min="1" max="${maxStake}" value="${stake}" aria-label="Punti da scommettere" ${selectedPlayer ? "" : "disabled"} />
+      </div>
+      <button class="btn gold" data-action="send-wager-offer" ${selectedPlayer ? "" : "disabled"}>Invita scommessa</button>
+      ${renderHostWagerStatus(room)}
+    </div>
+  `;
+}
+
+function renderHostWagerStatus(room) {
+  const wagers = room.wagers || {};
+  const offers = Array.isArray(wagers.offers) ? wagers.offers : [];
+  const active = Array.isArray(wagers.active) ? wagers.active : [];
+  const history = Array.isArray(wagers.history) ? wagers.history : [];
+  const items = [
+    ...offers.map((item) => ({ label: "In attesa", text: `${item.bettorNickname} - ${item.stake} pt` })),
+    ...active.map((item) => ({ label: `x${item.multiplier}`, text: `${item.bettorNickname} su ${item.targetNickname} - ${item.stake} pt` })),
+    ...history.slice(0, 3).map((item) => ({ label: item.status === "won" ? "Vinta" : "Persa", text: `${item.bettorNickname} ${item.delta > 0 ? "+" : ""}${item.delta} pt` }))
+  ];
+  if (!items.length) return "";
+  return `
+    <div class="live-wager-list">
+      ${items.map((item) => `
+        <div class="live-wager-row">
+          <span class="status-pill compact">${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(item.text)}</span>
+        </div>
+      `).join("")}
+    </div>
   `;
 }
 
@@ -1718,6 +1805,21 @@ function bindEvents() {
   document.querySelectorAll("[data-live-event-target]").forEach((element) => {
     element.addEventListener("change", () => {
       local.liveEventTarget = element.value;
+    });
+  });
+  document.querySelectorAll("[data-live-wager-player]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.liveWagerPlayerId = element.value;
+    });
+  });
+  document.querySelectorAll("[data-live-wager-stake]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.liveWagerStake = Number(element.value) || 1;
+    });
+  });
+  document.querySelectorAll("[data-wager-target]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.wagerTargetId = element.value;
     });
   });
   document.querySelectorAll("[data-question-text]").forEach((element) => {
@@ -1941,6 +2043,10 @@ function handleAction(event) {
   if (action === "release-screens") releaseScreens();
   if (action === "send-live-effect") sendLiveEffect(target);
   if (action === "send-live-message") sendLiveMessage();
+  if (action === "send-wager-offer") sendWagerOffer();
+  if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
+  if (action === "accept-wager-chosen") respondWager(target.dataset.wagerId, true, "chosen");
+  if (action === "decline-wager") respondWager(target.dataset.wagerId, false, "chosen");
   if (action === "answer") answer(Number(target.dataset.answerIndex));
   if (action === "submit-multiple-answer") submitMultipleAnswer();
   if (action === "accept-rematch") respondRematch(true);
@@ -3185,6 +3291,47 @@ function sendLiveEvent(payload, onSuccess) {
     const delivered = Number(response.delivered) || 0;
     showToast(delivered ? `Evento inviato a ${delivered}` : "Nessun destinatario collegato");
     if (onSuccess) onSuccess(response);
+  });
+}
+
+function sendWagerOffer() {
+  const room = local.room;
+  const players = room && Array.isArray(room.players) ? room.players.filter((player) => Number(player.score || 0) > 0 && player.connected) : [];
+  const selectedPlayer = players.find((player) => player.id === local.liveWagerPlayerId) || players[0];
+  if (!selectedPlayer) {
+    showToast("Nessun giocatore con punti");
+    return;
+  }
+  const stake = Math.max(1, Math.floor(Number(local.liveWagerStake) || 1));
+  socket.emit("host:wager-offer", {
+    playerId: selectedPlayer.id,
+    stake
+  }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Scommessa non inviata");
+      return;
+    }
+    showToast(response.delivered ? "Scommessa inviata" : "Giocatore non raggiunto");
+  });
+}
+
+function respondWager(wagerId, accept, mode) {
+  const offer = local.room && local.room.wagerOffer;
+  const targetPlayerId = mode === "chosen"
+    ? local.wagerTargetId || (offer && offer.eligibleTargets && offer.eligibleTargets[0] && offer.eligibleTargets[0].id) || ""
+    : "";
+  socket.emit("player:wager-response", {
+    wagerId,
+    accept,
+    mode,
+    targetPlayerId
+  }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Scommessa non valida");
+      return;
+    }
+    local.wagerTargetId = "";
+    showToast(accept ? "Scommessa accettata" : "Scommessa rifiutata");
   });
 }
 

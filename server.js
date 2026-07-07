@@ -560,6 +560,23 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:wager-offer", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const offer = createWagerOffer(room, payload || {});
+      const delivered = await dispatchLiveEvent(room, wagerOfferLiveEvent(room, offer));
+      sendAck(ack, { ok: true, delivered, wager: serializeWagerOffer(offer, room) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("screen:watch", async (_payload, ack) => {
     try {
       await sendScreenToWaiting(socket);
@@ -676,6 +693,26 @@ io.on("connection", (socket) => {
     emitRoom(room);
   });
 
+  socket.on("player:wager-response", async (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+
+    try {
+      const result = acceptOrDeclineWager(room, player, payload || {});
+      sendAck(ack, { ok: true, ...result });
+      if (result.accepted && result.wager) {
+        await dispatchLiveEvent(room, wagerAcceptedLiveEvent(room, result.wager));
+      }
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("disconnect", () => {
     const code = socket.data.roomCode;
     if (!code) return;
@@ -723,6 +760,7 @@ function createRoom(quiz, hostSocketId) {
     questionEndsAt: null,
     players: new Map(),
     answers: new Map(),
+    wagers: createWagerState(),
     timer: null,
     resultId: null,
     createdAt: Date.now()
@@ -734,6 +772,7 @@ function createRoom(quiz, hostSocketId) {
 function startQuestion(room, index) {
   clearRoomTimer(room);
   removeInactivePlayers(room, "Invito scaduto");
+  expireWagerOffersForQuestion(room, index);
   const question = room.quiz.questions[index];
   room.status = "question";
   room.currentIndex = index;
@@ -747,6 +786,7 @@ function startQuestion(room, index) {
 function revealQuestion(room) {
   if (!room || room.status !== "question") return;
   clearRoomTimer(room);
+  resolveUnansweredWagersForQuestion(room, room.currentIndex);
   room.status = "reveal";
   room.questionEndsAt = null;
   emitRoom(room);
@@ -776,6 +816,7 @@ async function resetRoom(room) {
   room.questionEndsAt = null;
   room.resultId = null;
   room.answers.clear();
+  room.wagers = createWagerState();
 
   if (invitePreviousPlayers) {
     inviteRematchPlayers(room);
@@ -800,6 +841,7 @@ async function updateRoomQuiz(room, quiz) {
   room.questionEndsAt = null;
   room.resultId = null;
   room.answers.clear();
+  room.wagers = createWagerState();
 
   if (invitePreviousPlayers) {
     inviteRematchPlayers(room);
@@ -860,6 +902,7 @@ function reattachPlayerSocket(room, player, socket, nickname) {
       answerMap.set(socket.id, answerMap.get(previousId));
       answerMap.delete(previousId);
     }
+    updateWagerPlayerId(room, previousId, socket.id);
   }
 
   player.id = socket.id;
@@ -888,6 +931,7 @@ function removeInactivePlayers(room, message) {
 }
 
 function removePlayer(room, playerId, message) {
+  cancelWagersForPlayer(room, playerId);
   room.players.delete(playerId);
   const target = io.sockets.sockets.get(playerId);
   if (!target) return;
@@ -998,7 +1042,274 @@ function submitAnswer(room, player, payload) {
     streakBonus
   });
 
-  return { ok: true, correct: isCorrect, partial: isPartial, points };
+  const wagerResults = resolveWagersForAnswer(room, player, room.currentIndex, isCorrect);
+
+  return { ok: true, correct: isCorrect, partial: isPartial, points, wagerResults };
+}
+
+function createWagerState() {
+  return {
+    offers: new Map(),
+    active: new Map(),
+    history: []
+  };
+}
+
+function createWagerOffer(room, payload) {
+  const playerId = normalizeShortText(payload.playerId, 120);
+  const player = playerId ? room.players.get(playerId) : null;
+  if (!player || !player.active || !player.connected) {
+    throw new Error("Giocatore non disponibile per la scommessa");
+  }
+  if (Number(player.score || 0) <= 0) {
+    throw new Error("Il giocatore non ha punti da scommettere");
+  }
+  if (hasOpenWagerForPlayer(room, player.id)) {
+    throw new Error("Questo giocatore ha gia una scommessa aperta");
+  }
+
+  const questionIndex = nextAnswerQuestionIndex(room);
+  if (questionIndex < 0) {
+    throw new Error("Non ci sono altre domande su cui scommettere");
+  }
+  const targets = eligibleWagerTargets(room, player.id);
+  if (!targets.length) {
+    throw new Error("Serve almeno un altro giocatore collegato");
+  }
+
+  const stake = normalizeWagerStake(payload.stake, player.score);
+  const offer = {
+    id: createArchiveId("wager"),
+    bettorId: player.id,
+    bettorNickname: player.nickname,
+    stake,
+    questionIndex,
+    status: "offered",
+    createdAt: Date.now()
+  };
+  room.wagers.offers.set(offer.id, offer);
+  return offer;
+}
+
+function acceptOrDeclineWager(room, player, payload) {
+  const wagerId = normalizeShortText(payload.wagerId, 120);
+  const offer = wagerId ? room.wagers.offers.get(wagerId) : null;
+  if (!offer || offer.bettorId !== player.id) {
+    throw new Error("Scommessa non trovata");
+  }
+  if (!payload.accept) {
+    room.wagers.offers.delete(offer.id);
+    return { accepted: false };
+  }
+  if (!player.active) {
+    throw new Error("Non sei in questa partita");
+  }
+  if (room.currentIndex >= offer.questionIndex) {
+    room.wagers.offers.delete(offer.id);
+    throw new Error("Scommessa scaduta");
+  }
+  if (Number(player.score || 0) < offer.stake) {
+    room.wagers.offers.delete(offer.id);
+    throw new Error("Punti insufficienti per questa scommessa");
+  }
+
+  const targets = eligibleWagerTargets(room, player.id);
+  if (!targets.length) {
+    room.wagers.offers.delete(offer.id);
+    throw new Error("Nessun bersaglio disponibile");
+  }
+
+  const mode = payload.mode === "random" ? "random" : "chosen";
+  const target = mode === "random"
+    ? targets[Math.floor(Math.random() * targets.length)]
+    : targets.find((item) => item.id === normalizeShortText(payload.targetPlayerId, 120));
+  if (!target) {
+    throw new Error("Scegli un giocatore valido");
+  }
+
+  const wager = {
+    ...offer,
+    status: "active",
+    targetMode: mode,
+    targetPlayerId: target.id,
+    targetNickname: target.nickname,
+    multiplier: mode === "random" ? 3 : 2,
+    acceptedAt: Date.now()
+  };
+  room.wagers.offers.delete(offer.id);
+  room.wagers.active.set(wager.id, wager);
+  return { accepted: true, wager: serializeActiveWager(wager) };
+}
+
+function hasOpenWagerForPlayer(room, playerId) {
+  for (const offer of room.wagers.offers.values()) {
+    if (offer.bettorId === playerId) return true;
+  }
+  for (const wager of room.wagers.active.values()) {
+    if (wager.bettorId === playerId) return true;
+  }
+  return false;
+}
+
+function nextAnswerQuestionIndex(room) {
+  const start = Math.max(0, room.currentIndex + 1);
+  for (let index = start; index < room.quiz.questions.length; index += 1) {
+    if (room.quiz.questions[index] && room.quiz.questions[index].type !== "slide") return index;
+  }
+  return -1;
+}
+
+function normalizeWagerStake(value, maxScore) {
+  const max = Math.max(0, Math.floor(Number(maxScore) || 0));
+  const stake = Math.floor(Number(value) || 0);
+  if (!stake || stake < 1) {
+    throw new Error("Inserisci una puntata valida");
+  }
+  if (stake > max) {
+    throw new Error(`Puntata massima: ${max} punti`);
+  }
+  return stake;
+}
+
+function eligibleWagerTargets(room, bettorId) {
+  return activePlayers(room)
+    .filter((player) => player.id !== bettorId && player.connected)
+    .map((player) => ({
+      id: player.id,
+      nickname: player.nickname,
+      score: player.score
+    }))
+    .sort((a, b) => a.nickname.localeCompare(b.nickname));
+}
+
+function expireWagerOffersForQuestion(room, questionIndex) {
+  for (const offer of Array.from(room.wagers.offers.values())) {
+    if (offer.questionIndex > questionIndex) continue;
+    room.wagers.offers.delete(offer.id);
+    dispatchLiveEvent(room, {
+      id: createArchiveId("live"),
+      type: "message",
+      target: "player",
+      playerId: offer.bettorId,
+      private: true,
+      title: "Scommessa scaduta",
+      message: "La domanda e partita prima della tua risposta.",
+      tone: "alert",
+      vibrate: true,
+      vibrationPattern: defaultVibrationPattern("alert"),
+      createdAt: Date.now()
+    }).catch((error) => console.error("Could not announce expired wager:", error.message));
+  }
+}
+
+function resolveWagersForAnswer(room, targetPlayer, questionIndex, correct) {
+  const results = [];
+  for (const wager of Array.from(room.wagers.active.values())) {
+    if (wager.questionIndex !== questionIndex || wager.targetPlayerId !== targetPlayer.id) continue;
+    results.push(resolveWager(room, wager, Boolean(correct), "answered"));
+  }
+  return results.map(serializeWagerResult);
+}
+
+function resolveUnansweredWagersForQuestion(room, questionIndex) {
+  const answerMap = room.answers.get(questionIndex) || new Map();
+  for (const wager of Array.from(room.wagers.active.values())) {
+    if (wager.questionIndex !== questionIndex) continue;
+    if (answerMap.has(wager.targetPlayerId)) continue;
+    resolveWager(room, wager, false, "no_answer");
+  }
+}
+
+function resolveWager(room, wager, correct, reason) {
+  const bettor = room.players.get(wager.bettorId);
+  const delta = correct ? wager.stake * wager.multiplier : -wager.stake;
+  if (bettor && bettor.active) {
+    bettor.score = Math.max(0, Math.round(Number(bettor.score || 0) + delta));
+  }
+  room.wagers.active.delete(wager.id);
+  const result = {
+    ...wager,
+    status: correct ? "won" : "lost",
+    correct,
+    reason,
+    delta,
+    resolvedAt: Date.now()
+  };
+  room.wagers.history.push(result);
+  room.wagers.history = room.wagers.history.slice(-12);
+  dispatchLiveEvent(room, wagerResultLiveEvent(result))
+    .catch((error) => console.error("Could not announce wager result:", error.message));
+  return result;
+}
+
+function updateWagerPlayerId(room, previousId, nextId) {
+  for (const offer of room.wagers.offers.values()) {
+    if (offer.bettorId === previousId) offer.bettorId = nextId;
+  }
+  for (const wager of room.wagers.active.values()) {
+    if (wager.bettorId === previousId) wager.bettorId = nextId;
+    if (wager.targetPlayerId === previousId) wager.targetPlayerId = nextId;
+  }
+}
+
+function cancelWagersForPlayer(room, playerId) {
+  for (const offer of Array.from(room.wagers.offers.values())) {
+    if (offer.bettorId === playerId) room.wagers.offers.delete(offer.id);
+  }
+  for (const wager of Array.from(room.wagers.active.values())) {
+    if (wager.bettorId === playerId || wager.targetPlayerId === playerId) {
+      room.wagers.active.delete(wager.id);
+    }
+  }
+}
+
+function wagerOfferLiveEvent(room, offer) {
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "player",
+    playerId: offer.bettorId,
+    private: true,
+    title: "Scommessa live",
+    message: `Punta ${offer.stake} punti sulla prossima risposta. Casuale x3, scelto x2.`,
+    tone: "secret",
+    vibrate: true,
+    vibrationPattern: defaultVibrationPattern("secret"),
+    createdAt: Date.now()
+  };
+}
+
+function wagerAcceptedLiveEvent(room, wager) {
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "Scommessa accettata",
+    message: `${wager.bettorNickname} punta ${wager.stake} punti su ${wager.targetNickname}: premio x${wager.multiplier}.`,
+    tone: "drum",
+    vibrate: false,
+    vibrationPattern: defaultVibrationPattern("drum"),
+    createdAt: Date.now()
+  };
+}
+
+function wagerResultLiveEvent(result) {
+  const won = result.status === "won";
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: won ? "Scommessa vinta" : "Scommessa persa",
+    message: won
+      ? `${result.bettorNickname} vince ${result.delta} punti: ${result.targetNickname} ha risposto giusto.`
+      : `${result.bettorNickname} perde ${result.stake} punti: ${result.targetNickname} non ha centrato la risposta.`,
+    tone: won ? "success" : "alert",
+    vibrate: false,
+    vibrationPattern: defaultVibrationPattern(won ? "success" : "alert"),
+    createdAt: Date.now()
+  };
 }
 
 async function emitRoom(room) {
@@ -1161,6 +1472,10 @@ function serializeRoom(room, socket) {
     leaderboard: leaderboard(room).slice(0, 10),
     teamLeaderboard: room.quiz.teamMode ? teamLeaderboard(room) : undefined,
     questionSummaries: role === "host" ? questionSummaries(room) : undefined,
+    wagers: role === "host" ? serializeHostWagers(room) : undefined,
+    wagerOffer: role === "player" ? serializePlayerWagerOffer(room, playerId) : undefined,
+    activeWagers: serializePublicActiveWagers(room),
+    wagerHistory: serializePublicWagerHistory(room),
     answerCount: answerMap.size,
     playerCount: activePlayers(room).length,
     pendingInviteCount: role === "host" ? pendingInviteCount(room) : undefined,
@@ -1181,6 +1496,74 @@ function hostPlayers(room, answerMap) {
       answered: answerMap.has(player.id)
     }))
     .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+}
+
+function serializeHostWagers(room) {
+  return {
+    offers: Array.from(room.wagers.offers.values()).map((offer) => serializeWagerOffer(offer, room)),
+    active: Array.from(room.wagers.active.values()).map(serializeActiveWager),
+    history: serializePublicWagerHistory(room)
+  };
+}
+
+function serializePlayerWagerOffer(room, playerId) {
+  if (!playerId) return null;
+  const offer = Array.from(room.wagers.offers.values()).find((item) => item.bettorId === playerId);
+  return offer ? serializeWagerOffer(offer, room) : null;
+}
+
+function serializeWagerOffer(offer, room) {
+  return {
+    id: offer.id,
+    bettorId: offer.bettorId,
+    bettorNickname: offer.bettorNickname,
+    stake: offer.stake,
+    questionIndex: offer.questionIndex,
+    questionNumber: offer.questionIndex + 1,
+    status: offer.status,
+    eligibleTargets: eligibleWagerTargets(room, offer.bettorId),
+    createdAt: offer.createdAt
+  };
+}
+
+function serializeActiveWager(wager) {
+  return {
+    id: wager.id,
+    bettorId: wager.bettorId,
+    bettorNickname: wager.bettorNickname,
+    targetMode: wager.targetMode,
+    targetPlayerId: wager.targetPlayerId,
+    targetNickname: wager.targetNickname,
+    stake: wager.stake,
+    multiplier: wager.multiplier,
+    questionIndex: wager.questionIndex,
+    questionNumber: wager.questionIndex + 1,
+    status: wager.status,
+    acceptedAt: wager.acceptedAt
+  };
+}
+
+function serializeWagerResult(result) {
+  return {
+    id: result.id,
+    bettorNickname: result.bettorNickname,
+    targetNickname: result.targetNickname,
+    stake: result.stake,
+    multiplier: result.multiplier,
+    status: result.status,
+    correct: result.correct,
+    delta: result.delta,
+    reason: result.reason,
+    resolvedAt: result.resolvedAt
+  };
+}
+
+function serializePublicActiveWagers(room) {
+  return Array.from(room.wagers.active.values()).map(serializeActiveWager).slice(0, 5);
+}
+
+function serializePublicWagerHistory(room) {
+  return room.wagers.history.slice(-5).reverse().map(serializeWagerResult);
 }
 
 function serializePlayer(player, room) {
