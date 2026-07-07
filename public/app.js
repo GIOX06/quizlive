@@ -388,6 +388,7 @@ function renderBuilderSidePanel(question, questionIndex, editing) {
   return `
     <aside class="builder-side stack">
       ${renderBuilderRoomActions()}
+      ${renderBuilderLiveEventsPreview()}
       ${question ? editing ? renderQuestionProperties(question, questionIndex) : renderQuestionReadOnlyProperties(question, questionIndex) : ""}
     </aside>
   `;
@@ -402,6 +403,27 @@ function renderBuilderRoomActions() {
       </div>
       <button class="btn primary" data-action="create-room">${local.hostEditingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
       <button class="btn teal" data-action="save-quiz">Salva quiz</button>
+    </section>
+  `;
+}
+
+function renderBuilderLiveEventsPreview() {
+  if (local.room && local.room.role === "host") return renderHostLiveEvents(local.room);
+  return `
+    <section class="live-panel live-panel-preview stack">
+      <div>
+        <h3 class="mini-title">Eventi live</h3>
+        <p class="subtle">Regia live pronta dopo la creazione della stanza.</p>
+      </div>
+      <div class="live-event-grid">
+        <button class="btn gold small" disabled>Colpo</button>
+        <button class="btn teal small" disabled>Telefoni</button>
+        <button class="btn blue small" disabled>Monitor</button>
+      </div>
+      <div class="live-preview-note">
+        Audio, vibrazione, messaggi pubblici e messaggi segreti si attivano quando esiste una stanza con telefoni o monitor collegati.
+      </div>
+      <button class="btn ghost small" data-action="create-room">Crea stanza per attivarli</button>
     </section>
   `;
 }

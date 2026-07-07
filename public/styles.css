@@ -2162,6 +2162,12 @@ textarea {
   background: rgba(255, 255, 255, 0.07);
 }
 
+.live-panel-preview {
+  background:
+    linear-gradient(145deg, rgba(255, 138, 45, 0.11), transparent 58%),
+    rgba(255, 255, 255, 0.06);
+}
+
 .live-event-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2181,6 +2187,14 @@ textarea {
 .live-message-field textarea {
   min-height: 4.4rem;
   resize: vertical;
+}
+
+.live-preview-note {
+  border: 1px dashed rgba(255, 139, 45, 0.3);
+  border-radius: 8px;
+  padding: 0.75rem;
+  color: var(--stage-muted);
+  line-height: 1.35;
 }
 
 .live-target-row {
