@@ -47,7 +47,10 @@ let local = {
   playerSession: loadPlayerSession(),
   playerRejoining: false,
   playerBaseUrl: window.location.origin,
-  playerAccessMode: "same-origin"
+  playerAccessMode: "same-origin",
+  liveEventMessage: "",
+  liveEventTarget: "all",
+  liveEvent: null
 };
 let reconnectingForHostAuth = false;
 let screenPresentationRequest = null;
@@ -57,6 +60,8 @@ let builderDragIndex = null;
 let builderDragAutoScrollFrame = null;
 let builderDragAutoScrollSpeed = 0;
 let screenPresentationDisconnecting = false;
+let liveEventTimer = null;
+let liveAudioContext = null;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -95,6 +100,10 @@ socket.on("screen:waiting", () => {
   enterScreenWaiting();
 });
 
+socket.on("live:event", (event) => {
+  handleLiveEvent(event);
+});
+
 loadNetworkConfig();
 loadHostAuth();
 
@@ -113,6 +122,8 @@ setInterval(() => {
 }, 250);
 
 window.addEventListener("keydown", handleBuilderKeyboard);
+window.addEventListener("pointerdown", primeLiveAudio, { passive: true });
+window.addEventListener("keydown", primeLiveAudio);
 
 function render() {
   app.innerHTML = shell(renderMain(), renderTopbar());
@@ -162,7 +173,7 @@ function renderMain() {
 }
 
 function shell(main, topbar) {
-  return `<div class="shell shell-${shellSurface()}">${topbar}<main class="main">${main}</main></div>`;
+  return `<div class="shell shell-${shellSurface()}">${topbar}<main class="main">${main}</main>${renderLiveEventOverlay()}</div>`;
 }
 
 function shellSurface() {
@@ -173,6 +184,23 @@ function shellSurface() {
   if (local.mode === "screen") return "screen";
   if (local.room && local.room.role === "player") return "player";
   return "join";
+}
+
+function renderLiveEventOverlay() {
+  const event = local.liveEvent;
+  if (!event) return "";
+  const privateClass = event.private ? " private" : "";
+  const toneClass = ` tone-${escapeAttr(event.tone || "spark")}`;
+  const label = event.private ? "Messaggio segreto" : "Evento live";
+  return `
+    <aside class="live-event-overlay${privateClass}${toneClass}" aria-live="assertive">
+      <div class="live-event-card">
+        <p class="live-event-kicker">${escapeHtml(label)}</p>
+        <strong>${escapeHtml(event.title || "QuizLive")}</strong>
+        <span>${escapeHtml(event.message || "")}</span>
+      </div>
+    </aside>
+  `;
 }
 
 function renderJoinHome() {
@@ -954,6 +982,7 @@ function renderHostGame(room) {
           <h2 class="section-title">Giocatori</h2>
           <p class="subtle">${escapeHtml(pendingText)}</p>
         </div>
+        ${renderHostLiveEvents(room)}
         ${renderTeamLeaderboard(room)}
         ${renderHostPlayers(room)}
       </aside>
@@ -1488,6 +1517,40 @@ function renderTopLeaderboardStrip(room) {
   `;
 }
 
+function renderHostLiveEvents(room) {
+  const players = Array.isArray(room.players) ? room.players : [];
+  const selectedTarget = local.liveEventTarget || "all";
+  const selected = (value) => selectedTarget === value ? "selected" : "";
+  return `
+    <section class="live-panel stack">
+      <div>
+        <h3 class="mini-title">Eventi live</h3>
+        <p class="subtle">Audio, vibrazione e messaggi durante la partita.</p>
+      </div>
+      <div class="live-event-grid">
+        <button class="btn gold small" data-action="send-live-effect" data-live-target="all" data-live-tone="drum" data-live-vibrate="true" data-live-message="Colpo di scena in arrivo.">Colpo</button>
+        <button class="btn teal small" data-action="send-live-effect" data-live-target="players" data-live-tone="alert" data-live-vibrate="true" data-live-message="Attenzione alla prossima mossa.">Telefoni</button>
+        <button class="btn blue small" data-action="send-live-effect" data-live-target="screen" data-live-tone="success" data-live-message="Momento speciale sul monitor.">Monitor</button>
+      </div>
+      <label class="stack live-message-field">
+        <span>Messaggio</span>
+        <textarea data-live-event-message maxlength="160" placeholder="Pubblico o segreto">${escapeHtml(local.liveEventMessage || "")}</textarea>
+      </label>
+      <div class="live-target-row">
+        <select data-live-event-target aria-label="Destinatario evento live">
+          <option value="all" ${selected("all")}>Tutti + monitor</option>
+          <option value="players" ${selected("players")}>Solo telefoni</option>
+          <option value="screen" ${selected("screen")}>Solo monitor</option>
+          ${players.map((player) => `
+            <option value="player:${escapeAttr(player.id)}" ${selected(`player:${player.id}`)}>Segreto: ${escapeHtml(player.nickname)}</option>
+          `).join("")}
+        </select>
+        <button class="btn primary" data-action="send-live-message">Invia</button>
+      </div>
+    </section>
+  `;
+}
+
 function renderHostPlayers(room) {
   if (!room.players || !room.players.length) return `<div class="empty">Nessun giocatore ancora</div>`;
   return `
@@ -1623,6 +1686,16 @@ function bindEvents() {
   document.querySelectorAll("[data-quiz-team-mode]").forEach((element) => {
     element.addEventListener("change", () => {
       local.quiz.teamMode = element.checked;
+    });
+  });
+  document.querySelectorAll("[data-live-event-message]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.liveEventMessage = element.value;
+    });
+  });
+  document.querySelectorAll("[data-live-event-target]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.liveEventTarget = element.value;
     });
   });
   document.querySelectorAll("[data-question-text]").forEach((element) => {
@@ -1844,6 +1917,8 @@ function handleAction(event) {
   if (action === "back-to-builder") editCurrentRoomQuiz();
   if (action === "cancel-room-edit") cancelRoomEdit();
   if (action === "release-screens") releaseScreens();
+  if (action === "send-live-effect") sendLiveEffect(target);
+  if (action === "send-live-message") sendLiveMessage();
   if (action === "answer") answer(Number(target.dataset.answerIndex));
   if (action === "submit-multiple-answer") submitMultipleAnswer();
   if (action === "accept-rematch") respondRematch(true);
@@ -3038,6 +3113,59 @@ function releaseScreens() {
   });
 }
 
+function sendLiveEffect(element) {
+  sendLiveEvent({
+    type: "effect",
+    target: element.dataset.liveTarget || "all",
+    tone: element.dataset.liveTone || "spark",
+    vibrate: element.dataset.liveVibrate === "true",
+    message: element.dataset.liveMessage || ""
+  });
+}
+
+function sendLiveMessage() {
+  const message = String(local.liveEventMessage || "").trim();
+  if (!message) {
+    showToast("Scrivi un messaggio live");
+    return;
+  }
+  const parsedTarget = parseLiveEventTarget(local.liveEventTarget);
+  sendLiveEvent({
+    type: "message",
+    target: parsedTarget.target,
+    playerId: parsedTarget.playerId,
+    tone: parsedTarget.target === "player" ? "secret" : "spark",
+    vibrate: true,
+    message
+  }, () => {
+    local.liveEventMessage = "";
+    render();
+  });
+}
+
+function parseLiveEventTarget(value) {
+  const target = String(value || "all");
+  if (target.startsWith("player:")) {
+    return { target: "player", playerId: target.slice("player:".length) };
+  }
+  if (target === "players" || target === "screen" || target === "all") {
+    return { target, playerId: "" };
+  }
+  return { target: "all", playerId: "" };
+}
+
+function sendLiveEvent(payload, onSuccess) {
+  socket.emit("host:live-event", payload, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Evento non inviato");
+      return;
+    }
+    const delivered = Number(response.delivered) || 0;
+    showToast(delivered ? `Evento inviato a ${delivered}` : "Nessun destinatario collegato");
+    if (onSuccess) onSuccess(response);
+  });
+}
+
 function answer(answerIndex) {
   const question = local.room && local.room.question;
   if (question && question.type === "multiple_select" && !question.answered) {
@@ -3501,6 +3629,109 @@ function downloadJson(filename, data) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function handleLiveEvent(event) {
+  if (!event || typeof event !== "object") return;
+  clearTimeout(liveEventTimer);
+  local.liveEvent = {
+    private: Boolean(event.private),
+    title: String(event.title || "QuizLive").slice(0, 80),
+    message: String(event.message || "").slice(0, 180),
+    tone: String(event.tone || "spark").slice(0, 24),
+    vibrate: Boolean(event.vibrate),
+    vibrationPattern: Array.isArray(event.vibrationPattern) ? event.vibrationPattern : []
+  };
+  playLiveSound(local.liveEvent.tone);
+  if (local.liveEvent.vibrate) runLiveVibration(local.liveEvent.vibrationPattern);
+  render();
+  liveEventTimer = setTimeout(() => {
+    local.liveEvent = null;
+    render();
+  }, local.liveEvent.private ? 5600 : 4300);
+}
+
+function primeLiveAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  try {
+    if (!liveAudioContext) liveAudioContext = new AudioContextClass();
+    if (liveAudioContext.state === "suspended") {
+      liveAudioContext.resume().catch(() => {});
+    }
+    return liveAudioContext;
+  } catch (error) {
+    return null;
+  }
+}
+
+function playLiveSound(tone) {
+  const context = primeLiveAudio();
+  if (!context) return;
+  try {
+    const master = context.createGain();
+    master.gain.value = 0.11;
+    master.connect(context.destination);
+    const now = context.currentTime + 0.025;
+    liveToneSequence(tone).forEach((note) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = note.type || "sine";
+      oscillator.frequency.setValueAtTime(note.frequency, now + note.start);
+      gain.gain.setValueAtTime(0.001, now + note.start);
+      gain.gain.linearRampToValueAtTime(note.volume || 0.2, now + note.start + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.duration);
+      oscillator.connect(gain);
+      gain.connect(master);
+      oscillator.start(now + note.start);
+      oscillator.stop(now + note.start + note.duration + 0.05);
+    });
+    setTimeout(() => master.disconnect(), 1400);
+  } catch (error) {
+    // Audio can be blocked by the browser until the user taps the page.
+  }
+}
+
+function liveToneSequence(tone) {
+  if (tone === "drum") {
+    return [
+      { frequency: 124, start: 0, duration: 0.16, volume: 0.34, type: "triangle" },
+      { frequency: 82, start: 0.18, duration: 0.24, volume: 0.32, type: "triangle" }
+    ];
+  }
+  if (tone === "success") {
+    return [
+      { frequency: 523, start: 0, duration: 0.12, volume: 0.18 },
+      { frequency: 659, start: 0.13, duration: 0.12, volume: 0.18 },
+      { frequency: 784, start: 0.26, duration: 0.18, volume: 0.2 }
+    ];
+  }
+  if (tone === "alert") {
+    return [
+      { frequency: 880, start: 0, duration: 0.12, volume: 0.17, type: "square" },
+      { frequency: 660, start: 0.15, duration: 0.12, volume: 0.16, type: "square" },
+      { frequency: 880, start: 0.3, duration: 0.15, volume: 0.17, type: "square" }
+    ];
+  }
+  if (tone === "secret") {
+    return [
+      { frequency: 392, start: 0, duration: 0.14, volume: 0.13 },
+      { frequency: 523, start: 0.16, duration: 0.2, volume: 0.12 }
+    ];
+  }
+  return [
+    { frequency: 740, start: 0, duration: 0.13, volume: 0.15 },
+    { frequency: 988, start: 0.14, duration: 0.18, volume: 0.16 }
+  ];
+}
+
+function runLiveVibration(pattern) {
+  if (!navigator.vibrate) return;
+  const normalized = (Array.isArray(pattern) ? pattern : [70, 35, 110])
+    .map((item) => Math.min(600, Math.max(20, Math.round(Number(item) || 0))))
+    .filter(Boolean)
+    .slice(0, 8);
+  if (normalized.length) navigator.vibrate(normalized);
 }
 
 function showToast(message) {

@@ -2155,6 +2155,109 @@ textarea {
   gap: 0.6rem;
 }
 
+.live-panel {
+  padding: 0.85rem;
+  border: 1px solid rgba(255, 139, 45, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.live-event-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.live-event-grid .btn {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 0.45rem;
+}
+
+.live-message-field {
+  gap: 0.4rem;
+}
+
+.live-message-field textarea {
+  min-height: 4.4rem;
+  resize: vertical;
+}
+
+.live-target-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: stretch;
+}
+
+.live-event-overlay {
+  position: fixed;
+  top: 5.6rem;
+  right: clamp(0.75rem, 2vw, 1.5rem);
+  z-index: 40;
+  width: min(24rem, calc(100vw - 1.5rem));
+  pointer-events: none;
+  animation: live-event-pop 220ms ease both;
+}
+
+.live-event-card {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid rgba(255, 139, 45, 0.48);
+  border-radius: 8px;
+  padding: 1rem;
+  background:
+    linear-gradient(145deg, rgba(255, 138, 45, 0.2), transparent 58%),
+    rgba(8, 8, 9, 0.94);
+  color: #fff7ed;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.42);
+}
+
+.live-event-overlay.private .live-event-card {
+  border-color: rgba(31, 157, 138, 0.66);
+  background:
+    linear-gradient(145deg, rgba(31, 157, 138, 0.26), transparent 58%),
+    rgba(8, 8, 9, 0.95);
+}
+
+.live-event-overlay.tone-alert .live-event-card {
+  border-color: rgba(239, 91, 91, 0.72);
+}
+
+.live-event-overlay.tone-success .live-event-card {
+  border-color: rgba(92, 166, 111, 0.72);
+}
+
+.live-event-kicker {
+  margin: 0;
+  color: #ffd18f;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.live-event-card strong {
+  color: #fff;
+  font-size: 1.05rem;
+}
+
+.live-event-card span {
+  color: #f5dcc3;
+  line-height: 1.35;
+}
+
+@keyframes live-event-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-0.65rem) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .team-board {
   display: grid;
   gap: 0.55rem;
@@ -2502,6 +2605,18 @@ textarea {
 
   .media-dialog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .live-event-grid,
+  .live-target-row {
+    grid-template-columns: 1fr;
+  }
+
+  .live-event-overlay {
+    top: auto;
+    right: 0.75rem;
+    bottom: 1rem;
+    width: calc(100vw - 1.5rem);
   }
 
   .answer-btn.has-image,

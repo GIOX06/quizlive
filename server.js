@@ -45,6 +45,8 @@ const QUESTION_TYPE_LABELS = {
   multiple_select: "Risposte multiple",
   slide: "Slide"
 };
+const LIVE_EVENT_TONES = new Set(["spark", "drum", "success", "alert", "secret"]);
+const LIVE_EVENT_TARGETS = new Set(["all", "players", "screen", "player"]);
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const QUESTION_TYPE_ALIASES = {
   multipla: "multiple",
@@ -542,6 +544,22 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:live-event", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const event = normalizeLiveEvent(payload, room);
+      const delivered = await dispatchLiveEvent(room, event);
+      sendAck(ack, { ok: true, delivered, event });
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("screen:watch", async (_payload, ack) => {
     try {
       await sendScreenToWaiting(socket);
@@ -988,6 +1006,101 @@ async function emitRoom(room) {
   for (const target of sockets) {
     target.emit("room:state", serializeRoom(room, target));
   }
+}
+
+async function dispatchLiveEvent(room, event) {
+  const sockets = await io.in(roomChannel(room.code)).fetchSockets();
+  let delivered = 0;
+  for (const target of sockets) {
+    if (!shouldReceiveLiveEvent(target, event)) continue;
+    target.emit("live:event", event);
+    delivered += 1;
+  }
+  return delivered;
+}
+
+function shouldReceiveLiveEvent(socket, event) {
+  if (socket.data.role === "host") return false;
+  if (event.target === "all") return socket.data.role === "player" || socket.data.role === "screen";
+  if (event.target === "players") return socket.data.role === "player";
+  if (event.target === "screen") return socket.data.role === "screen";
+  if (event.target === "player") {
+    return socket.data.role === "player" && socket.data.playerId === event.playerId;
+  }
+  return false;
+}
+
+function normalizeLiveEvent(payload, room) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const target = LIVE_EVENT_TARGETS.has(source.target) ? source.target : "all";
+  const type = source.type === "message" ? "message" : "effect";
+  const tone = LIVE_EVENT_TONES.has(source.tone) ? source.tone : target === "player" ? "secret" : "spark";
+  const title = normalizeShortText(source.title, 60) || liveEventTitle(type, target, tone);
+  const fallbackMessage = type === "message" ? "" : liveEventMessage(tone);
+  const message = normalizeShortText(source.message, 160) || fallbackMessage;
+  const vibrate = Boolean(source.vibrate);
+  const vibrationPattern = normalizeVibrationPattern(source.vibrationPattern, tone);
+  let playerId = "";
+
+  if (target === "player") {
+    playerId = normalizeShortText(source.playerId, 120);
+    const player = playerId ? room.players.get(playerId) : null;
+    if (!player || !player.active) {
+      throw new Error("Giocatore non disponibile");
+    }
+  }
+
+  if (type === "message" && !message) {
+    throw new Error("Scrivi un messaggio live");
+  }
+
+  return {
+    id: createArchiveId("live"),
+    type,
+    target,
+    playerId,
+    private: target === "player",
+    title,
+    message,
+    tone,
+    vibrate,
+    vibrationPattern,
+    createdAt: Date.now()
+  };
+}
+
+function liveEventTitle(type, target, tone) {
+  if (target === "player") return "Messaggio segreto";
+  if (target === "screen") return "Evento monitor";
+  if (type === "message") return "Messaggio live";
+  if (tone === "drum") return "Colpo di scena";
+  if (tone === "success") return "Momento bonus";
+  if (tone === "alert") return "Attenzione";
+  return "Evento live";
+}
+
+function liveEventMessage(tone) {
+  if (tone === "drum") return "Sta per succedere qualcosa.";
+  if (tone === "success") return "Momento bonus!";
+  if (tone === "alert") return "Occhi aperti.";
+  if (tone === "secret") return "Messaggio privato dall'host.";
+  return "Evento QuizLive.";
+}
+
+function normalizeVibrationPattern(value, tone) {
+  const source = Array.isArray(value) ? value : defaultVibrationPattern(tone);
+  return source
+    .map((item) => Math.min(600, Math.max(20, Math.round(Number(item) || 0))))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function defaultVibrationPattern(tone) {
+  if (tone === "drum") return [120, 45, 160];
+  if (tone === "success") return [60, 35, 60, 35, 140];
+  if (tone === "alert") return [180, 60, 180];
+  if (tone === "secret") return [45, 35, 45];
+  return [70, 35, 110];
 }
 
 function serializeRoom(room, socket) {

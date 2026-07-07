@@ -229,6 +229,37 @@ async function main() {
       state.teamLeaderboard.length === 2
     );
 
+    const publicPlayerEvent = waitForSocketEvent(player, "live:event");
+    const publicScreenEvent = waitForSocketEvent(screen, "live:event");
+    const publicLiveSent = await emitAck(host, "host:live-event", {
+      type: "message",
+      target: "all",
+      message: "Occhio al bonus live",
+      tone: "spark",
+      vibrate: true
+    });
+    assert.equal(publicLiveSent.ok, true);
+    assert.ok(publicLiveSent.delivered >= 2);
+    const receivedPublicPlayerEvent = await publicPlayerEvent;
+    const receivedPublicScreenEvent = await publicScreenEvent;
+    assert.equal(receivedPublicPlayerEvent.message, "Occhio al bonus live");
+    assert.equal(receivedPublicPlayerEvent.vibrate, true);
+    assert.equal(receivedPublicScreenEvent.message, "Occhio al bonus live");
+
+    const privatePlayerEvent = waitForSocketEvent(player, "live:event");
+    const privateLiveSent = await emitAck(host, "host:live-event", {
+      type: "message",
+      target: "player",
+      playerId: joined.playerId,
+      message: "Messaggio segreto smoke",
+      tone: "secret"
+    });
+    assert.equal(privateLiveSent.ok, true);
+    assert.equal(privateLiveSent.delivered, 1);
+    const receivedPrivatePlayerEvent = await privatePlayerEvent;
+    assert.equal(receivedPrivatePlayerEvent.private, true);
+    assert.equal(receivedPrivatePlayerEvent.message, "Messaggio segreto smoke");
+
     const started = await emitAck(host, "host:start", {});
     assert.equal(started.ok, true);
 
@@ -538,6 +569,20 @@ function emitAck(socket, eventName, payload) {
       clearTimeout(timeout);
       resolve(response);
     });
+  });
+}
+
+function waitForSocketEvent(socket, eventName, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.off(eventName, onEvent);
+      reject(new Error(`Timeout waiting for socket event ${eventName}`));
+    }, timeoutMs);
+    function onEvent(payload) {
+      clearTimeout(timeout);
+      resolve(payload);
+    }
+    socket.once(eventName, onEvent);
   });
 }
 
