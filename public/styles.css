@@ -787,11 +787,32 @@ textarea {
   position: sticky;
   top: 6.3rem;
   max-height: calc(100vh - 7.4rem);
+}
+
+.builder-deck {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.builder-side {
   overflow: auto;
 }
 
-.builder-card-list {
+.builder-deck-head {
   display: grid;
+  gap: 0.75rem;
+  padding-bottom: 0.15rem;
+}
+
+.builder-add-card {
+  width: 100%;
+}
+
+.builder-card-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
   gap: 0.65rem;
   overflow: auto;
   padding-right: 0.2rem;
@@ -989,7 +1010,7 @@ textarea {
   display: grid;
   align-content: start;
   gap: 1.25rem;
-  overflow: auto;
+  overflow: hidden;
   padding: clamp(1rem, 2.5vw, 1.6rem);
   border: 1px solid rgba(255, 139, 45, 0.22);
   border-radius: 8px;
@@ -1027,6 +1048,60 @@ textarea {
   text-align: center;
   font-size: 1.15rem;
   font-weight: 800;
+}
+
+.builder-editor-preview,
+.builder-slide-editor {
+  gap: 0.35rem;
+  padding: clamp(0.55rem, 1.25vw, 0.75rem);
+}
+
+.builder-editor-preview {
+  grid-template-rows: minmax(3.2rem, auto) auto minmax(0, 1fr) auto;
+}
+
+.builder-slide-editor {
+  grid-template-rows: minmax(3.4rem, auto) minmax(2.7rem, auto) minmax(0, 1fr);
+}
+
+.builder-editor-preview .builder-question-input,
+.builder-slide-editor .builder-question-input {
+  min-height: 3.2rem;
+  padding: 0.5rem 0.7rem;
+  font-size: clamp(1rem, 1.75vw, 1.45rem);
+}
+
+.builder-slide-editor .builder-slide-subtitle {
+  min-height: 2.7rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.98rem;
+}
+
+.builder-editor-preview .builder-media-drop,
+.builder-slide-editor .builder-media-drop {
+  min-height: 2.6rem;
+  padding: 0.45rem;
+}
+
+.builder-editor-preview .builder-media-drop.has-media,
+.builder-slide-editor .builder-media-drop.has-media {
+  min-height: 5.8rem;
+}
+
+.builder-editor-preview .builder-media-drop img,
+.builder-slide-editor .builder-media-drop img {
+  max-height: 6.8rem;
+}
+
+.builder-editor-preview .builder-media-empty,
+.builder-slide-editor .builder-media-empty {
+  min-height: 1.9rem;
+}
+
+.builder-editor-preview .builder-media-button,
+.builder-slide-editor .builder-media-button {
+  min-height: 2rem;
+  padding: 0.35rem 0.65rem;
 }
 
 .builder-media-drop {
@@ -1159,6 +1234,11 @@ textarea {
   gap: 0.75rem;
 }
 
+.builder-editor-preview .builder-answer-grid {
+  min-height: 0;
+  gap: 0.4rem;
+}
+
 .builder-answer-card {
   display: grid;
   grid-template-columns: 3.4rem minmax(0, 1fr);
@@ -1170,10 +1250,24 @@ textarea {
   color: #fff;
 }
 
+.builder-editor-preview .builder-answer-card {
+  min-height: 2.65rem;
+  grid-template-columns: 2.15rem minmax(0, 1fr);
+  gap: 0.45rem;
+  padding: 0.4rem;
+}
+
 .builder-answer-fields {
   display: grid;
   gap: 0.55rem;
   min-width: 0;
+}
+
+.builder-editor-preview .builder-answer-fields {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.35rem;
+  row-gap: 0.18rem;
 }
 
 .builder-answer-card input[data-answer-text] {
@@ -1181,6 +1275,12 @@ textarea {
   background: rgba(255, 255, 255, 0.94);
   color: #172026;
   font-weight: 850;
+}
+
+.builder-editor-preview .builder-answer-card input[data-answer-text] {
+  grid-column: 1 / -1;
+  min-height: 1.8rem;
+  padding: 0.35rem 0.5rem;
 }
 
 .builder-answer-symbol {
@@ -1194,12 +1294,25 @@ textarea {
   font-weight: 950;
 }
 
+.builder-editor-preview .builder-answer-symbol {
+  width: 2.15rem;
+  height: 2.35rem;
+  font-size: 1rem;
+}
+
 .builder-correct-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
   color: #fff;
   font-weight: 900;
+}
+
+.builder-editor-preview .builder-correct-toggle {
+  grid-column: 1;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  line-height: 1;
 }
 
 .builder-correct-toggle input {
@@ -1228,6 +1341,18 @@ textarea {
   font-weight: 900;
 }
 
+.builder-editor-preview .builder-answer-image-button {
+  grid-column: 2;
+  min-height: 1.8rem;
+  gap: 0.35rem;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.78rem;
+}
+
+.builder-editor-preview .builder-answer-fields > .btn {
+  grid-column: 1 / -1;
+}
+
 .builder-answer-image-button img {
   width: 2.4rem;
   height: 2.4rem;
@@ -1235,8 +1360,19 @@ textarea {
   object-fit: cover;
 }
 
+.builder-editor-preview .builder-answer-image-button img {
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
 .builder-add-answer {
   justify-self: center;
+}
+
+.builder-editor-preview .builder-add-answer {
+  min-height: 1.9rem;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.78rem;
 }
 
 .builder-properties {

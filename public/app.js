@@ -322,8 +322,8 @@ function selectedBuilderQuestionIndex() {
 function syncBuilderDeckScroll() {
   if (local.mode !== "host") return;
   requestAnimationFrame(() => {
-    const activeCard = document.querySelector(".builder-slide.active");
-    const deck = document.querySelector("[data-builder-deck]");
+    const deck = document.querySelector("[data-builder-card-list]");
+    const activeCard = deck ? deck.querySelector(".builder-slide.active") : null;
     if (!activeCard || !deck) return;
     const activeBox = activeCard.getBoundingClientRect();
     const deckBox = deck.getBoundingClientRect();
@@ -339,15 +339,15 @@ function syncBuilderDeckScroll() {
 function renderQuestionDeck(selectedIndex) {
   return `
     <aside class="builder-deck panel stack" data-builder-deck>
-      <div>
-        <p class="screen-kicker">Quiz</p>
-        <h2 class="mini-title">${escapeHtml(local.quiz.title || "QuizLive")}</h2>
+      <div class="builder-deck-head">
+        <div>
+          <p class="screen-kicker">Quiz</p>
+          <h2 class="mini-title">${escapeHtml(local.quiz.title || "QuizLive")}</h2>
+        </div>
+        <button class="btn blue builder-add-card" data-action="add-question" type="button">Aggiungi scheda</button>
       </div>
-      <div class="builder-card-list">
+      <div class="builder-card-list" data-builder-card-list>
         ${local.quiz.questions.map((question, index) => renderQuestionSlideCard(question, index, selectedIndex)).join("")}
-      </div>
-      <div class="stack">
-        <button class="btn blue" data-action="add-question">Aggiungi</button>
       </div>
     </aside>
   `;
@@ -428,7 +428,7 @@ function renderQuestionPreviewEditor(question, questionIndex) {
   const questionType = normalizeQuestionType(question.type);
   if (questionType === "slide") return renderSlideEditor(question, questionIndex);
   return `
-    <article class="builder-live-preview">
+    <article class="builder-live-preview builder-editor-preview">
       <textarea class="builder-question-input" data-question-text data-question-index="${questionIndex}" maxlength="240" placeholder="Inizia a digitare la domanda">${escapeHtml(question.text)}</textarea>
       ${renderBuilderMediaPanel(question, questionIndex)}
       ${renderBuilderAnswerCards(question, questionIndex, questionType)}
