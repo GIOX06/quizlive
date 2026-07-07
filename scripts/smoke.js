@@ -132,6 +132,22 @@ async function main() {
     assert.match(generatedImageDryRun.data.prompt, /pianeta rosso/);
     assert.match(generatedImageDryRun.data.prompt, /Marte/);
 
+    const generatedAnswerImageDryRun = await postJsonRaw("/api/images/generate", {
+      dryRun: true,
+      quiz: { subject: "Geografia", level: "Scuola media", language: "Italiano" },
+      question: {
+        text: "Quale pianeta e conosciuto come pianeta rosso nel sistema solare?",
+        answers: ["Venere", "Marte", "Giove", "Saturno"],
+        correctIndex: 1
+      },
+      answerText: "Marte",
+      answerIndex: 1
+    });
+    assert.equal(generatedAnswerImageDryRun.status, 200);
+    assert.equal(generatedAnswerImageDryRun.data.ok, true);
+    assert.match(generatedAnswerImageDryRun.data.prompt, /opzione di risposta/i);
+    assert.match(generatedAnswerImageDryRun.data.prompt, /Opzione da rappresentare: Marte/);
+
     const screenWatching = await emitAck(screen, "screen:watch", {});
     assert.equal(screenWatching.ok, true);
     assert.equal(screenWatching.waiting, true);

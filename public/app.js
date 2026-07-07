@@ -666,12 +666,14 @@ function renderQuestionMediaDialogFields(question, questionIndex, imageUrl) {
 }
 
 function renderAnswerMediaDialogFields(questionIndex, answerIndex, rawImageUrl, imageUrl) {
+  const generating = imageGeneratingState(questionIndex, answerIndex);
   return `
     <div class="media-dialog-grid">
       <input class="file-input" data-answer-image-upload data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
       <input data-answer-image-url data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(rawImageUrl)}" maxlength="500" placeholder="https:// immagine risposta" />
     </div>
     <div class="media-actions">
+      <button class="btn small ghost" data-action="generate-answer-image" data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${generating.loading ? "disabled" : ""}>${generating.loading ? "Genero..." : "Genera gratis"}</button>
       ${imageUrl ? `<button class="btn small ghost" data-action="clear-answer-image" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi</button>` : ""}
     </div>
   `;
@@ -755,8 +757,16 @@ function imageSuggestionState(questionIndex) {
   return local.imageSuggestions[questionIndex] || { loading: false, images: [], query: "", error: "" };
 }
 
-function imageGeneratingState(questionIndex) {
-  return local.imageGenerating[questionIndex] || { loading: false };
+function imageGeneratingKey(questionIndex, answerIndex) {
+  const normalizedQuestionIndex = Number(questionIndex);
+  const normalizedAnswerIndex = Number(answerIndex);
+  return Number.isInteger(normalizedAnswerIndex)
+    ? `${normalizedQuestionIndex}:${normalizedAnswerIndex}`
+    : String(normalizedQuestionIndex);
+}
+
+function imageGeneratingState(questionIndex, answerIndex) {
+  return local.imageGenerating[imageGeneratingKey(questionIndex, answerIndex)] || { loading: false };
 }
 
 function renderImageSuggestions(questionIndex) {
@@ -1788,6 +1798,7 @@ function handleAction(event) {
   if (action === "apply-time-all") applyTimeToAllQuestions(Number(target.dataset.questionIndex));
   if (action === "suggest-question-images") suggestQuestionImages(Number(target.dataset.questionIndex));
   if (action === "generate-question-image") generateQuestionImage(Number(target.dataset.questionIndex));
+  if (action === "generate-answer-image") generateAnswerImage(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
   if (action === "select-suggested-image") selectSuggestedImage(Number(target.dataset.questionIndex), Number(target.dataset.imageIndex));
   if (action === "clear-question-image") clearQuestionImage(Number(target.dataset.questionIndex));
   if (action === "clear-answer-image") clearAnswerImage(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
@@ -2172,7 +2183,8 @@ async function suggestQuestionImages(index) {
 async function generateQuestionImage(index) {
   const question = local.quiz.questions[index];
   if (!question) return;
-  local.imageGenerating[index] = { loading: true };
+  const key = imageGeneratingKey(index);
+  local.imageGenerating[key] = { loading: true };
   render();
 
   try {
@@ -2198,7 +2210,41 @@ async function generateQuestionImage(index) {
   } catch (error) {
     showToast(error.message || "Generazione immagine non riuscita");
   } finally {
-    local.imageGenerating[index] = { loading: false };
+    local.imageGenerating[key] = { loading: false };
+    render();
+  }
+}
+
+async function generateAnswerImage(questionIndex, answerIndex) {
+  const question = local.quiz.questions[questionIndex];
+  if (!question || normalizeQuestionType(question.type) === "true_false") return;
+  const answers = editableAnswers(question);
+  if (answerIndex < 0 || answerIndex >= answers.length) return;
+  const answerText = String(answers[answerIndex] || `Risposta ${answerLetters[answerIndex] || answerIndex + 1}`).trim();
+  const key = imageGeneratingKey(questionIndex, answerIndex);
+  local.imageGenerating[key] = { loading: true };
+  render();
+
+  try {
+    const response = await fetch("/api/images/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        quiz: cleanQuiz(local.quiz),
+        question,
+        answerText,
+        answerIndex
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Generazione immagine non riuscita");
+    setAnswerImage(question, answerIndex, data.url || "");
+    showToast("Immagine risposta generata");
+  } catch (error) {
+    showToast(error.message || "Generazione immagine non riuscita");
+  } finally {
+    local.imageGenerating[key] = { loading: false };
     render();
   }
 }

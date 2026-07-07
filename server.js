@@ -2482,6 +2482,20 @@ function buildAiImagePrompt(payload) {
   const level = normalizeShortText(quiz.level, 80) || "studenti";
   const language = normalizeShortText(quiz.language, 40) || "Italiano";
   const questionText = normalizeShortText(question.text, 320) || "domanda didattica";
+  const answerText = normalizeShortText(payload && payload.answerText, 180);
+  if (answerText) {
+    return [
+      "Crea una immagine didattica orizzontale per una opzione di risposta di QuizLive.",
+      `Materia: ${subject}.`,
+      `Livello: ${level}.`,
+      `Lingua del contesto: ${language}.`,
+      `Domanda: ${questionText}.`,
+      `Opzione da rappresentare: ${answerText}.`,
+      "L'immagine deve aiutare a riconoscere questa risposta senza indicare se e corretta o sbagliata.",
+      "Stile: chiaro, moderno, adatto a studenti, leggibile su telefono e monitor condiviso.",
+      "Evita testo leggibile, watermark, loghi, brand e persone riconoscibili non necessarie."
+    ].join(" ");
+  }
   const correctText = normalizeShortText(correctAnswerTextForSearch(question), 180);
   const concept = correctText || normalizeShortText(buildImageSearchQuery(payload), 160) || questionText;
   return [
