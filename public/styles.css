@@ -1052,12 +1052,17 @@ textarea {
 
 .builder-editor-preview,
 .builder-slide-editor {
+  aspect-ratio: auto;
+  height: calc(100vh - 7.4rem);
+  min-height: 34rem;
+  max-height: calc(100vh - 7.4rem);
   gap: 0.35rem;
+  overflow: auto;
   padding: clamp(0.55rem, 1.25vw, 0.75rem);
 }
 
 .builder-editor-preview {
-  grid-template-rows: minmax(3.2rem, auto) auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(3.2rem, auto) minmax(3rem, auto) minmax(0, 1fr) auto;
 }
 
 .builder-slide-editor {
@@ -1079,18 +1084,18 @@ textarea {
 
 .builder-editor-preview .builder-media-drop,
 .builder-slide-editor .builder-media-drop {
-  min-height: 2.6rem;
+  min-height: 3rem;
   padding: 0.45rem;
 }
 
 .builder-editor-preview .builder-media-drop.has-media,
 .builder-slide-editor .builder-media-drop.has-media {
-  min-height: 5.8rem;
+  min-height: 8rem;
 }
 
 .builder-editor-preview .builder-media-drop img,
 .builder-slide-editor .builder-media-drop img {
-  max-height: 6.8rem;
+  max-height: 9rem;
 }
 
 .builder-editor-preview .builder-media-empty,
@@ -2342,6 +2347,13 @@ textarea {
   .builder-deck,
   .builder-side {
     position: static;
+    max-height: none;
+  }
+
+  .builder-editor-preview,
+  .builder-slide-editor {
+    height: auto;
+    min-height: 30rem;
     max-height: none;
   }
 
