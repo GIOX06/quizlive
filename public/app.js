@@ -53,6 +53,7 @@ let reconnectingForHostAuth = false;
 let screenPresentationRequest = null;
 let screenPresentationUrl = "";
 let screenPresentationConnection = null;
+let builderDragIndex = null;
 let screenPresentationDisconnecting = false;
 
 const app = document.getElementById("app");
@@ -379,29 +380,27 @@ function renderQuestionSlideCard(question, index, selectedIndex) {
   const questionType = normalizeQuestionType(question.type);
   const active = index === selectedIndex;
   return `
-    <article class="builder-slide ${active ? "active" : ""} ${active && local.builderEditing ? "editing" : ""}">
+    <article class="builder-slide ${active ? "active" : ""} ${active && local.builderEditing ? "editing" : ""}" data-question-index="${index}" draggable="${local.quiz.questions.length > 1 ? "true" : "false"}">
       <div class="builder-slide-actions">
         <button class="builder-icon-btn" data-action="edit-builder-question" data-question-index="${index}" aria-label="Modifica domanda ${index + 1}">&#9998;</button>
         <button class="builder-icon-btn" data-action="move-question" data-question-index="${index}" data-direction="-1" ${index === 0 ? "disabled" : ""} aria-label="Sposta su">&#8593;</button>
         <button class="builder-icon-btn" data-action="move-question" data-question-index="${index}" data-direction="1" ${index >= local.quiz.questions.length - 1 ? "disabled" : ""} aria-label="Sposta giu">&#8595;</button>
       </div>
-      <button class="builder-slide-select" data-action="select-builder-question" data-question-index="${index}" aria-label="Domanda ${index + 1}">
+      <button class="builder-slide-select" data-action="select-builder-question" data-question-index="${index}" aria-label="Domanda ${index + 1}, ${escapeAttr(questionTypeLabel(questionType))}">
         <div class="builder-slide-head">
           <strong>${index + 1}</strong>
           <span>${escapeHtml(questionTypeLabel(questionType))}</span>
         </div>
-        ${renderQuestionDeckPreview(question, questionType)}
+        ${renderQuestionDeckPreview(questionType)}
       </button>
     </article>
   `;
 }
 
-function renderQuestionDeckPreview(question, questionType) {
-  const title = question.text || (questionType === "slide" ? "Nuova slide" : "Nuova domanda");
+function renderQuestionDeckPreview(questionType) {
   return `
     <div class="builder-slide-preview">
       <div class="builder-slide-preview-content">
-        <span class="builder-slide-question">${escapeHtml(title)}</span>
         ${renderQuestionTypeSilhouette(questionType)}
       </div>
     </div>
@@ -1591,6 +1590,7 @@ function bindEvents() {
   document.querySelectorAll("[data-action]").forEach((element) => {
     element.addEventListener("click", handleAction);
   });
+  bindBuilderDeckDragEvents();
   document.querySelectorAll("[data-quiz-title]").forEach((element) => {
     element.addEventListener("input", () => {
       local.quiz.title = element.value;
@@ -1902,6 +1902,91 @@ function moveQuestion(index, direction) {
   local.imageSuggestions = {};
   local.imageGenerating = {};
   render();
+}
+
+function reorderQuestion(fromIndex, insertIndex) {
+  const questions = local.quiz.questions;
+  if (!Array.isArray(questions) || questions.length <= 1) return;
+  if (fromIndex < 0 || fromIndex >= questions.length) return;
+  const boundedInsertIndex = Math.min(Math.max(insertIndex, 0), questions.length);
+  if (boundedInsertIndex === fromIndex || boundedInsertIndex === fromIndex + 1) return;
+  const selectedQuestion = questions[selectedBuilderQuestionIndex()];
+  const [question] = questions.splice(fromIndex, 1);
+  const finalIndex = boundedInsertIndex > fromIndex ? boundedInsertIndex - 1 : boundedInsertIndex;
+  questions.splice(finalIndex, 0, question);
+  local.builderQuestionIndex = Math.max(0, questions.indexOf(selectedQuestion));
+  local.imageSuggestions = {};
+  local.imageGenerating = {};
+  render();
+}
+
+function bindBuilderDeckDragEvents() {
+  document.querySelectorAll(".builder-slide[draggable='true']").forEach((card) => {
+    card.addEventListener("dragstart", handleBuilderDragStart);
+    card.addEventListener("dragover", handleBuilderDragOver);
+    card.addEventListener("dragleave", handleBuilderDragLeave);
+    card.addEventListener("drop", handleBuilderDrop);
+    card.addEventListener("dragend", handleBuilderDragEnd);
+  });
+}
+
+function handleBuilderDragStart(event) {
+  if (!isHostBuilderVisible()) {
+    event.preventDefault();
+    return;
+  }
+  if (event.target && event.target.closest && event.target.closest(".builder-icon-btn")) {
+    event.preventDefault();
+    return;
+  }
+  builderDragIndex = Number(event.currentTarget.dataset.questionIndex);
+  event.currentTarget.classList.add("dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(builderDragIndex));
+  }
+}
+
+function handleBuilderDragOver(event) {
+  if (builderDragIndex === null) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  const card = event.currentTarget;
+  const index = Number(card.dataset.questionIndex);
+  clearBuilderDragIndicators(card);
+  if (index === builderDragIndex) return;
+  const box = card.getBoundingClientRect();
+  const before = event.clientY < box.top + box.height / 2;
+  card.classList.add(before ? "drag-over-before" : "drag-over-after");
+}
+
+function handleBuilderDragLeave(event) {
+  event.currentTarget.classList.remove("drag-over-before", "drag-over-after");
+}
+
+function handleBuilderDrop(event) {
+  if (builderDragIndex === null) return;
+  event.preventDefault();
+  const card = event.currentTarget;
+  const targetIndex = Number(card.dataset.questionIndex);
+  const box = card.getBoundingClientRect();
+  const before = event.clientY < box.top + box.height / 2;
+  const fromIndex = builderDragIndex;
+  builderDragIndex = null;
+  clearBuilderDragIndicators();
+  reorderQuestion(fromIndex, before ? targetIndex : targetIndex + 1);
+}
+
+function handleBuilderDragEnd() {
+  builderDragIndex = null;
+  clearBuilderDragIndicators();
+}
+
+function clearBuilderDragIndicators(exceptCard) {
+  document.querySelectorAll(".builder-slide").forEach((card) => {
+    if (card === exceptCard) return;
+    card.classList.remove("dragging", "drag-over-before", "drag-over-after");
+  });
 }
 
 function handleBuilderKeyboard(event) {

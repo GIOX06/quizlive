@@ -819,6 +819,7 @@ textarea {
 }
 
 .builder-slide {
+  position: relative;
   display: grid;
   grid-template-columns: 2.35rem minmax(0, 1fr);
   gap: 0.65rem;
@@ -829,6 +830,36 @@ textarea {
   background: rgba(255, 255, 255, 0.08);
   color: var(--stage-ink, var(--ink));
   text-align: left;
+}
+
+.builder-slide[draggable="true"] {
+  cursor: grab;
+}
+
+.builder-slide.dragging {
+  cursor: grabbing;
+  opacity: 0.58;
+  transform: scale(0.985);
+}
+
+.builder-slide.drag-over-before::before,
+.builder-slide.drag-over-after::after {
+  content: "";
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  height: 0.22rem;
+  border-radius: 999px;
+  background: #ff9f43;
+  box-shadow: 0 0 0 3px rgba(255, 159, 67, 0.2);
+}
+
+.builder-slide.drag-over-before::before {
+  top: -0.42rem;
+}
+
+.builder-slide.drag-over-after::after {
+  bottom: -0.42rem;
 }
 
 .builder-slide.active {
@@ -847,6 +878,7 @@ textarea {
   padding: 0;
   background: transparent;
   color: inherit;
+  cursor: inherit;
   text-align: left;
 }
 
@@ -921,8 +953,8 @@ textarea {
 }
 
 .question-silhouette {
-  width: min(100%, 5.4rem);
-  min-height: 2.5rem;
+  width: min(100%, 6.2rem);
+  min-height: 3.3rem;
   display: grid;
   gap: 0.28rem;
   align-items: center;
