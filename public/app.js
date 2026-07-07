@@ -17,7 +17,6 @@ let local = {
   quiz: defaultQuiz(),
   selectedAnswer: null,
   selectedAnswers: [],
-  importOpen: false,
   archiveOpen: false,
   archiveLoading: false,
   hostAuth: {
@@ -115,6 +114,7 @@ window.addEventListener("keydown", handleBuilderKeyboard);
 function render() {
   app.innerHTML = shell(renderMain(), renderTopbar());
   bindEvents();
+  syncBuilderDeckScroll();
   updateScreenPresentationRequest();
 }
 
@@ -257,8 +257,6 @@ function renderHostHome() {
       ${renderQuizBuilder()}
       ${local.quizSettingsOpen ? renderQuizSettingsDialog() : ""}
       ${local.mediaDialog ? renderMediaDialog() : ""}
-      ${local.importOpen ? renderImportBox() : ""}
-      ${local.archiveOpen ? renderArchiveBox() : ""}
     </section>
   `;
 }
@@ -308,7 +306,7 @@ function renderQuizBuilder() {
       <section class="builder-preview stack">
         ${question ? editing ? renderQuestionPreviewEditor(question, questionIndex) : renderQuestionHostPreview(question, questionIndex) : `<div class="empty">Aggiungi una domanda</div>`}
       </section>
-      ${question ? editing ? renderQuestionProperties(question, questionIndex) : renderQuestionReadOnlyProperties(question, questionIndex) : ""}
+      ${renderBuilderSidePanel(question, questionIndex, editing)}
     </div>
   `;
 }
@@ -319,6 +317,23 @@ function selectedBuilderQuestionIndex() {
   const index = Math.min(Math.max(Number(local.builderQuestionIndex) || 0, 0), count - 1);
   local.builderQuestionIndex = index;
   return index;
+}
+
+function syncBuilderDeckScroll() {
+  if (local.mode !== "host") return;
+  requestAnimationFrame(() => {
+    const activeCard = document.querySelector(".builder-slide.active");
+    const deck = document.querySelector("[data-builder-deck]");
+    if (!activeCard || !deck) return;
+    const activeBox = activeCard.getBoundingClientRect();
+    const deckBox = deck.getBoundingClientRect();
+    const margin = 8;
+    if (activeBox.top < deckBox.top + margin) {
+      deck.scrollTop -= deckBox.top + margin - activeBox.top;
+    } else if (activeBox.bottom > deckBox.bottom - margin) {
+      deck.scrollTop += activeBox.bottom - (deckBox.bottom - margin);
+    }
+  });
 }
 
 function renderQuestionDeck(selectedIndex) {
@@ -333,46 +348,63 @@ function renderQuestionDeck(selectedIndex) {
       </div>
       <div class="stack">
         <button class="btn blue" data-action="add-question">Aggiungi</button>
-        <button class="btn ghost" data-action="add-slide">Aggiungi slide</button>
-        <button class="btn primary" data-action="create-room">${local.hostEditingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
-        <button class="btn gold" data-action="quick-start-room">${local.hostEditingRoom ? "Aggiorna e avvia" : "Avvia subito"}</button>
-        <button class="btn teal" data-action="save-quiz">Salva quiz</button>
-      </div>
-      <div class="builder-deck-tools">
-        <button class="btn small ghost" data-action="toggle-import">Import XLSX</button>
-        <button class="btn small ghost" data-action="download-template-xlsx">Modello</button>
-        <button class="btn small ghost" data-action="download-quiz-xlsx">Export</button>
-        <button class="btn small ghost" data-action="toggle-archive">Archivio</button>
       </div>
     </aside>
   `;
 }
 
+function renderBuilderSidePanel(question, questionIndex, editing) {
+  return `
+    <aside class="builder-side stack">
+      ${renderBuilderRoomActions()}
+      ${question ? editing ? renderQuestionProperties(question, questionIndex) : renderQuestionReadOnlyProperties(question, questionIndex) : ""}
+    </aside>
+  `;
+}
+
+function renderBuilderRoomActions() {
+  return `
+    <section class="builder-actions-panel panel stack">
+      <div>
+        <h2 class="section-title">Partita</h2>
+        <p class="subtle">Crea stanza e salva il quiz.</p>
+      </div>
+      <button class="btn primary" data-action="create-room">${local.hostEditingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
+      <button class="btn teal" data-action="save-quiz">Salva quiz</button>
+    </section>
+  `;
+}
+
 function renderQuestionSlideCard(question, index, selectedIndex) {
   const questionType = normalizeQuestionType(question.type);
-  const hasMedia = Boolean(question.imageUrl || question.videoUrl);
   const active = index === selectedIndex;
   return `
     <article class="builder-slide ${active ? "active" : ""} ${active && local.builderEditing ? "editing" : ""}">
-      <button class="builder-slide-select" data-action="select-builder-question" data-question-index="${index}" aria-label="Domanda ${index + 1}">
-        <div class="builder-slide-head">
-          <strong>${index + 1}</strong>
-          <span>${escapeHtml(questionTypeLabel(questionType))}</span>
-        </div>
-        <div class="builder-slide-preview">
-          ${renderQuestionTypeSilhouette(questionType)}
-        </div>
-        <div class="builder-slide-body">
-          <span class="builder-slide-time">${questionType === "slide" ? "SLD" : `${Number(question.timeLimit) || 20}s`}</span>
-          <span class="builder-slide-media">${hasMedia ? "IMG" : "+"}</span>
-        </div>
-      </button>
       <div class="builder-slide-actions">
         <button class="builder-icon-btn" data-action="edit-builder-question" data-question-index="${index}" aria-label="Modifica domanda ${index + 1}">&#9998;</button>
         <button class="builder-icon-btn" data-action="move-question" data-question-index="${index}" data-direction="-1" ${index === 0 ? "disabled" : ""} aria-label="Sposta su">&#8593;</button>
         <button class="builder-icon-btn" data-action="move-question" data-question-index="${index}" data-direction="1" ${index >= local.quiz.questions.length - 1 ? "disabled" : ""} aria-label="Sposta giu">&#8595;</button>
       </div>
+      <button class="builder-slide-select" data-action="select-builder-question" data-question-index="${index}" aria-label="Domanda ${index + 1}">
+        <div class="builder-slide-head">
+          <strong>${index + 1}</strong>
+          <span>${escapeHtml(questionTypeLabel(questionType))}</span>
+        </div>
+        ${renderQuestionDeckPreview(question, questionType)}
+      </button>
     </article>
+  `;
+}
+
+function renderQuestionDeckPreview(question, questionType) {
+  const title = question.text || (questionType === "slide" ? "Nuova slide" : "Nuova domanda");
+  return `
+    <div class="builder-slide-preview">
+      <div class="builder-slide-preview-content">
+        <span class="builder-slide-question">${escapeHtml(title)}</span>
+        ${renderQuestionTypeSilhouette(questionType)}
+      </div>
+    </div>
   `;
 }
 
@@ -508,7 +540,7 @@ function renderSlideHostPreview(question, questionIndex) {
 
 function renderBuilderPreviewMedia(question) {
   const imageUrl = normalizeImageUrl(question.imageUrl);
-  if (!imageUrl) return `<div class="builder-preview-media empty-media"></div>`;
+  if (!imageUrl) return "";
   return `
     <div class="builder-preview-media">
       <img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(question.imageAlt || "")}" />
@@ -686,6 +718,20 @@ function renderQuizSettingsDialog() {
           <input data-quiz-team-mode type="checkbox" ${local.quiz.teamMode ? "checked" : ""} />
           <span>Team mode: dividi automaticamente i giocatori in squadre</span>
         </label>
+        <section class="settings-tools stack">
+          <div>
+            <h3 class="mini-title">File e archivio</h3>
+            <p class="subtle">Importa, esporta, scarica il modello o apri l'archivio quiz.</p>
+          </div>
+          <input data-field="import-xlsx" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
+          <div class="toolbar">
+            <button class="btn teal" data-action="apply-import-xlsx">Importa XLSX</button>
+            <button class="btn ghost" data-action="download-template-xlsx">Modello XLSX</button>
+            <button class="btn ghost" data-action="download-quiz-xlsx">Export XLSX</button>
+            <button class="btn ghost" data-action="toggle-archive">${local.archiveOpen ? "Chiudi archivio" : "Archivio"}</button>
+          </div>
+        </section>
+        ${local.archiveOpen ? renderArchiveBox() : ""}
       </section>
     </div>
   `;
@@ -742,26 +788,9 @@ function imageThumbStyle(color) {
   return /^#[0-9a-f]{6}$/i.test(value) ? `--thumb-color:${escapeAttr(value)}` : "";
 }
 
-function renderImportBox() {
-  return `
-    <div class="panel flat stack">
-      <div>
-        <h2 class="mini-title">Importa quiz XLSX</h2>
-        <p class="subtle">Usa il modello QuizLive, compila le righe in Excel, Numbers o Google Sheets, poi ricarica il file qui.</p>
-      </div>
-      <input data-field="import-xlsx" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
-      <div class="toolbar">
-        <button class="btn teal" data-action="apply-import-xlsx">Importa XLSX</button>
-        <button class="btn ghost" data-action="download-template-xlsx">Scarica modello</button>
-        <button class="btn ghost" data-action="toggle-import">Chiudi</button>
-      </div>
-    </div>
-  `;
-}
-
 function renderArchiveBox() {
   return `
-    <div class="panel flat stack archive-panel">
+    <div class="stack archive-panel">
       <div class="archive-head">
         <div>
           <h2 class="section-title">Archivio</h2>
@@ -1740,17 +1769,18 @@ function handleAction(event) {
   const target = event.currentTarget;
 
   if (action === "add-question") addQuestion();
-  if (action === "add-slide") addSlide();
   if (action === "remove-question") removeQuestion(Number(target.dataset.questionIndex));
   if (action === "select-builder-question") selectBuilderQuestion(Number(target.dataset.questionIndex));
   if (action === "edit-builder-question") editBuilderQuestion(Number(target.dataset.questionIndex));
   if (action === "move-question") moveQuestion(Number(target.dataset.questionIndex), Number(target.dataset.direction));
   if (action === "toggle-quiz-settings") {
     local.quizSettingsOpen = !local.quizSettingsOpen;
+    if (!local.quizSettingsOpen) local.archiveOpen = false;
     render();
   }
   if (action === "close-quiz-settings") {
     local.quizSettingsOpen = false;
+    local.archiveOpen = false;
     render();
   }
   if (action === "add-answer") addAnswer(Number(target.dataset.questionIndex));
@@ -1764,11 +1794,6 @@ function handleAction(event) {
   if (action === "open-question-image-dialog") openQuestionImageDialog(Number(target.dataset.questionIndex));
   if (action === "open-answer-image-dialog") openAnswerImageDialog(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
   if (action === "close-media-dialog") closeMediaDialog();
-  if (action === "toggle-import") {
-    local.importOpen = !local.importOpen;
-    local.importText = local.importText || JSON.stringify(local.quiz, null, 2);
-    render();
-  }
   if (action === "toggle-archive") toggleArchive();
   if (action === "set-archive-visibility") setArchiveVisibility(target.dataset.archiveVisibility);
   if (action === "refresh-archive") loadArchive();
@@ -1798,7 +1823,6 @@ function handleAction(event) {
   if (action === "disconnect-screen-cast") disconnectScreenFromTv();
   if (action === "join-screen") joinScreen();
   if (action === "create-room") createRoom();
-  if (action === "quick-start-room") createRoom(true);
   if (action === "join-room") joinRoom();
   if (action === "start-game") emitHost("host:start");
   if (action === "reveal-question") emitHost("host:reveal");
@@ -1821,24 +1845,6 @@ function addQuestion() {
     answers: ["Risposta A", "Risposta B", "Risposta C", "Risposta D"],
     answerImages: [],
     correctIndex: 0,
-    points: 0,
-    timeLimit: 20
-  });
-  local.builderQuestionIndex = local.quiz.questions.length - 1;
-  local.builderEditing = true;
-  render();
-}
-
-function addSlide() {
-  local.quiz.questions.push({
-    type: "slide",
-    text: "Nuova slide",
-    subtitle: "",
-    imageUrl: "",
-    answers: [],
-    answerImages: [],
-    correctIndex: 0,
-    correctIndexes: [],
     points: 0,
     timeLimit: 20
   });
@@ -1920,7 +1926,7 @@ function handleBuilderKeyboard(event) {
 function isHostBuilderVisible() {
   if (local.mode !== "host") return false;
   if (local.room && local.room.role !== "host") return false;
-  if (local.mediaDialog || local.quizSettingsOpen || local.importOpen || local.archiveOpen) return false;
+  if (local.mediaDialog || local.quizSettingsOpen) return false;
   return Boolean(local.quiz && Array.isArray(local.quiz.questions));
 }
 
@@ -2174,7 +2180,7 @@ function applyImport() {
     const parsed = JSON.parse(local.importText);
     local.quiz = cleanQuiz(parsed);
     local.currentQuizId = null;
-    local.importOpen = false;
+    local.quizSettingsOpen = false;
     showToast("Quiz importato");
     render();
   } catch (error) {
@@ -2202,7 +2208,10 @@ async function importQuizXlsx() {
     if (!response.ok || !data.ok) throw new Error(data.error || "Import non riuscito");
     local.quiz = cleanQuiz(data.quiz);
     local.currentQuizId = null;
-    local.importOpen = false;
+    local.quizSettingsOpen = false;
+    local.archiveOpen = false;
+    local.builderQuestionIndex = 0;
+    local.builderEditing = false;
     showToast("Quiz XLSX importato");
     render();
   } catch (error) {

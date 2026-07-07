@@ -538,6 +538,10 @@ textarea {
   width: min(1500px, 100%);
 }
 
+.shell-host .main {
+  width: min(1600px, 100%);
+}
+
 .split {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
@@ -773,13 +777,13 @@ textarea {
 
 .builder-studio {
   display: grid;
-  grid-template-columns: minmax(12rem, 0.52fr) minmax(28rem, 1.95fr) minmax(18rem, 0.72fr);
+  grid-template-columns: minmax(20rem, 0.85fr) minmax(30rem, 1.55fr) minmax(18rem, 0.7fr);
   gap: 1rem;
   align-items: start;
 }
 
 .builder-deck,
-.builder-properties {
+.builder-side {
   position: sticky;
   top: 6.3rem;
   max-height: calc(100vh - 7.4rem);
@@ -795,9 +799,10 @@ textarea {
 
 .builder-slide {
   display: grid;
-  gap: 0.5rem;
-  min-height: 8.4rem;
-  padding: 0.7rem;
+  grid-template-columns: 2.35rem minmax(0, 1fr);
+  gap: 0.65rem;
+  min-height: 9rem;
+  padding: 0.6rem;
   border: 2px solid transparent;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.08);
@@ -825,7 +830,6 @@ textarea {
 }
 
 .builder-slide-head,
-.builder-slide-body,
 .builder-properties-head {
   display: flex;
   align-items: center;
@@ -839,36 +843,15 @@ textarea {
   font-weight: 850;
 }
 
-.builder-slide-body {
-  justify-content: space-between;
-}
-
-.builder-slide-time,
-.builder-slide-media {
-  min-width: 2.4rem;
-  height: 2.4rem;
-  padding: 0 0.35rem;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 139, 45, 0.25);
-  border-radius: 8px;
-  color: var(--stage-muted, var(--muted));
-  font-size: 0.78rem;
-  font-weight: 900;
-}
-
-.builder-slide-media {
-  border-style: dashed;
-}
-
 .builder-slide-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  align-content: start;
   gap: 0.35rem;
 }
 
 .builder-icon-btn {
-  min-height: 2.1rem;
+  width: 2.15rem;
+  min-height: 2.15rem;
   display: grid;
   place-items: center;
   border: 1px solid rgba(255, 139, 45, 0.25);
@@ -883,32 +866,57 @@ textarea {
 }
 
 .builder-slide-preview {
-  min-height: 4rem;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
   display: grid;
   place-items: center;
+  overflow: hidden;
+  padding: 0.45rem;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.18);
 }
 
-.question-silhouette {
-  width: min(100%, 7rem);
-  min-height: 3.2rem;
+.builder-slide-preview-content {
+  width: 100%;
+  height: 100%;
   display: grid;
-  gap: 0.4rem;
+  align-content: center;
+  justify-items: center;
+  gap: 0.35rem;
+  text-align: center;
+}
+
+.builder-slide-question {
+  width: 100%;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--stage-ink, #fff);
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.12;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.question-silhouette {
+  width: min(100%, 5.4rem);
+  min-height: 2.5rem;
+  display: grid;
+  gap: 0.28rem;
   align-items: center;
   justify-content: center;
 }
 
 .question-silhouette.multiple,
 .question-silhouette.multi-select {
-  grid-template-columns: repeat(2, 2rem);
+  grid-template-columns: repeat(2, 1.6rem);
 }
 
 .question-silhouette.multiple span,
 .question-silhouette.multi-select span {
-  width: 2rem;
-  height: 1.15rem;
+  width: 1.6rem;
+  height: 0.82rem;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.82);
 }
@@ -931,31 +939,31 @@ textarea {
 }
 
 .question-silhouette.true-false {
-  grid-template-columns: repeat(2, 2.4rem);
+  grid-template-columns: repeat(2, 2rem);
 }
 
 .question-silhouette.true-false span,
 .question-silhouette.speed span {
-  width: 2.4rem;
-  height: 2.4rem;
+  width: 2rem;
+  height: 2rem;
   display: grid;
   place-items: center;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.88);
   color: #172026;
-  font-size: 1.5rem;
+  font-size: 1.2rem;
   font-weight: 950;
 }
 
 .question-silhouette.speed span {
-  width: 3rem;
-  height: 3rem;
+  width: 2.2rem;
+  height: 2.2rem;
   color: #ff8a2d;
 }
 
 .question-silhouette.slide {
-  width: min(100%, 6.6rem);
-  grid-template-rows: 0.75rem 0.45rem 2rem;
+  width: min(100%, 5rem);
+  grid-template-rows: 0.55rem 0.36rem 1.25rem;
 }
 
 .question-silhouette.slide span {
@@ -974,17 +982,14 @@ textarea {
   opacity: 0.36;
 }
 
-.builder-deck-tools {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
 .builder-live-preview {
-  min-height: calc(100vh - 8rem);
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100vh - 8rem);
   display: grid;
   align-content: start;
   gap: 1.25rem;
+  overflow: auto;
   padding: clamp(1rem, 2.5vw, 1.6rem);
   border: 1px solid rgba(255, 139, 45, 0.22);
   border-radius: 8px;
@@ -1080,6 +1085,41 @@ textarea {
   align-content: center;
 }
 
+.builder-preview-only .builder-preview-question {
+  gap: 0.45rem;
+}
+
+.builder-preview-only .builder-preview-question h2 {
+  font-size: clamp(1.2rem, 2.4vw, 2.25rem);
+  line-height: 1.08;
+}
+
+.builder-preview-only .answers-grid {
+  gap: 0.55rem;
+  padding: 0;
+}
+
+.builder-preview-only .answer-stat {
+  min-height: 3.8rem;
+  grid-template-columns: 2.1rem minmax(0, 1fr);
+  gap: 0.55rem;
+  padding: 0.65rem;
+}
+
+.builder-preview-only .answer-stat.has-image {
+  grid-template-columns: 2.1rem minmax(3.5rem, 0.34fr) minmax(0, 1fr);
+}
+
+.builder-preview-only .answer-stat .letter {
+  width: 2.1rem;
+  height: 2.1rem;
+  font-size: 1rem;
+}
+
+.builder-preview-only .answer-stat .answer-text {
+  font-size: 1rem;
+}
+
 .builder-preview-question {
   display: grid;
   gap: 0.75rem;
@@ -1111,10 +1151,6 @@ textarea {
   max-height: 36vh;
   object-fit: contain;
   border-radius: 8px;
-}
-
-.builder-preview-media.empty-media {
-  min-height: 4rem;
 }
 
 .builder-answer-grid {
@@ -1205,6 +1241,15 @@ textarea {
 
 .builder-properties {
   align-content: start;
+}
+
+.builder-actions-panel {
+  align-content: start;
+}
+
+.settings-tools {
+  border-top: 1px solid var(--stage-line, var(--line));
+  padding-top: 1rem;
 }
 
 .settings-backdrop {
@@ -2159,7 +2204,7 @@ textarea {
   }
 
   .builder-deck,
-  .builder-properties {
+  .builder-side {
     position: static;
     max-height: none;
   }
