@@ -1021,6 +1021,7 @@ function serializeRoom(room, socket) {
           videoUrl: question.videoUrl,
           answers: question.answers.map((answer, index) => ({
             text: answer,
+            imageUrl: answerImageUrl(question, index),
             index,
             correct: revealMode ? correctIndexes(question).includes(index) : undefined,
             count: answerCountMode ? countAnswers(answerMap, index) : undefined
@@ -1229,6 +1230,7 @@ function resultsToJson(room) {
       imagePageUrl: question.imagePageUrl,
       videoUrl: question.videoUrl,
       answers: question.answers,
+      answerImages: normalizedAnswerImages(question, question.answers.length),
       correctIndex: question.correctIndex,
       correctIndexes: correctIndexes(question),
       points: question.points || 0,
@@ -1637,6 +1639,16 @@ function answerTextForIndexes(question, indexes) {
     .join("; ");
 }
 
+function answerImageUrl(question, index) {
+  const images = Array.isArray(question && question.answerImages) ? question.answerImages : [];
+  return normalizeImageUrl(images[index]);
+}
+
+function normalizedAnswerImages(question, count) {
+  const images = Array.isArray(question && question.answerImages) ? question.answerImages : [];
+  return Array.from({ length: Math.max(0, count) }, (_item, index) => normalizeImageUrl(images[index]));
+}
+
 function questionStats(question, answerMap, playerCount) {
   const answers = Array.from(answerMap.values());
   const correct = answers.filter((answer) => answer.correct).length;
@@ -1674,10 +1686,11 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Tag", normalizedQuiz.tags.join(", ")],
     ["Team mode", normalizedQuiz.teamMode ? "si" : "no"],
     [],
-    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Punti", "Corretta", "Immagine URL", "Alt immagine", "Credito immagine", "Link fotografo", "Link foto", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F"]
+    ["Ordine", "Tipo", "Domanda", "Tempo secondi", "Punti", "Corretta", "Immagine URL", "Alt immagine", "Credito immagine", "Link fotografo", "Link foto", "Video URL", "Risposta A", "Risposta B", "Risposta C", "Risposta D", "Risposta E", "Risposta F", "Immagine risposta A", "Immagine risposta B", "Immagine risposta C", "Immagine risposta D", "Immagine risposta E", "Immagine risposta F"]
   ];
 
   normalizedQuiz.questions.forEach((question, index) => {
+    const answerImages = normalizedAnswerImages(question, 6);
     rows.push([
       index + 1,
       questionTypeForWorkbook(question.type),
@@ -1691,7 +1704,8 @@ function quizToWorkbook(quiz, isTemplate) {
       question.imageCreditUrl || "",
       question.imagePageUrl || "",
       question.videoUrl || "",
-      ...Array.from({ length: 6 }, (_item, answerIndex) => question.answers[answerIndex] || "")
+      ...Array.from({ length: 6 }, (_item, answerIndex) => question.answers[answerIndex] || ""),
+      ...answerImages
     ]);
   });
 
@@ -1715,7 +1729,13 @@ function quizToWorkbook(quiz, isTemplate) {
     { wch: 22 },
     { wch: 22 },
     { wch: 22 },
-    { wch: 22 }
+    { wch: 22 },
+    { wch: 34 },
+    { wch: 34 },
+    { wch: 34 },
+    { wch: 34 },
+    { wch: 34 },
+    { wch: 34 }
   ];
   XLSX.utils.book_append_sheet(workbook, quizSheet, "QuizLive");
 
@@ -1729,7 +1749,7 @@ function quizToWorkbook(quiz, isTemplate) {
     ["Punti", "Lascia vuoto per standard oppure usa 250, 500, 750, 1000 o 1500."],
     ["Corretta", "Scrivi A, B, C, D, E o F. Per risposte_multiple usa piu lettere, ad esempio A,C."],
     ["Libreria", "Cartella organizza l'archivio. Visibilita accetta privata o pubblica."],
-    ["Media", "Immagine URL accetta link http/https o media caricati da QuizLive. Video URL accetta link http/https pubblici."],
+    ["Media", "Immagine URL accetta link http/https o media caricati da QuizLive. Puoi usare anche Immagine risposta A-F per immagini sui bottoni risposta."],
     ["Vero/Falso", "Per vero_falso usa A per Vero oppure B per Falso. Le risposte verranno normalizzate."],
     ["Limiti", "Massimo 50 domande, 2-6 risposte, tempo da 5 a 90 secondi."]
   ]);
@@ -1772,6 +1792,14 @@ function workbookToQuiz(workbook) {
   const imagePageUrlIndex = indexFor("link_foto", "pagina_immagine", "image_page_url");
   const videoIndex = indexFor("video_url", "video");
   const answerIndexes = ["risposta_a", "risposta_b", "risposta_c", "risposta_d", "risposta_e", "risposta_f"].map((name) => indexFor(name));
+  const answerImageIndexes = [
+    ["immagine_risposta_a", "image_answer_a", "answer_image_a"],
+    ["immagine_risposta_b", "image_answer_b", "answer_image_b"],
+    ["immagine_risposta_c", "image_answer_c", "answer_image_c"],
+    ["immagine_risposta_d", "image_answer_d", "answer_image_d"],
+    ["immagine_risposta_e", "image_answer_e", "answer_image_e"],
+    ["immagine_risposta_f", "image_answer_f", "answer_image_f"]
+  ].map((names) => indexFor(...names));
 
   const questions = rows.slice(headerIndex + 1).map((row, index) => {
     const text = String(row[textIndex] || "").trim();
@@ -1781,6 +1809,11 @@ function workbookToQuiz(workbook) {
       .map((answerIndex) => answerIndex >= 0 ? String(row[answerIndex] || "").trim() : "")
       .filter(Boolean);
     const normalizedAnswers = type === "true_false" ? ["Vero", "Falso"] : answers;
+    const answerImages = type === "true_false"
+      ? []
+      : answerImageIndexes
+        .map((answerImageIndex) => answerImageIndex >= 0 ? String(row[answerImageIndex] || "").trim() : "")
+        .slice(0, normalizedAnswers.length);
     return {
       type,
       text,
@@ -1792,6 +1825,7 @@ function workbookToQuiz(workbook) {
       imageProvider: row[imageCreditIndex] ? "Pexels" : "",
       videoUrl: row[videoIndex] || "",
       answers: normalizedAnswers,
+      answerImages,
       correctIndexes: parseCorrectIndexes(row[correctIndex], normalizedAnswers, type),
       points: pointsIndex >= 0 ? Number(row[pointsIndex]) || 0 : 0,
       timeLimit: Number(row[timeIndex]) || 20
@@ -2360,6 +2394,7 @@ function normalizeQuestion(item, index) {
     imagePageUrl: normalizeMediaUrl(item && item.imagePageUrl),
     videoUrl: normalizeMediaUrl(item && item.videoUrl),
     answers: normalizedAnswers,
+    answerImages: type === "true_false" ? [] : normalizedAnswerImages(item, normalizedAnswers.length),
     correctIndex,
     correctIndexes: normalizedCorrectIndexes,
     points,

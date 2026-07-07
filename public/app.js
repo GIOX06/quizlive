@@ -115,6 +115,8 @@ function render() {
 
 function renderTopbar() {
   const room = local.room;
+  const surface = shellSurface();
+  const environment = `<span class="status-pill environment-pill environment-${surface}">${escapeHtml(environmentLabel(surface))}</span>`;
   const code = room ? `<span class="room-code">${escapeHtml(room.code)}</span>` : "";
   const status = room ? `<span class="status-pill">${statusLabel(room.status)}</span>` : `<span class="status-pill">${socket.connected ? "Online" : "Offline"}</span>`;
   return `
@@ -126,9 +128,15 @@ function renderTopbar() {
           <p class="subtle">${room ? escapeHtml(room.title) : "Live quiz web"}</p>
         </div>
       </div>
-      <div class="toolbar right">${code}${status}</div>
+      <div class="toolbar right">${environment}${code}${status}</div>
     </header>
   `;
+}
+
+function environmentLabel(surface = shellSurface()) {
+  if (surface === "host") return "Ambiente host";
+  if (surface === "screen") return "Ambiente monitor";
+  return "Ambiente giocatore";
 }
 
 function renderMain() {
@@ -224,12 +232,13 @@ function renderCastScreenButton() {
 
 function renderHostHome() {
   const editingRoom = local.hostEditingRoom && local.room && local.room.role === "host";
+  const quizMeta = `${local.quiz.questions.length} domande${local.quiz.folder ? ` - ${escapeHtml(local.quiz.folder)}` : ""}`;
   return `
     <section class="host-builder-shell stack">
       <div class="host-header">
         <div>
           <h1 class="section-title">${editingRoom ? `Cambia quiz stanza ${escapeHtml(local.room.code)}` : "Crea partita"}</h1>
-          <p class="subtle">${editingRoom ? "Modifica quiz mantenendo codice, monitor e giocatori." : `${local.quiz.questions.length} domande - ${escapeHtml(local.quiz.subject || "Nessuna materia")}`}</p>
+          <p class="subtle">${editingRoom ? "Modifica quiz mantenendo codice, monitor e giocatori." : quizMeta}</p>
         </div>
         <div class="toolbar">
           <button class="btn ghost" data-action="toggle-quiz-settings">Impostazioni</button>
@@ -332,25 +341,36 @@ function renderQuestionDeck(selectedIndex) {
 }
 
 function renderQuestionSlideCard(question, index, selectedIndex) {
-  const answers = editableAnswers(question).slice(0, 4);
-  const title = String(question.text || `Domanda ${index + 1}`).trim();
+  const questionType = normalizeQuestionType(question.type);
   const hasMedia = Boolean(question.imageUrl || question.videoUrl);
   return `
     <button class="builder-slide ${index === selectedIndex ? "active" : ""}" data-action="select-builder-question" data-question-index="${index}">
       <div class="builder-slide-head">
         <strong>${index + 1}</strong>
-        <span>${escapeHtml(questionTypeLabel(question.type))}</span>
+        <span>${escapeHtml(questionTypeLabel(questionType))}</span>
+      </div>
+      <div class="builder-slide-preview">
+        ${renderQuestionTypeSilhouette(questionType)}
       </div>
       <div class="builder-slide-body">
-        <span class="builder-slide-time">${Number(question.timeLimit) || 20}</span>
+        <span class="builder-slide-time">${Number(question.timeLimit) || 20}s</span>
         <span class="builder-slide-media">${hasMedia ? "IMG" : "+"}</span>
-      </div>
-      <p>${escapeHtml(title || "Nuova domanda")}</p>
-      <div class="builder-slide-lines">
-        ${answers.map((answer) => `<span>${answer ? escapeHtml(answer) : ""}</span>`).join("")}
       </div>
     </button>
   `;
+}
+
+function renderQuestionTypeSilhouette(type) {
+  if (type === "true_false") {
+    return `<div class="question-silhouette true-false"><span>&#10003;</span><span>&times;</span></div>`;
+  }
+  if (type === "speed") {
+    return `<div class="question-silhouette speed"><span>&#9889;</span></div>`;
+  }
+  if (type === "multiple_select") {
+    return `<div class="question-silhouette multi-select"><span></span><span></span><span></span><span></span></div>`;
+  }
+  return `<div class="question-silhouette multiple"><span></span><span></span><span></span><span></span></div>`;
 }
 
 function renderQuestionPreviewEditor(question, questionIndex) {
@@ -389,27 +409,48 @@ function renderBuilderMediaPanel(question, questionIndex) {
 function renderBuilderAnswerCards(question, questionIndex, questionType) {
   const answers = editableAnswers(question);
   const correctIndexes = correctIndexesForQuestion(question, answers);
+  const answerImages = answerImagesForQuestion(question, answers.length);
   return `
     <div class="builder-answer-grid">
       ${answers.map((answer, answerIndex) => {
         const correct = correctIndexes.includes(answerIndex);
         const optional = answerIndex > 1 ? " facoltativa" : "";
+        const rawImageUrl = answerImages[answerIndex] || "";
+        const imageUrl = normalizeImageUrl(rawImageUrl);
         return `
-          <div class="builder-answer-card answer-${letterClass(answerIndex)}">
+          <div class="builder-answer-card answer-${letterClass(answerIndex)} ${imageUrl ? "has-answer-image" : ""}">
             <span class="builder-answer-symbol">${answerShape(answerIndex)}</span>
-            <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" placeholder="Aggiungi risposta ${answerIndex + 1}${optional}" ${questionType === "true_false" ? "readonly" : ""} />
-            <label class="builder-correct-toggle">
-              ${questionType === "multiple_select"
-                ? `<input type="checkbox" data-correct-checkbox data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${correct ? "checked" : ""} />`
-                : `<input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${correct ? "checked" : ""} />`}
-              Corretta
-            </label>
-            ${questionType !== "true_false" && answers.length > 2 ? `<button class="btn small ghost" data-action="remove-answer" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi</button>` : ""}
+            <div class="builder-answer-fields">
+              <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" placeholder="Aggiungi risposta ${answerIndex + 1}${optional}" ${questionType === "true_false" ? "readonly" : ""} />
+              <label class="builder-correct-toggle">
+                ${questionType === "multiple_select"
+                  ? `<input type="checkbox" data-correct-checkbox data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${correct ? "checked" : ""} />`
+                  : `<input type="radio" name="correct-${questionIndex}" data-correct-radio data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${correct ? "checked" : ""} />`}
+                Corretta
+              </label>
+              ${questionType !== "true_false" ? renderBuilderAnswerImageTools(questionIndex, answerIndex, rawImageUrl, imageUrl) : ""}
+              ${questionType !== "true_false" && answers.length > 2 ? `<button class="btn small ghost" data-action="remove-answer" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi</button>` : ""}
+            </div>
           </div>
         `;
       }).join("")}
     </div>
     ${questionType !== "true_false" && answers.length < 6 ? `<button class="btn ghost builder-add-answer" data-action="add-answer" data-question-index="${questionIndex}">Aggiungi altre risposte</button>` : ""}
+  `;
+}
+
+function renderBuilderAnswerImageTools(questionIndex, answerIndex, rawImageUrl, imageUrl) {
+  return `
+    <div class="builder-answer-image-tools">
+      <div class="builder-answer-image-preview">
+        ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="Anteprima immagine risposta" />` : `<span>Immagine</span>`}
+      </div>
+      <div class="builder-answer-image-controls">
+        <input class="file-input" data-answer-image-upload data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+        <input data-answer-image-url data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(rawImageUrl)}" maxlength="500" placeholder="https:// immagine risposta" />
+        ${imageUrl ? `<button class="btn small ghost" data-action="clear-answer-image" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi immagine</button>` : ""}
+      </div>
+    </div>
   `;
 }
 
@@ -477,28 +518,8 @@ function renderQuizSettingsDialog() {
         </label>
         <div class="grid-2">
           <label class="stack">
-            <span>Materia</span>
-            <input data-quiz-meta="subject" value="${escapeAttr(local.quiz.subject || "")}" maxlength="40" placeholder="Es. Matematica" />
-          </label>
-          <label class="stack">
-            <span>Livello/Classe</span>
-            <input data-quiz-meta="level" value="${escapeAttr(local.quiz.level || "")}" maxlength="40" placeholder="Es. 2 media" />
-          </label>
-        </div>
-        <div class="grid-2">
-          <label class="stack">
-            <span>Lingua</span>
-            <input data-quiz-meta="language" value="${escapeAttr(local.quiz.language || "Italiano")}" maxlength="32" />
-          </label>
-          <label class="stack">
             <span>Cartella</span>
             <input data-quiz-meta="folder" value="${escapeAttr(local.quiz.folder || "")}" maxlength="40" placeholder="Es. 2B ripasso" />
-          </label>
-        </div>
-        <div class="grid-2">
-          <label class="stack">
-            <span>Tag</span>
-            <input data-quiz-tags value="${escapeAttr((local.quiz.tags || []).join(", "))}" maxlength="160" placeholder="ripasso, verifica" />
           </label>
           <label class="stack">
             <span>Visibilita</span>
@@ -508,6 +529,10 @@ function renderQuizSettingsDialog() {
             </select>
           </label>
         </div>
+        <label class="stack">
+          <span>Tag</span>
+          <input data-quiz-tags value="${escapeAttr((local.quiz.tags || []).join(", "))}" maxlength="160" placeholder="ripasso, verifica" />
+        </label>
         <label class="toggle-row">
           <input data-quiz-team-mode type="checkbox" ${local.quiz.teamMode ? "checked" : ""} />
           <span>Team mode: dividi automaticamente i giocatori in squadre</span>
@@ -667,7 +692,7 @@ function renderArchiveBox() {
         </div>
         <button class="btn small ghost" data-action="refresh-archive" ${local.archiveLoading ? "disabled" : ""}>Aggiorna</button>
       </div>
-      <input data-archive-search value="${escapeAttr(local.archiveSearch)}" placeholder="Cerca titolo, cartella, materia, livello, lingua o tag" />
+      <input data-archive-search value="${escapeAttr(local.archiveSearch)}" placeholder="Cerca titolo, cartella, visibilita o tag" />
       <div class="segmented">
         ${archiveVisibilityOptions().map((option) => `
           <button class="${local.archiveVisibility === option.value ? "active" : ""}" data-action="set-archive-visibility" data-archive-visibility="${option.value}">
@@ -781,9 +806,7 @@ function quizVisibilityLabel(value) {
 
 function renderQuizMetaLine(quiz) {
   const parts = [
-    quiz && quiz.subject,
-    quiz && quiz.level,
-    quiz && quiz.language,
+    quiz && quiz.folder,
     quiz && quiz.teamMode ? "Team mode" : ""
   ].filter(Boolean);
   const tags = quiz && Array.isArray(quiz.tags) ? quiz.tags : [];
@@ -852,12 +875,31 @@ function renderHostLobby(room) {
 function renderScreenGame(room) {
   const question = room.question;
   return `
-    <section class="screen-layout">
-      ${room.status === "lobby" ? renderScreenLobby(room) : ""}
-      ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
-      ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
-      ${room.status === "ended" ? renderScreenEnded(room) : ""}
+    <section class="screen-live-layout">
+      ${renderScreenLeaderboardPanel(room)}
+      <div class="screen-live-stage">
+        ${room.status === "lobby" ? renderScreenLobby(room) : ""}
+        ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
+        ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
+        ${room.status === "ended" ? renderScreenEnded(room) : ""}
+      </div>
     </section>
+  `;
+}
+
+function renderScreenLeaderboardPanel(room) {
+  return `
+    <aside class="panel screen-live-sidebar stack">
+      <div>
+        <p class="screen-kicker">Ambiente monitor</p>
+        <h2 class="section-title">Classifica</h2>
+        <p class="subtle">${room.playerCount} giocatori - ${statusLabel(room.status)}</p>
+      </div>
+      ${renderTeamLeaderboard(room)}
+      <div class="screen-live-board">
+        ${renderLeaderboard(room)}
+      </div>
+    </aside>
   `;
 }
 
@@ -937,8 +979,7 @@ function renderScreenEnded(room) {
         ${renderPodium(room)}
       </div>
       <div class="screen-final-board">
-        ${renderTeamLeaderboard(room)}
-        ${renderLeaderboard(room)}
+        <p class="subtle">La classifica completa resta visibile a sinistra.</p>
       </div>
     </div>
   `;
@@ -1340,12 +1381,14 @@ function renderAnswerButton(answer, question, reveal = false) {
   const hasMark = reveal && typeof answer.correct === "boolean";
   const correct = hasMark && answer.correct;
   const wrong = hasMark && !answer.correct;
+  const hasImage = Boolean(answer.imageUrl);
   return `
-    <button class="answer-btn ${answerClasses[answer.index]} ${selected ? "selected" : ""} ${hasMark ? "with-mark" : ""} ${correct ? "correct" : ""} ${wrong ? "wrong" : ""}"
+    <button class="answer-btn ${answerClasses[answer.index]} ${hasImage ? "has-image" : ""} ${selected ? "selected" : ""} ${hasMark ? "with-mark" : ""} ${correct ? "correct" : ""} ${wrong ? "wrong" : ""}"
       data-action="answer"
       data-answer-index="${answer.index}"
       ${question.answered || reveal ? "disabled" : ""}>
       <span class="letter">${answerLetters[answer.index]}</span>
+      ${renderAnswerImage(answer)}
       <span class="answer-text">${escapeHtml(answer.text)}</span>
       ${question.type === "multiple_select" && selected && !reveal ? `<span class="answer-selected-label">Selezionata</span>` : ""}
       ${renderAnswerMark(answer.correct, hasMark)}
@@ -1354,9 +1397,11 @@ function renderAnswerButton(answer, question, reveal = false) {
 }
 
 function renderAnswerDisplay(answer) {
+  const hasImage = Boolean(answer.imageUrl);
   return `
-    <div class="answer-stat ${answerClasses[answer.index]}">
+    <div class="answer-stat ${answerClasses[answer.index]} ${hasImage ? "has-image" : ""}">
       <span class="letter">${answerLetters[answer.index]}</span>
+      ${renderAnswerImage(answer)}
       <span class="answer-text">${escapeHtml(answer.text)}</span>
     </div>
   `;
@@ -1365,14 +1410,22 @@ function renderAnswerDisplay(answer) {
 function renderAnswerStat(answer, playerCount) {
   const percent = playerCount ? Math.round((Number(answer.count || 0) / playerCount) * 100) : 0;
   const hasMark = typeof answer.correct === "boolean";
+  const hasImage = Boolean(answer.imageUrl);
   return `
-    <div class="answer-stat ${answerClasses[answer.index]} ${answer.correct ? "correct" : ""} ${hasMark && !answer.correct ? "incorrect" : ""}">
+    <div class="answer-stat ${answerClasses[answer.index]} ${hasImage ? "has-image" : ""} ${hasMark ? "with-mark" : ""} ${answer.correct ? "correct" : ""} ${hasMark && !answer.correct ? "incorrect" : ""}">
       <span class="letter">${answerLetters[answer.index]}</span>
+      ${renderAnswerImage(answer)}
       <span class="answer-text">${escapeHtml(answer.text)} - ${answer.count || 0}</span>
       ${renderAnswerMark(answer.correct, hasMark)}
       <span class="stat-bar"><span style="width:${percent}%"></span></span>
     </div>
   `;
+}
+
+function renderAnswerImage(answer) {
+  const imageUrl = answer && answer.imageUrl ? String(answer.imageUrl) : "";
+  if (!imageUrl) return "";
+  return `<span class="answer-image"><img src="${escapeAttr(imageUrl)}" alt="" loading="lazy" /></span>`;
 }
 
 function renderAnswerMark(correct, visible) {
@@ -1421,6 +1474,21 @@ function bindEvents() {
   document.querySelectorAll("[data-question-image-upload]").forEach((element) => {
     element.addEventListener("change", () => uploadQuestionImage(element));
   });
+  document.querySelectorAll("[data-answer-image-upload]").forEach((element) => {
+    element.addEventListener("change", () => uploadAnswerImage(element));
+  });
+  document.querySelectorAll("[data-answer-image-url]").forEach((element) => {
+    const updateAnswerImage = () => {
+      const question = local.quiz.questions[Number(element.dataset.questionIndex)];
+      if (!question) return;
+      setAnswerImage(question, Number(element.dataset.answerIndex), element.value);
+    };
+    element.addEventListener("input", updateAnswerImage);
+    element.addEventListener("change", () => {
+      updateAnswerImage();
+      render();
+    });
+  });
   document.querySelectorAll("[data-question-time]").forEach((element) => {
     element.addEventListener("input", () => {
       local.quiz.questions[Number(element.dataset.questionIndex)].timeLimit = Number(element.value);
@@ -1443,14 +1511,19 @@ function bindEvents() {
       question.type = normalizeQuestionType(element.value);
       if (question.type === "true_false") {
         question.answers = ["Vero", "Falso"];
+        question.answerImages = [];
         question.correctIndex = Math.min(Number(question.correctIndex) || 0, 1);
         question.correctIndexes = [question.correctIndex];
       } else if (question.type === "multiple_select") {
         question.answers = question.answers && question.answers.length >= 2 ? question.answers : ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
+        question.answerImages = answerImagesForQuestion(question, editableAnswers(question).length);
         question.correctIndexes = correctIndexesForQuestion(question, editableAnswers(question));
       } else if (!question.answers || question.answers.length < 2) {
         question.answers = ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
+        question.answerImages = answerImagesForQuestion(question, editableAnswers(question).length);
         question.correctIndexes = [Number(question.correctIndex) || 0];
+      } else {
+        question.answerImages = answerImagesForQuestion(question, editableAnswers(question).length);
       }
       render();
     });
@@ -1547,6 +1620,7 @@ function handleAction(event) {
   if (action === "generate-question-image") generateQuestionImage(Number(target.dataset.questionIndex));
   if (action === "select-suggested-image") selectSuggestedImage(Number(target.dataset.questionIndex), Number(target.dataset.imageIndex));
   if (action === "clear-question-image") clearQuestionImage(Number(target.dataset.questionIndex));
+  if (action === "clear-answer-image") clearAnswerImage(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
   if (action === "toggle-import") {
     local.importOpen = !local.importOpen;
     local.importText = local.importText || JSON.stringify(local.quiz, null, 2);
@@ -1602,6 +1676,7 @@ function addQuestion() {
     type: "multiple",
     text: "Nuova domanda",
     answers: ["Risposta A", "Risposta B", "Risposta C", "Risposta D"],
+    answerImages: [],
     correctIndex: 0,
     points: 0,
     timeLimit: 20
@@ -1631,6 +1706,7 @@ function addAnswer(questionIndex) {
   question.answers = editableAnswers(question).slice(0, 6);
   if (question.answers.length >= 6) return;
   question.answers.push("");
+  question.answerImages = answerImagesForQuestion(question, question.answers.length);
   render();
 }
 
@@ -1642,6 +1718,8 @@ function removeAnswer(questionIndex, answerIndex) {
   const previousCorrect = correctIndexesForQuestion(question, answers);
   answers.splice(answerIndex, 1);
   question.answers = answers;
+  question.answerImages = answerImagesForQuestion(question, answers.length + 1);
+  question.answerImages.splice(answerIndex, 1);
   const current = previousCorrect
     .filter((index) => index !== answerIndex)
     .map((index) => index > answerIndex ? index - 1 : index)
@@ -1660,6 +1738,42 @@ function applyTimeToAllQuestions(questionIndex) {
   });
   showToast("Tempo applicato a tutte");
   render();
+}
+
+async function uploadAnswerImage(input) {
+  const questionIndex = Number(input.dataset.questionIndex);
+  const answerIndex = Number(input.dataset.answerIndex);
+  const question = local.quiz.questions[questionIndex];
+  const file = input.files && input.files[0];
+  if (!question || !file || normalizeQuestionType(question.type) === "true_false") return;
+  if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type || "")) {
+    showToast("Carica PNG, JPG, WebP o GIF");
+    input.value = "";
+    return;
+  }
+  if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+    showToast("Immagine troppo grande: massimo 1.5 MB");
+    input.value = "";
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const response = await fetch("/api/media", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ file: dataUrl, filename: file.name })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Upload non riuscito");
+    setAnswerImage(question, answerIndex, data.url);
+    showToast("Immagine risposta caricata");
+    render();
+  } catch (error) {
+    showToast(error.message || "Upload non riuscito");
+    input.value = "";
+  }
 }
 
 async function uploadQuestionImage(input) {
@@ -1789,6 +1903,13 @@ function clearQuestionImage(index) {
   if (!question) return;
   question.imageUrl = "";
   clearImageCredit(question);
+  render();
+}
+
+function clearAnswerImage(questionIndex, answerIndex) {
+  const question = local.quiz.questions[questionIndex];
+  if (!question || normalizeQuestionType(question.type) === "true_false") return;
+  setAnswerImage(question, answerIndex, "");
   render();
 }
 
@@ -2534,6 +2655,7 @@ function cleanQuiz(input) {
         .filter(Boolean)
         .slice(0, 6);
       const correctIndexes = normalizeCorrectIndexes(question, answers, type);
+      const answerImages = type === "true_false" ? [] : normalizeAnswerImages(question.answerImages, answers.length);
       return {
         type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
@@ -2545,6 +2667,7 @@ function cleanQuiz(input) {
         imagePageUrl: normalizeMediaUrl(question.imagePageUrl),
         videoUrl: normalizeMediaUrl(question.videoUrl),
         answers,
+        answerImages,
         correctIndex: correctIndexes[0] || 0,
         correctIndexes,
         points: normalizeQuestionPoints(question.points),
@@ -2568,6 +2691,22 @@ function paddedAnswers(answers) {
 function editableAnswers(question) {
   if (normalizeQuestionType(question.type) === "true_false") return ["Vero", "Falso"];
   return paddedAnswers(question.answers);
+}
+
+function answerImagesForQuestion(question, count) {
+  const source = Array.isArray(question && question.answerImages) ? question.answerImages : [];
+  return Array.from({ length: Math.max(0, count) }, (_item, index) => String(source[index] || "").trim().slice(0, 500));
+}
+
+function setAnswerImage(question, answerIndex, value) {
+  const count = editableAnswers(question).length;
+  question.answerImages = answerImagesForQuestion(question, count);
+  if (answerIndex >= 0 && answerIndex < count) question.answerImages[answerIndex] = String(value || "").trim().slice(0, 500);
+}
+
+function normalizeAnswerImages(images, count) {
+  const source = Array.isArray(images) ? images : [];
+  return Array.from({ length: Math.max(0, count) }, (_item, index) => normalizeImageUrl(source[index]));
 }
 
 function normalizeCorrectIndexes(question, answers, type) {
