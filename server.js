@@ -577,6 +577,23 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:fifty-start", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const challenge = startFiftyChallenge(room, payload || {});
+      const delivered = await dispatchLiveEvent(room, fiftyStartedLiveEvent(challenge));
+      sendAck(ack, { ok: true, delivered, challenge: serializeFiftyChallenge(challenge) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("screen:watch", async (_payload, ack) => {
     try {
       await sendScreenToWaiting(socket);
@@ -713,6 +730,23 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("player:fifty-hold", async (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+
+    try {
+      const result = updateFiftyHold(room, player, payload || {});
+      sendAck(ack, { ok: true, ...result });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("disconnect", () => {
     const code = socket.data.roomCode;
     if (!code) return;
@@ -761,6 +795,7 @@ function createRoom(quiz, hostSocketId) {
     players: new Map(),
     answers: new Map(),
     wagers: createWagerState(),
+    fifty: createFiftyState(),
     timer: null,
     resultId: null,
     createdAt: Date.now()
@@ -817,6 +852,8 @@ async function resetRoom(room) {
   room.resultId = null;
   room.answers.clear();
   room.wagers = createWagerState();
+  clearFiftyChallenge(room);
+  room.fifty = createFiftyState();
 
   if (invitePreviousPlayers) {
     inviteRematchPlayers(room);
@@ -842,6 +879,8 @@ async function updateRoomQuiz(room, quiz) {
   room.resultId = null;
   room.answers.clear();
   room.wagers = createWagerState();
+  clearFiftyChallenge(room);
+  room.fifty = createFiftyState();
 
   if (invitePreviousPlayers) {
     inviteRematchPlayers(room);
@@ -903,6 +942,7 @@ function reattachPlayerSocket(room, player, socket, nickname) {
       answerMap.delete(previousId);
     }
     updateWagerPlayerId(room, previousId, socket.id);
+    updateFiftyPlayerId(room, previousId, socket.id);
   }
 
   player.id = socket.id;
@@ -932,6 +972,7 @@ function removeInactivePlayers(room, message) {
 
 function removePlayer(room, playerId, message) {
   cancelWagersForPlayer(room, playerId);
+  cancelFiftyForPlayer(room, playerId);
   room.players.delete(playerId);
   const target = io.sockets.sockets.get(playerId);
   if (!target) return;
@@ -1051,6 +1092,13 @@ function createWagerState() {
   return {
     offers: new Map(),
     active: new Map(),
+    history: []
+  };
+}
+
+function createFiftyState() {
+  return {
+    active: null,
     history: []
   };
 }
@@ -1312,6 +1360,256 @@ function wagerResultLiveEvent(result) {
   };
 }
 
+function startFiftyChallenge(room, payload) {
+  if (room.fifty && room.fifty.active) {
+    throw new Error("C'e gia un 50 e 50 in corso");
+  }
+
+  const stake = normalizeFiftyStake(payload.stake);
+  const eligible = eligibleFiftyPlayers(room, stake);
+  if (eligible.length < 2) {
+    throw new Error("Servono almeno due giocatori collegati con punti sufficienti");
+  }
+
+  const selected = pickRandomPlayers(eligible, 2);
+  const now = Date.now();
+  const durationMs = normalizeFiftyDuration(payload.durationMs);
+  const participants = Object.fromEntries(selected.map((player) => {
+    player.score = Math.max(0, Math.round(Number(player.score || 0) - stake));
+    return [player.id, {
+      playerId: player.id,
+      nickname: player.nickname,
+      holding: false,
+      droppedAt: null,
+      updatedAt: null
+    }];
+  }));
+
+  const challenge = {
+    id: createArchiveId("fifty"),
+    status: "active",
+    stake,
+    pot: stake * 2,
+    playerIds: selected.map((player) => player.id),
+    participants,
+    startedAt: now,
+    endsAt: now + durationMs,
+    durationMs,
+    timer: null
+  };
+
+  challenge.timer = setTimeout(() => {
+    finishFiftyChallenge(room, "timer");
+  }, durationMs + 80);
+
+  room.fifty.active = challenge;
+  return challenge;
+}
+
+function updateFiftyHold(room, player, payload) {
+  const challenge = room.fifty && room.fifty.active;
+  const challengeId = normalizeShortText(payload.challengeId, 120);
+  if (!challenge || challenge.id !== challengeId) {
+    throw new Error("Sfida 50 e 50 non attiva");
+  }
+
+  const participant = challenge.participants[player.id];
+  if (!participant) {
+    throw new Error("Non sei in questa sfida");
+  }
+  if (Date.now() > challenge.endsAt) {
+    finishFiftyChallenge(room, "timer");
+    return { resolved: true };
+  }
+
+  const holding = Boolean(payload.holding);
+  if (participant.droppedAt && holding) {
+    return { challenge: serializePlayerFiftyChallenge(room, player.id) };
+  }
+
+  participant.holding = holding && !participant.droppedAt;
+  participant.updatedAt = Date.now();
+  if (!holding && !participant.droppedAt) {
+    participant.droppedAt = participant.updatedAt;
+  }
+
+  return { challenge: serializePlayerFiftyChallenge(room, player.id) };
+}
+
+function finishFiftyChallenge(room, reason) {
+  const result = resolveFiftyChallenge(room, reason);
+  if (!result) return null;
+  dispatchLiveEvent(room, fiftyResultLiveEvent(result))
+    .catch((error) => console.error("Could not announce 50 e 50 result:", error.message));
+  emitRoom(room)
+    .catch((error) => console.error("Could not emit 50 e 50 result:", error.message));
+  return result;
+}
+
+function resolveFiftyChallenge(room, reason) {
+  const challenge = room.fifty && room.fifty.active;
+  if (!challenge) return null;
+  clearTimeout(challenge.timer);
+  challenge.timer = null;
+
+  const [firstId, secondId] = challenge.playerIds;
+  const first = challenge.participants[firstId];
+  const second = challenge.participants[secondId];
+  const firstSaved = Boolean(first && first.holding && !first.droppedAt);
+  const secondSaved = Boolean(second && second.holding && !second.droppedAt);
+  const deltas = {
+    [firstId]: -challenge.stake,
+    [secondId]: -challenge.stake
+  };
+
+  let outcome = "both_drop";
+  let winnerId = "";
+  let loserId = "";
+
+  if (firstSaved && secondSaved) {
+    outcome = "split";
+    addFiftyScore(room, firstId, challenge.stake);
+    addFiftyScore(room, secondId, challenge.stake);
+    deltas[firstId] = 0;
+    deltas[secondId] = 0;
+  } else if (firstSaved !== secondSaved) {
+    outcome = "drop_win";
+    winnerId = firstSaved ? secondId : firstId;
+    loserId = firstSaved ? firstId : secondId;
+    addFiftyScore(room, winnerId, challenge.pot);
+    deltas[winnerId] = challenge.stake;
+    deltas[loserId] = -challenge.stake;
+  }
+
+  const result = {
+    id: challenge.id,
+    status: "resolved",
+    outcome,
+    reason,
+    stake: challenge.stake,
+    pot: challenge.pot,
+    winnerId,
+    winnerNickname: winnerId ? challenge.participants[winnerId].nickname : "",
+    loserId,
+    loserNickname: loserId ? challenge.participants[loserId].nickname : "",
+    players: challenge.playerIds.map((playerId) => ({
+      id: playerId,
+      nickname: challenge.participants[playerId].nickname,
+      saved: playerId === firstId ? firstSaved : secondSaved,
+      delta: deltas[playerId],
+      score: room.players.get(playerId) ? room.players.get(playerId).score : 0
+    })),
+    startedAt: challenge.startedAt,
+    resolvedAt: Date.now()
+  };
+
+  room.fifty.active = null;
+  room.fifty.history.push(result);
+  room.fifty.history = room.fifty.history.slice(-8);
+  return result;
+}
+
+function addFiftyScore(room, playerId, delta) {
+  const player = room.players.get(playerId);
+  if (!player || !player.active) return;
+  player.score = Math.max(0, Math.round(Number(player.score || 0) + delta));
+}
+
+function normalizeFiftyStake(value) {
+  const stake = Math.floor(Number(value) || 0);
+  if (!stake || stake < 1) {
+    throw new Error("Inserisci una posta valida");
+  }
+  return Math.min(50000, stake);
+}
+
+function normalizeFiftyDuration(value) {
+  const duration = Math.floor(Number(value) || 5000);
+  return Math.min(12000, Math.max(300, duration));
+}
+
+function eligibleFiftyPlayers(room, stake) {
+  return activePlayers(room)
+    .filter((player) => player.connected && Number(player.score || 0) >= stake)
+    .sort((a, b) => a.nickname.localeCompare(b.nickname));
+}
+
+function pickRandomPlayers(players, count) {
+  const list = players.slice();
+  for (let index = list.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
+  }
+  return list.slice(0, count);
+}
+
+function clearFiftyChallenge(room) {
+  if (!room.fifty || !room.fifty.active) return;
+  clearTimeout(room.fifty.active.timer);
+  room.fifty.active = null;
+}
+
+function updateFiftyPlayerId(room, previousId, nextId) {
+  const challenge = room.fifty && room.fifty.active;
+  if (!challenge || !challenge.participants[previousId]) return;
+  challenge.participants[nextId] = {
+    ...challenge.participants[previousId],
+    playerId: nextId
+  };
+  delete challenge.participants[previousId];
+  challenge.playerIds = challenge.playerIds.map((playerId) => playerId === previousId ? nextId : playerId);
+}
+
+function cancelFiftyForPlayer(room, playerId) {
+  const challenge = room.fifty && room.fifty.active;
+  if (!challenge || !challenge.participants[playerId]) return;
+  const participant = challenge.participants[playerId];
+  participant.holding = false;
+  participant.droppedAt = participant.droppedAt || Date.now();
+  participant.updatedAt = participant.droppedAt;
+  finishFiftyChallenge(room, "left");
+}
+
+function fiftyStartedLiveEvent(challenge) {
+  const names = challenge.playerIds.map((playerId) => challenge.participants[playerId].nickname);
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "50 e 50",
+    message: `${names[0]} contro ${names[1]}: ${challenge.pot} punti in palio.`,
+    tone: "drum",
+    vibrate: true,
+    vibrationPattern: defaultVibrationPattern("drum"),
+    createdAt: Date.now()
+  };
+}
+
+function fiftyResultLiveEvent(result) {
+  let message = `Entrambi mollano: perdono ${result.stake} punti a testa.`;
+  let tone = "alert";
+  if (result.outcome === "split") {
+    message = `${result.players[0].nickname} e ${result.players[1].nickname} si salvano: posta divisa.`;
+    tone = "success";
+  } else if (result.outcome === "drop_win") {
+    message = `${result.winnerNickname} lascia cadere ${result.loserNickname} e prende ${result.pot} punti.`;
+    tone = "drum";
+  }
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "50 e 50 risolto",
+    message,
+    tone,
+    vibrate: false,
+    vibrationPattern: defaultVibrationPattern(tone),
+    createdAt: Date.now()
+  };
+}
+
 async function emitRoom(room) {
   const sockets = await io.in(roomChannel(room.code)).fetchSockets();
   for (const target of sockets) {
@@ -1476,6 +1774,10 @@ function serializeRoom(room, socket) {
     wagerOffer: role === "player" ? serializePlayerWagerOffer(room, playerId) : undefined,
     activeWagers: serializePublicActiveWagers(room),
     wagerHistory: serializePublicWagerHistory(room),
+    fifty: role === "host" ? serializeHostFifty(room) : undefined,
+    fiftyChallenge: role === "player" ? serializePlayerFiftyChallenge(room, playerId) : undefined,
+    activeFifty: serializePublicActiveFifty(room),
+    fiftyHistory: serializePublicFiftyHistory(room),
     answerCount: answerMap.size,
     playerCount: activePlayers(room).length,
     pendingInviteCount: role === "host" ? pendingInviteCount(room) : undefined,
@@ -1503,6 +1805,13 @@ function serializeHostWagers(room) {
     offers: Array.from(room.wagers.offers.values()).map((offer) => serializeWagerOffer(offer, room)),
     active: Array.from(room.wagers.active.values()).map(serializeActiveWager),
     history: serializePublicWagerHistory(room)
+  };
+}
+
+function serializeHostFifty(room) {
+  return {
+    active: serializeFiftyChallenge(room.fifty && room.fifty.active),
+    history: serializePublicFiftyHistory(room)
   };
 }
 
@@ -1564,6 +1873,70 @@ function serializePublicActiveWagers(room) {
 
 function serializePublicWagerHistory(room) {
   return room.wagers.history.slice(-5).reverse().map(serializeWagerResult);
+}
+
+function serializeFiftyChallenge(challenge) {
+  if (!challenge) return null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    stake: challenge.stake,
+    pot: challenge.pot,
+    players: challenge.playerIds.map((playerId) => ({
+      id: playerId,
+      nickname: challenge.participants[playerId].nickname,
+      holding: Boolean(challenge.participants[playerId].holding),
+      dropped: Boolean(challenge.participants[playerId].droppedAt)
+    })),
+    startedAt: challenge.startedAt,
+    endsAt: challenge.endsAt,
+    durationMs: challenge.durationMs
+  };
+}
+
+function serializePlayerFiftyChallenge(room, playerId) {
+  if (!playerId || !room.fifty || !room.fifty.active) return null;
+  const challenge = room.fifty.active;
+  const participant = challenge.participants[playerId];
+  if (!participant) return null;
+  const opponentId = challenge.playerIds.find((item) => item !== playerId);
+  const opponent = opponentId ? challenge.participants[opponentId] : null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    stake: challenge.stake,
+    pot: challenge.pot,
+    opponentNickname: opponent ? opponent.nickname : "Avversario",
+    holding: Boolean(participant.holding),
+    dropped: Boolean(participant.droppedAt),
+    startedAt: challenge.startedAt,
+    endsAt: challenge.endsAt,
+    durationMs: challenge.durationMs
+  };
+}
+
+function serializeFiftyResult(result) {
+  return {
+    id: result.id,
+    status: result.status,
+    outcome: result.outcome,
+    stake: result.stake,
+    pot: result.pot,
+    winnerNickname: result.winnerNickname,
+    loserNickname: result.loserNickname,
+    players: result.players,
+    resolvedAt: result.resolvedAt
+  };
+}
+
+function serializePublicActiveFifty(room) {
+  return serializeFiftyChallenge(room.fifty && room.fifty.active);
+}
+
+function serializePublicFiftyHistory(room) {
+  return room.fifty && room.fifty.history
+    ? room.fifty.history.slice(-5).reverse().map(serializeFiftyResult)
+    : [];
 }
 
 function serializePlayer(player, room) {

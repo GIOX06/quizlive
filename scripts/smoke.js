@@ -430,6 +430,43 @@ async function main() {
       state.wagers.history.some((item) => item.bettorNickname === "Smoke Player" && item.delta === -100)
     );
 
+    const fiftyPlayerEvent = waitForSocketEvent(player, "live:event");
+    const fiftyDeclinerEvent = waitForSocketEvent(decliningPlayer, "live:event");
+    const fiftyStarted = await emitAck(host, "host:fifty-start", {
+      stake: 50,
+      durationMs: 900
+    });
+    assert.equal(fiftyStarted.ok, true);
+    assert.equal(fiftyStarted.challenge.pot, 100);
+    assert.equal((await fiftyPlayerEvent).title, "50 e 50");
+    assert.equal((await fiftyDeclinerEvent).title, "50 e 50");
+
+    const fiftyResultEvent = waitForSocketEvent(screen, "live:event");
+    const fiftyHold = await emitAck(player, "player:fifty-hold", {
+      challengeId: fiftyStarted.challenge.id,
+      holding: true
+    });
+    assert.equal(fiftyHold.ok, true);
+
+    await waitForState(player, (state) =>
+      state.fiftyChallenge &&
+      state.fiftyChallenge.id === fiftyStarted.challenge.id &&
+      state.fiftyChallenge.holding === true
+    );
+
+    const fiftyResult = await fiftyResultEvent;
+    assert.equal(fiftyResult.title, "50 e 50 risolto");
+
+    await waitForState(host, (state) =>
+      state.fifty &&
+      state.fifty.history &&
+      state.fifty.history.some((item) =>
+        item.id === fiftyStarted.challenge.id &&
+        item.outcome === "drop_win" &&
+        item.winnerNickname === "Smoke Decliner"
+      )
+    );
+
     const multiReveal = await emitAck(host, "host:reveal", {});
     assert.equal(multiReveal.ok, true);
 

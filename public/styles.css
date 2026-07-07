@@ -2198,16 +2198,54 @@ textarea {
 }
 
 .live-wager-panel,
-.live-wager-offer {
+.live-wager-offer,
+.live-fifty-panel,
+.live-fifty-challenge {
   border-top: 1px solid rgba(255, 139, 45, 0.24);
   padding-top: 0.8rem;
 }
 
-.live-wager-offer {
+.live-wager-offer,
+.live-fifty-challenge {
   border: 1px solid rgba(255, 139, 45, 0.42);
   background:
     linear-gradient(145deg, rgba(255, 138, 45, 0.14), transparent 62%),
     var(--stage-panel);
+}
+
+.fifty-hold-button {
+  min-height: 5.5rem;
+  border: 1px solid rgba(255, 194, 87, 0.55);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(255, 194, 87, 0.95), rgba(255, 107, 77, 0.9)),
+    #ffb347;
+  color: #181009;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 1000;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  box-shadow: 0 18px 44px rgba(255, 107, 77, 0.2);
+}
+
+.fifty-hold-button.holding {
+  transform: scale(0.98);
+  background:
+    linear-gradient(145deg, rgba(68, 196, 161, 0.98), rgba(54, 133, 214, 0.92)),
+    #44c4a1;
+  color: #f7fffc;
+}
+
+.fifty-hold-button.dropped,
+.fifty-hold-button:disabled {
+  cursor: default;
+  background:
+    linear-gradient(145deg, rgba(239, 91, 91, 0.86), rgba(80, 45, 45, 0.92)),
+    #ef5b5b;
+  color: #fff7ed;
+  opacity: 0.95;
 }
 
 .live-wager-actions {

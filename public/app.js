@@ -52,7 +52,9 @@ let local = {
   liveEventTarget: "all",
   liveWagerPlayerId: "",
   liveWagerStake: 100,
+  liveFiftyStake: 100,
   wagerTargetId: "",
+  fiftyHoldingId: "",
   liveEvent: null
 };
 let reconnectingForHostAuth = false;
@@ -1306,6 +1308,7 @@ function renderPlayerGame(room) {
     <section class="game-layout">
       <div class="stage">
         ${renderPlayerWagerOffer(room)}
+        ${renderPlayerFiftyChallenge(room)}
         ${room.status === "lobby" ? renderPlayerWaiting(room) : ""}
         ${room.status === "question" && question ? renderPlayerQuestion(room) : ""}
         ${room.status === "reveal" && question ? renderReveal(room, false) : ""}
@@ -1382,6 +1385,32 @@ function renderPlayerWagerOffer(room) {
         </select>
         <button class="btn teal" data-action="accept-wager-chosen" data-wager-id="${escapeAttr(offer.id)}" ${targets.length ? "" : "disabled"}>Scelgo io x2</button>
       </div>
+    </section>
+  `;
+}
+
+function renderPlayerFiftyChallenge(room) {
+  const challenge = room.fiftyChallenge;
+  if (!challenge) return "";
+  const remainingSeconds = Math.max(1, Math.ceil((Number(challenge.endsAt || 0) - Date.now()) / 1000));
+  const dropped = Boolean(challenge.dropped);
+  const holding = Boolean(challenge.holding) && !dropped;
+  return `
+    <section class="panel live-fifty-challenge stack">
+      <div>
+        <p class="screen-kicker">50 e 50</p>
+        <h2 class="section-title">Salvi ${escapeHtml(challenge.opponentNickname)}?</h2>
+        <p class="subtle">Posta ${challenge.pot} punti. Tieni premuto fino alla fine per salvare, oppure molla e prova a prendere tutto.</p>
+      </div>
+      <button
+        class="fifty-hold-button ${holding ? "holding" : ""} ${dropped ? "dropped" : ""}"
+        data-fifty-hold
+        data-challenge-id="${escapeAttr(challenge.id)}"
+        ${dropped ? "disabled" : ""}
+      >
+        ${dropped ? "Hai lasciato cadere" : holding ? "Stai salvando..." : "Tieni premuto per salvare"}
+      </button>
+      <p class="subtle">${dropped ? "Decisione presa: ora aspetta l'altro giocatore." : `Tempo rimasto: ${remainingSeconds}s`}</p>
     </section>
   `;
 }
@@ -1605,6 +1634,7 @@ function renderHostLiveEvents(room) {
         <button class="btn primary" data-action="send-live-message">Invia</button>
       </div>
       ${renderHostWagerPanel(room, players)}
+      ${renderHostFiftyPanel(room, players)}
     </section>
   `;
 }
@@ -1658,6 +1688,67 @@ function renderHostWagerStatus(room) {
       `).join("")}
     </div>
   `;
+}
+
+function renderHostFiftyPanel(room, players) {
+  const availablePlayers = players.filter((player) => Number(player.score || 0) > 0 && player.connected);
+  const maxStake = availablePlayers.length >= 2
+    ? Math.max(1, Math.min(...availablePlayers.map((player) => Number(player.score || 0))))
+    : 1;
+  const stake = Math.min(maxStake, Math.max(1, Number(local.liveFiftyStake) || 100));
+  const active = room.fifty && room.fifty.active;
+  return `
+    <div class="live-fifty-panel stack">
+      <div>
+        <h4 class="mini-title">50 e 50</h4>
+        <p class="subtle">Sceglie due giocatori a caso: salvare o lasciare cadere.</p>
+      </div>
+      <div class="live-target-row">
+        <input data-live-fifty-stake type="number" min="1" max="${maxStake}" value="${stake}" aria-label="Posta 50 e 50" ${availablePlayers.length >= 2 && !active ? "" : "disabled"} />
+        <button class="btn gold" data-action="send-fifty-start" ${availablePlayers.length >= 2 && !active ? "" : "disabled"}>Avvia 50 e 50</button>
+      </div>
+      ${availablePlayers.length < 2 ? `<p class="subtle">Servono almeno due giocatori con punti.</p>` : ""}
+      ${renderHostFiftyStatus(room)}
+    </div>
+  `;
+}
+
+function renderHostFiftyStatus(room) {
+  const fifty = room.fifty || {};
+  const active = fifty.active;
+  const history = Array.isArray(fifty.history) ? fifty.history : [];
+  const activeItems = active && Array.isArray(active.players)
+    ? active.players.map((player) => ({
+      label: player.dropped ? "Molla" : player.holding ? "Salva" : "Attesa",
+      text: `${player.nickname} - ${active.stake} pt`
+    }))
+    : [];
+  const historyItems = history.slice(0, 3).map((item) => ({
+    label: item.outcome === "split" ? "Divisa" : item.outcome === "drop_win" ? "Presa" : "Persa",
+    text: fiftyHistoryText(item)
+  }));
+  const items = [...activeItems, ...historyItems];
+  if (!items.length) return "";
+  return `
+    <div class="live-wager-list">
+      ${items.map((item) => `
+        <div class="live-wager-row">
+          <span class="status-pill compact">${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(item.text)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function fiftyHistoryText(item) {
+  if (item.outcome === "split") {
+    return item.players && item.players.length >= 2
+      ? `${item.players[0].nickname} + ${item.players[1].nickname}: pari`
+      : "Posta divisa";
+  }
+  if (item.outcome === "drop_win") return `${item.winnerNickname} prende ${item.pot} pt`;
+  return `Entrambi -${item.stake} pt`;
 }
 
 function renderHostPlayers(room) {
@@ -1817,11 +1908,17 @@ function bindEvents() {
       local.liveWagerStake = Number(element.value) || 1;
     });
   });
+  document.querySelectorAll("[data-live-fifty-stake]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.liveFiftyStake = Number(element.value) || 1;
+    });
+  });
   document.querySelectorAll("[data-wager-target]").forEach((element) => {
     element.addEventListener("change", () => {
       local.wagerTargetId = element.value;
     });
   });
+  bindFiftyHoldEvents();
   document.querySelectorAll("[data-question-text]").forEach((element) => {
     element.addEventListener("input", () => {
       local.quiz.questions[Number(element.dataset.questionIndex)].text = element.value;
@@ -1973,6 +2070,36 @@ function bindEvents() {
   }
 }
 
+function bindFiftyHoldEvents() {
+  document.querySelectorAll("[data-fifty-hold]").forEach((element) => {
+    const challengeId = element.dataset.challengeId;
+    const startHold = (event) => {
+      event.preventDefault();
+      if (element.disabled) return;
+      local.fiftyHoldingId = challengeId;
+      if (event.pointerId != null && element.setPointerCapture) {
+        try {
+          element.setPointerCapture(event.pointerId);
+        } catch (_error) {
+          // Some mobile browsers refuse capture after a scroll gesture.
+        }
+      }
+      sendFiftyHold(challengeId, true);
+    };
+    const stopHold = (event) => {
+      event.preventDefault();
+      if (element.disabled) return;
+      local.fiftyHoldingId = "";
+      sendFiftyHold(challengeId, false);
+    };
+    element.addEventListener("pointerdown", startHold);
+    element.addEventListener("pointerup", stopHold);
+    element.addEventListener("pointercancel", stopHold);
+    element.addEventListener("lostpointercapture", stopHold);
+    element.addEventListener("contextmenu", (event) => event.preventDefault());
+  });
+}
+
 function handleAction(event) {
   const action = event.currentTarget.dataset.action;
   const target = event.currentTarget;
@@ -2044,6 +2171,7 @@ function handleAction(event) {
   if (action === "send-live-effect") sendLiveEffect(target);
   if (action === "send-live-message") sendLiveMessage();
   if (action === "send-wager-offer") sendWagerOffer();
+  if (action === "send-fifty-start") sendFiftyStart();
   if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
   if (action === "accept-wager-chosen") respondWager(target.dataset.wagerId, true, "chosen");
   if (action === "decline-wager") respondWager(target.dataset.wagerId, false, "chosen");
@@ -3312,6 +3440,30 @@ function sendWagerOffer() {
       return;
     }
     showToast(response.delivered ? "Scommessa inviata" : "Giocatore non raggiunto");
+  });
+}
+
+function sendFiftyStart() {
+  const stake = Math.max(1, Math.floor(Number(local.liveFiftyStake) || 1));
+  socket.emit("host:fifty-start", { stake }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "50 e 50 non avviato");
+      return;
+    }
+    showToast("50 e 50 avviato");
+  });
+}
+
+function sendFiftyHold(challengeId, holding) {
+  socket.emit("player:fifty-hold", {
+    challengeId,
+    holding
+  }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Sfida non aggiornata");
+      return;
+    }
+    if (!holding) showToast("Hai lasciato cadere");
   });
 }
 
