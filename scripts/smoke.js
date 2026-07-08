@@ -414,6 +414,8 @@ async function main() {
     assert.equal(multiAnswered.correct, true);
 
     const wagerResultEvent = waitForSocketEvent(screen, "live:event");
+    const playerWagerResultEvent = waitForSocketEvent(player, "live:event");
+    const declinerWagerResultEvent = waitForSocketEvent(decliningPlayer, "live:event");
     const wrongMultiAnswered = await emitAck(decliningPlayer, "player:answer", { answerIndexes: [0, 2, 3] });
     assert.equal(wrongMultiAnswered.ok, true);
     assert.equal(wrongMultiAnswered.correct, false);
@@ -421,6 +423,8 @@ async function main() {
     assert.ok(wrongMultiAnswered.points > 0);
     const receivedWagerResult = await wagerResultEvent;
     assert.equal(receivedWagerResult.title, "Scommessa persa");
+    assert.equal((await playerWagerResultEvent).title, "Scommessa persa");
+    assert.equal((await declinerWagerResultEvent).title, "Scommessa persa");
 
     await waitForState(host, (state) =>
       state.wagers &&
