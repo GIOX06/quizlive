@@ -809,6 +809,15 @@ textarea {
   width: 100%;
 }
 
+.host-resume-box {
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.host-resume-box .btn {
+  width: 100%;
+}
+
 .builder-card-list {
   min-height: 0;
   display: grid;

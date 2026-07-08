@@ -1,6 +1,7 @@
 const socket = io();
 
 const PLAYER_SESSION_STORAGE_KEY = "quizlive_player_session";
+const HOST_ROOM_STORAGE_KEY = "quizlive_host_room";
 const MAX_IMAGE_UPLOAD_BYTES = 1.5 * 1024 * 1024;
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const answerClasses = ["answer-a", "answer-b", "answer-c", "answer-d", "answer-e", "answer-f"];
@@ -53,6 +54,9 @@ let local = {
   liveWagerPlayerId: "",
   liveWagerStake: 100,
   liveFiftyStake: 100,
+  hostResumeCode: initialHostResumeCode(),
+  hostResumeBusy: false,
+  hostResumeAttemptedCode: "",
   wagerTargetId: "",
   fiftyHoldingId: "",
   liveEvent: null
@@ -75,6 +79,7 @@ socket.on("connect", () => {
   reconnectingForHostAuth = false;
   autoJoinScreen();
   autoRejoinPlayer();
+  autoResumeHost();
   render();
 });
 
@@ -86,6 +91,12 @@ socket.on("disconnect", () => {
 socket.on("room:state", (room) => {
   local.room = room;
   local.mode = room.role;
+  if (room.role === "host") {
+    saveLastHostRoomCode(room.code);
+    local.hostResumeCode = room.code;
+    local.hostResumeBusy = false;
+    local.hostResumeAttemptedCode = "";
+  }
   if (room.role === "screen") {
     local.screenCode = room.code;
     window.history.replaceState(null, "", `#screen=${encodeURIComponent(room.code)}`);
@@ -109,6 +120,15 @@ socket.on("live:event", (event) => {
   handleLiveEvent(event);
 });
 
+socket.on("host:detached", (payload) => {
+  if (local.room && local.room.role === "host") local.room = null;
+  local.hostEditingRoom = false;
+  local.hostResumeBusy = false;
+  switchMode("host", true);
+  showToast(payload && payload.message ? payload.message : "Stanza ripresa da un'altra finestra host");
+  render();
+});
+
 loadNetworkConfig();
 loadHostAuth();
 
@@ -116,9 +136,11 @@ window.addEventListener("hashchange", () => {
   if (local.room) return;
   local.joinCode = initialJoinCode();
   local.screenCode = initialScreenCode();
+  local.hostResumeCode = initialHostResumeCode();
   local.mode = initialMode();
   autoJoinScreen();
   autoRejoinPlayer();
+  autoResumeHost();
   render();
 });
 
@@ -410,6 +432,15 @@ function renderBuilderRoomActions() {
       </div>
       <button class="btn primary" data-action="create-room">${local.hostEditingRoom ? "Aggiorna stanza" : "Crea stanza"}</button>
       <button class="btn teal" data-action="save-quiz">Salva quiz</button>
+      ${local.hostEditingRoom ? "" : `
+        <div class="host-resume-box stack">
+          <label class="stack">
+            <span>Riprendi stanza host</span>
+            <input data-field="host-resume-code" inputmode="numeric" maxlength="6" placeholder="Codice stanza" value="${escapeAttr(local.hostResumeCode || "")}" />
+          </label>
+          <button class="btn ghost" data-action="resume-host-room" ${local.hostResumeBusy ? "disabled" : ""}>${local.hostResumeBusy ? "Riprendo..." : "Riprendi stanza"}</button>
+        </div>
+      `}
     </section>
   `;
 }
@@ -1199,7 +1230,7 @@ function recentFiftyResult(room) {
   const history = room && Array.isArray(room.fiftyHistory) ? room.fiftyHistory : [];
   const result = history[0];
   if (!result || !result.resolvedAt) return null;
-  return Date.now() - Number(result.resolvedAt) < 12000 ? result : null;
+  return Date.now() - Number(result.resolvedAt) < 22000 ? result : null;
 }
 
 function renderScreenFiftyResult(result) {
@@ -2064,12 +2095,12 @@ function renderHostFiftyStatus(room) {
   const history = Array.isArray(fifty.history) ? fifty.history : [];
   const activeItems = active && Array.isArray(active.players)
     ? active.players.map((player) => ({
-      label: active.status === "intro" ? player.ready ? "Pronto" : "Invito" : player.holding ? "Premuto" : "Libero",
+      label: fiftyActivePlayerLabel(active, player),
       text: `${player.nickname} - ${active.stake} pt`
     }))
     : [];
   const historyItems = history.slice(0, 3).map((item) => ({
-    label: item.outcome === "cancelled" ? "Annullata" : item.outcome === "split" ? "Divisa" : item.outcome === "drop_win" ? "Presa" : "Persa",
+    label: fiftyHistoryLabel(item),
     text: fiftyHistoryText(item)
   }));
   const items = [...activeItems, ...historyItems];
@@ -2086,6 +2117,21 @@ function renderHostFiftyStatus(room) {
   `;
 }
 
+function fiftyActivePlayerLabel(active, player) {
+  if (player && player.left) return "Disconnesso";
+  if (active.status === "intro") return player && player.ready ? "Pronto" : "Invito";
+  if (active.status === "countdown") return "3-2-1";
+  return player && player.holding ? "Sta salvando" : "Mano libera";
+}
+
+function fiftyHistoryLabel(item) {
+  if (item.outcome === "cancelled") return "Annullata";
+  if (item.outcome === "split") return "Divisa";
+  if (item.outcome === "drop_win") return "Caduta";
+  if (item.outcome === "forfeit") return "Abbandono";
+  return "Doppia caduta";
+}
+
 function fiftyHistoryText(item) {
   if (item.outcome === "cancelled") return "Sfida interrotta";
   if (item.outcome === "split") {
@@ -2093,8 +2139,8 @@ function fiftyHistoryText(item) {
       ? `${item.players[0].nickname} + ${item.players[1].nickname}: pari`
       : "Posta divisa";
   }
-  if (item.outcome === "forfeit") return `${item.winnerNickname} prende ${item.pot} pt`;
-  if (item.outcome === "drop_win") return `${item.winnerNickname} prende ${item.pot} pt`;
+  if (item.outcome === "forfeit") return `${item.loserNickname} fuori: ${item.winnerNickname} +${item.pot} pt`;
+  if (item.outcome === "drop_win") return `${item.loserNickname} cade: ${item.winnerNickname} +${item.pot} pt`;
   return `Entrambi -${item.stake} pt`;
 }
 
@@ -2464,6 +2510,16 @@ function bindEvents() {
       if (event.key === "Enter") hostLogin();
     });
   }
+  const hostResumeCodeField = document.querySelector("[data-field='host-resume-code']");
+  if (hostResumeCodeField) {
+    hostResumeCodeField.addEventListener("input", () => {
+      local.hostResumeCode = hostResumeCodeField.value.replace(/\D/g, "").slice(0, 6);
+      hostResumeCodeField.value = local.hostResumeCode;
+    });
+    hostResumeCodeField.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") resumeHostRoom();
+    });
+  }
 }
 
 function bindFiftyHoldEvents() {
@@ -2561,6 +2617,7 @@ function handleAction(event) {
   if (action === "disconnect-screen-cast") disconnectScreenFromTv();
   if (action === "join-screen") joinScreen();
   if (action === "create-room") createRoom();
+  if (action === "resume-host-room") resumeHostRoom();
   if (action === "join-room") joinRoom();
   if (action === "start-game") emitHost("host:start");
   if (action === "reveal-question") emitHost("host:reveal");
@@ -3391,10 +3448,59 @@ function createRoom(quickStart = false) {
       return;
     }
     switchMode("host", true);
+    saveLastHostRoomCode(response.code);
+    local.hostResumeCode = response.code;
     local.hostEditingRoom = false;
     showToast(`Stanza ${response.code} creata`);
     if (quickStart) emitHost("host:start");
   });
+}
+
+function resumeHostRoom(code = "") {
+  if (!hostAccessGranted()) {
+    showToast("Password host richiesta");
+    render();
+    return;
+  }
+  const field = document.querySelector("[data-field='host-resume-code']");
+  const normalizedCode = String(code || (field ? field.value : local.hostResumeCode) || "")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+  if (normalizedCode.length !== 6) {
+    showToast("Inserisci il codice stanza");
+    return;
+  }
+  if (!socket.connected) {
+    showToast("Connessione non pronta");
+    return;
+  }
+
+  local.hostResumeCode = normalizedCode;
+  local.hostResumeBusy = true;
+  render();
+  socket.emit("host:resume", { code: normalizedCode }, (response) => {
+    local.hostResumeBusy = false;
+    if (!response || !response.ok) {
+      if (code && local.hostResumeAttemptedCode === normalizedCode) local.hostResumeAttemptedCode = "";
+      showToast(response && response.error ? response.error : "Stanza non ripresa");
+      render();
+      return;
+    }
+    saveLastHostRoomCode(response.code || normalizedCode);
+    local.hostResumeCode = response.code || normalizedCode;
+    local.hostEditingRoom = false;
+    switchMode("host", true);
+    showToast(`Stanza ${local.hostResumeCode} ripresa`);
+    render();
+  });
+}
+
+function autoResumeHost() {
+  if (local.mode !== "host" || local.room || local.hostResumeBusy || !socket.connected || !hostAccessGranted()) return;
+  const code = local.hostResumeCode || loadLastHostRoomCode();
+  if (!code || code.length !== 6 || local.hostResumeAttemptedCode === code) return;
+  local.hostResumeAttemptedCode = code;
+  resumeHostRoom(code);
 }
 
 function updateCurrentRoomQuiz(quiz, quickStart) {
@@ -3694,6 +3800,7 @@ async function loadHostAuth() {
     if (local.mode === "host") showToast("Accesso host non verificato");
   } finally {
     render();
+    autoResumeHost();
   }
 }
 
@@ -3743,6 +3850,9 @@ async function hostLogout() {
   }
   local.hostAuth.authenticated = !local.hostAuth.enabled;
   local.hostAuth.password = "";
+  clearLastHostRoomCode();
+  local.hostResumeCode = "";
+  local.hostResumeAttemptedCode = "";
   reconnectSocketForHost();
   showToast("Area host bloccata");
   render();
@@ -4294,6 +4404,12 @@ function initialMode() {
   return "join";
 }
 
+function initialHostResumeCode() {
+  const hash = window.location.hash.replace(/^#/, "");
+  const fromHash = hash.startsWith("host=") ? hash.slice(5) : "";
+  return String(fromHash || loadLastHostRoomCode()).replace(/\D/g, "").slice(0, 6);
+}
+
 function initialJoinCode() {
   const hash = window.location.hash.replace(/^#/, "");
   const params = new URLSearchParams(window.location.search);
@@ -4346,6 +4462,32 @@ function clearPlayerSession() {
   local.playerSession = null;
   try {
     window.localStorage.removeItem(PLAYER_SESSION_STORAGE_KEY);
+  } catch (error) {
+    // Nothing else to do.
+  }
+}
+
+function loadLastHostRoomCode() {
+  try {
+    return String(window.localStorage.getItem(HOST_ROOM_STORAGE_KEY) || "").replace(/\D/g, "").slice(0, 6);
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveLastHostRoomCode(code) {
+  const normalizedCode = String(code || "").replace(/\D/g, "").slice(0, 6);
+  if (normalizedCode.length !== 6) return;
+  try {
+    window.localStorage.setItem(HOST_ROOM_STORAGE_KEY, normalizedCode);
+  } catch (error) {
+    // Private browsing can reject localStorage; host recovery stays manual.
+  }
+}
+
+function clearLastHostRoomCode() {
+  try {
+    window.localStorage.removeItem(HOST_ROOM_STORAGE_KEY);
   } catch (error) {
     // Nothing else to do.
   }

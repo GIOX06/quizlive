@@ -201,6 +201,27 @@ async function main() {
 
     await waitForState(host, (state) => state.role === "host" && state.status === "lobby");
 
+    const recoveryHost = createSocket(true);
+    await waitForConnect(recoveryHost);
+    recoveryHost.on("room:state", (state) => {
+      recoveryHost.latestState = state;
+    });
+    const resumedByRecoveryHost = await emitAck(recoveryHost, "host:resume", { code: created.code });
+    assert.equal(resumedByRecoveryHost.ok, true);
+    await waitForState(recoveryHost, (state) =>
+      state.role === "host" &&
+      state.status === "lobby" &&
+      state.code === created.code
+    );
+    const resumedByOriginalHost = await emitAck(host, "host:resume", { code: created.code });
+    assert.equal(resumedByOriginalHost.ok, true);
+    await waitForState(host, (state) =>
+      state.role === "host" &&
+      state.status === "lobby" &&
+      state.code === created.code
+    );
+    recoveryHost.close();
+
     await waitForState(screen, (state) =>
       state.role === "screen" &&
       state.status === "lobby" &&

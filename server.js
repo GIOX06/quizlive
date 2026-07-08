@@ -445,11 +445,32 @@ io.on("connection", (socket) => {
     try {
       const quiz = normalizeQuiz(payload && payload.quiz);
       const room = createRoom(quiz, socket.id);
-      socket.data.role = "host";
-      socket.data.roomCode = room.code;
-      socket.join(roomChannel(room.code));
+      await attachHostToRoom(socket, room);
       await attachWaitingScreens(room);
       sendAck(ack, { ok: true, code: room.code });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("host:resume", async (payload, ack) => {
+    if (!isHostSocketAuthorized(socket)) {
+      sendAck(ack, { ok: false, error: "Password host richiesta" });
+      return;
+    }
+
+    try {
+      const code = normalizeCode(payload && payload.code);
+      const room = rooms.get(code);
+      if (!room) {
+        sendAck(ack, { ok: false, error: "Stanza non trovata" });
+        return;
+      }
+
+      await attachHostToRoom(socket, room);
+      await attachWaitingScreens(room);
+      sendAck(ack, { ok: true, code: room.code, status: room.status });
       await emitRoom(room);
     } catch (error) {
       sendAck(ack, { ok: false, error: error.message });
@@ -822,6 +843,34 @@ function createRoom(quiz, hostSocketId) {
   };
   rooms.set(code, room);
   return room;
+}
+
+async function attachHostToRoom(socket, room) {
+  const previousCode = socket.data.roomCode;
+  if (previousCode && previousCode !== room.code) {
+    await socket.leave(roomChannel(previousCode));
+  }
+
+  const previousHost = room.hostSocketId && room.hostSocketId !== socket.id
+    ? io.sockets.sockets.get(room.hostSocketId)
+    : null;
+  if (previousHost && previousHost.data.role === "host" && previousHost.data.roomCode === room.code) {
+    previousHost.data.role = null;
+    previousHost.data.roomCode = null;
+    previousHost.data.playerId = null;
+    await previousHost.leave(roomChannel(room.code));
+    previousHost.emit("host:detached", {
+      code: room.code,
+      message: "Stanza ripresa da un'altra finestra host"
+    });
+  }
+
+  socket.data.role = "host";
+  socket.data.roomCode = room.code;
+  socket.data.playerId = null;
+  room.hostSocketId = socket.id;
+  room.hostConnected = true;
+  await socket.join(roomChannel(room.code));
 }
 
 function startQuestion(room, index) {
