@@ -55,7 +55,7 @@ let local = {
   liveWagerStake: 100,
   liveFiftyStake: 100,
   miniGamesOpen: false,
-  miniGameTab: "fifty",
+  miniGameTab: "wagers",
   miniTokenPlayerId: "",
   miniTokenAmount: 1,
   hostResumeCode: initialHostResumeCode(),
@@ -2036,7 +2036,7 @@ function renderHostLiveEvents(room) {
     <section class="live-panel stack">
       <div>
         <h3 class="mini-title">Eventi live</h3>
-        <p class="subtle">Messaggi, scommesse, mini-giochi e monitor pubblico.</p>
+        <p class="subtle">Messaggi, regia mini-giochi e monitor pubblico.</p>
       </div>
       <div class="live-control-section stack first">
         <h4 class="live-section-title">Messaggi/effetti</h4>
@@ -2062,9 +2062,6 @@ function renderHostLiveEvents(room) {
         </div>
       </div>
       <div class="live-control-section">
-        ${renderHostWagerPanel(room, players)}
-      </div>
-      <div class="live-control-section">
         ${renderHostMiniGamesEntry(room)}
       </div>
       <div class="live-control-section stack">
@@ -2084,10 +2081,11 @@ function renderHostMiniGamesEntry(room) {
   return `
     <div class="live-fifty-panel stack">
       <div>
-        <h4 class="mini-title">Mini-giochi</h4>
-        <p class="subtle">50 e 50, sfide a tre, armi e token virtuali.</p>
+        <h4 class="mini-title">Regia mini-giochi</h4>
+        <p class="subtle">Disponibile durante il quiz: scommesse, 50 e 50, armi e token.</p>
       </div>
-      <button class="btn gold" data-action="open-mini-games">Apri regia mini-giochi</button>
+      <button class="btn gold" data-action="open-mini-games">Apri regia</button>
+      ${renderHostWagerStatus(room)}
       ${renderHostFiftyStatus(room)}
     </div>
   `;
@@ -2095,7 +2093,7 @@ function renderHostMiniGamesEntry(room) {
 
 function renderMiniGamesDialog(room) {
   const players = Array.isArray(room.players) ? room.players : [];
-  const tab = local.miniGameTab || "fifty";
+  const tab = local.miniGameTab || "wagers";
   const tabButton = (value, label) => `
     <button class="mini-game-tab ${tab === value ? "active" : ""}" data-action="set-mini-game-tab" data-mini-game-tab="${escapeAttr(value)}">${escapeHtml(label)}</button>
   `;
@@ -2110,13 +2108,22 @@ function renderMiniGamesDialog(room) {
           <button class="btn small ghost" data-action="close-mini-games">Chiudi</button>
         </header>
         <div class="mini-game-tabs">
+          ${tabButton("wagers", "Scommesse")}
           ${tabButton("fifty", "50 e 50")}
           ${tabButton("trio", "Lupo/Agnello/Cavolo")}
           ${tabButton("weapons", "Armi")}
           ${tabButton("tokens", "Token")}
         </div>
         <div class="mini-game-body">
-          ${tab === "trio" ? renderTrioMiniGamePanel(players) : tab === "weapons" ? renderWeaponsMiniGamePanel(players, room) : tab === "tokens" ? renderTokenMiniGamePanel(players) : renderHostFiftyPanel(room, players)}
+          ${tab === "fifty"
+            ? renderHostFiftyPanel(room, players)
+            : tab === "trio"
+              ? renderTrioMiniGamePanel(players)
+              : tab === "weapons"
+                ? renderWeaponsMiniGamePanel(players, room)
+                : tab === "tokens"
+                  ? renderTokenMiniGamePanel(players)
+                  : renderHostWagerPanel(room, players)}
         </div>
       </article>
     </section>
@@ -4175,7 +4182,7 @@ function sendFiftyStart() {
 
 function openMiniGames() {
   local.miniGamesOpen = true;
-  local.miniGameTab = local.miniGameTab || "fifty";
+  local.miniGameTab = local.miniGameTab || "wagers";
   render();
 }
 
@@ -4185,8 +4192,8 @@ function closeMiniGames() {
 }
 
 function setMiniGameTab(tab) {
-  const allowed = new Set(["fifty", "trio", "weapons", "tokens"]);
-  local.miniGameTab = allowed.has(tab) ? tab : "fifty";
+  const allowed = new Set(["wagers", "fifty", "trio", "weapons", "tokens"]);
+  local.miniGameTab = allowed.has(tab) ? tab : "wagers";
   render();
 }
 
