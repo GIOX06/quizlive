@@ -427,7 +427,21 @@ async function main() {
       state.wagers.active &&
       state.wagers.active.length === 0 &&
       state.wagers.history &&
-      state.wagers.history.some((item) => item.bettorNickname === "Smoke Player" && item.delta === -100)
+      state.wagers.history.some((item) =>
+        item.bettorNickname === "Smoke Player" &&
+        item.delta === -100 &&
+        item.questionIndex === 2
+      )
+    );
+
+    await waitForState(screen, (state) =>
+      state.wagerHistory &&
+      state.wagerHistory.some((item) =>
+        item.bettorNickname === "Smoke Player" &&
+        item.targetNickname === "Smoke Decliner" &&
+        item.delta === -100 &&
+        item.questionIndex === 2
+      )
     );
 
     const fiftyPlayerEvent = waitForSocketEvent(player, "live:event");

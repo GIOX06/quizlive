@@ -1182,20 +1182,74 @@ function renderScreenFiftyResult(result) {
       </div>
       <div class="fifty-arena result outcome-${escapeAttr(result.outcome || "both_drop")}">
         <div class="fifty-rope"></div>
-        <div class="fifty-platform left ${first.saved ? "ready" : ""} ${first.left ? "disconnected" : ""}">
+        <div class="fifty-platform left ${fiftyResultPlatformState(first, result)}">
           <div class="fifty-puppet"></div>
           <span>${escapeHtml(first.nickname)}</span>
         </div>
         <div class="fifty-chasm">
-          <span>${escapeHtml(fiftyResultArenaText(result))}</span>
+          ${renderScreenFiftyResultDrama(result)}
         </div>
-        <div class="fifty-platform right ${second.saved ? "ready" : ""} ${second.left ? "disconnected" : ""}">
+        <div class="fifty-platform right ${fiftyResultPlatformState(second, result)}">
           <div class="fifty-puppet"></div>
           <span>${escapeHtml(second.nickname)}</span>
         </div>
       </div>
     </article>
   `;
+}
+
+function renderScreenFiftyResultDrama(result) {
+  if (result.outcome === "split") {
+    return `
+      <div class="fifty-drama fifty-handshake-drama">
+        <div class="fifty-handshake" aria-hidden="true">
+          <span class="hand left-hand"></span>
+          <span class="hand right-hand"></span>
+        </div>
+        <strong>Stretta di mano</strong>
+        <span>Bottino diviso: ${Number(result.stake || 0)} punti restituiti a testa</span>
+      </div>
+    `;
+  }
+  if (result.outcome === "drop_win" || result.outcome === "forfeit") {
+    return `
+      <div class="fifty-drama fifty-drop-drama">
+        <span class="points-stream">+${Number(result.pot || 0)} pt</span>
+        <span class="drop-arrow" aria-hidden="true"></span>
+        <strong>${escapeHtml(result.winnerNickname || "Vincitore")}</strong>
+        <span>${escapeHtml(result.loserNickname || "Avversario")} cade: il bottino cambia mano</span>
+      </div>
+    `;
+  }
+  if (result.outcome === "cancelled") {
+    return `
+      <div class="fifty-drama">
+        <strong>Sfida annullata</strong>
+        <span>Nessun punto assegnato</span>
+      </div>
+    `;
+  }
+  return `
+    <div class="fifty-drama fifty-drop-drama">
+      <span class="drop-arrow double" aria-hidden="true"></span>
+      <strong>Doppia caduta</strong>
+      <span>Entrambi perdono ${Number(result.stake || 0)} punti</span>
+    </div>
+  `;
+}
+
+function fiftyResultPlatformState(player, result) {
+  const classes = [];
+  if (result.outcome === "split") classes.push("ready", "handshake-ready");
+  if (player && player.saved) classes.push("ready");
+  if (player && player.left) classes.push("disconnected");
+  if (result.winnerId && player && player.id === result.winnerId) classes.push("winner", "ready");
+  if (result.loserId && player && player.id === result.loserId) classes.push("fall");
+  if (result.outcome === "both_drop" && player && !player.saved) classes.push("fall");
+  if ((result.outcome === "drop_win" || result.outcome === "forfeit") && player && !player.saved && player.id !== result.winnerId) {
+    classes.push("fall");
+  }
+  return Array.from(new Set(classes)).join(" ");
 }
 
 function renderScreenFiftyResultPlayer(player) {
@@ -1219,7 +1273,7 @@ function fiftyResultHeadline(result) {
 }
 
 function fiftyResultMessage(result) {
-  if (result.outcome === "split") return "Entrambi hanno tenuto premuto: nessuno perde punti.";
+  if (result.outcome === "split") return "Entrambi hanno tenuto premuto: stretta di mano e bottino diviso.";
   if (result.outcome === "drop_win") return `${result.winnerNickname || "Un giocatore"} ha lasciato cadere l'avversario al momento giusto.`;
   if (result.outcome === "forfeit") return `${result.loserNickname || "Un giocatore"} e uscito o ha perso connessione prima del controllo finale.`;
   if (result.outcome === "cancelled") return "La sfida non e partita: servono due giocatori pronti.";
@@ -1288,9 +1342,56 @@ function renderScreenReveal(room) {
       <div class="answers-grid screen-answers">
         ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
       </div>
+      ${renderScreenWagerResults(room)}
       ${renderTopLeaderboardStrip(room)}
     </article>
   `;
+}
+
+function renderScreenWagerResults(room) {
+  const items = screenWagerResultsForQuestion(room);
+  if (!items.length) return "";
+  return `
+    <section class="screen-wager-results">
+      <div>
+        <p class="screen-kicker">Scommessa risolta</p>
+        <h2>${items.length > 1 ? "Le puntate cambiano la classifica" : "La puntata cambia la classifica"}</h2>
+      </div>
+      <div class="screen-wager-grid">
+        ${items.map(renderScreenWagerResultCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function screenWagerResultsForQuestion(room) {
+  const history = Array.isArray(room && room.wagerHistory) ? room.wagerHistory : [];
+  const currentIndex = Number(room && room.currentIndex);
+  if (!Number.isFinite(currentIndex)) return [];
+  return history
+    .filter((item) => Number(item.questionIndex) === currentIndex)
+    .slice(0, 3);
+}
+
+function renderScreenWagerResultCard(item) {
+  const won = item.status === "won";
+  const delta = Number(item.delta || 0);
+  const amount = Math.abs(delta) || Number(item.stake || 0);
+  return `
+    <article class="screen-wager-card ${won ? "won" : "lost"}">
+      <span class="status-pill compact">${won ? `+${amount} pt` : `-${amount} pt`}</span>
+      <strong>${escapeHtml(item.bettorNickname || "Giocatore")}</strong>
+      <p>${escapeHtml(wagerResultScreenText(item, won, amount))}</p>
+    </article>
+  `;
+}
+
+function wagerResultScreenText(item, won, amount) {
+  const bettor = item.bettorNickname || "Un giocatore";
+  const target = item.targetNickname || "un avversario";
+  if (won) return `${bettor} ha scommesso su ${target} e vince ${amount} punti.`;
+  if (item.reason === "no_answer") return `${bettor} ha scommesso su ${target}, ma non arriva risposta: perde ${amount} punti.`;
+  return `${bettor} ha scommesso su ${target} e perde ${amount} punti.`;
 }
 
 function renderScreenEnded(room) {
