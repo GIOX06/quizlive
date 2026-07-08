@@ -1219,7 +1219,8 @@ textarea {
 }
 
 .builder-preview-only .answer-stat.has-image {
-  grid-template-columns: 2.1rem minmax(3.5rem, 0.34fr) minmax(0, 1fr);
+  grid-template-columns: 2.1rem minmax(0, 1fr);
+  min-height: 5.2rem;
 }
 
 .builder-preview-only .answer-stat .letter {
@@ -1281,6 +1282,7 @@ textarea {
 }
 
 .builder-answer-card {
+  position: relative;
   display: grid;
   grid-template-columns: 3.4rem minmax(0, 1fr);
   gap: 0.75rem;
@@ -1289,6 +1291,25 @@ textarea {
   padding: 0.65rem;
   border-radius: 8px;
   color: #fff;
+  overflow: hidden;
+}
+
+.builder-answer-card.has-answer-image {
+  min-height: 8rem;
+}
+
+.builder-answer-card.has-answer-image::after,
+.answer-btn.has-image::after,
+.answer-stat.has-image::after,
+.answer-layout-button.has-answer-image::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0.22)),
+    linear-gradient(180deg, transparent 45%, rgba(0, 0, 0, 0.48));
+  pointer-events: none;
+  z-index: 1;
 }
 
 .builder-editor-preview .builder-answer-card {
@@ -1325,6 +1346,10 @@ textarea {
   font-weight: 850;
 }
 
+.builder-answer-card.has-answer-image input[data-answer-text] {
+  background: rgba(255, 255, 255, 0.9);
+}
+
 .builder-editor-preview .builder-answer-card input[data-answer-text] {
   grid-area: text;
   grid-column: 1 / -1;
@@ -1333,6 +1358,8 @@ textarea {
 }
 
 .builder-answer-symbol {
+  position: relative;
+  z-index: 2;
   width: 3.4rem;
   height: 4.8rem;
   display: grid;
@@ -1351,6 +1378,8 @@ textarea {
 }
 
 .builder-correct-toggle {
+  position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
@@ -1373,7 +1402,14 @@ textarea {
 }
 
 .builder-answer-card .btn {
+  position: relative;
+  z-index: 2;
   width: fit-content;
+}
+
+.builder-answer-fields {
+  position: relative;
+  z-index: 2;
 }
 
 .builder-answer-image-button {
@@ -1415,6 +1451,24 @@ textarea {
   width: 2.4rem;
   height: 2.4rem;
   border-radius: 6px;
+  object-fit: cover;
+}
+
+.builder-answer-bg,
+.answer-layout-bg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  z-index: 0;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.builder-answer-bg img,
+.answer-layout-bg img {
+  width: 100%;
+  height: 100%;
+  display: block;
   object-fit: cover;
 }
 
@@ -1488,6 +1542,50 @@ textarea {
   display: grid;
   grid-template-columns: minmax(12rem, 0.4fr) minmax(0, 1fr);
   gap: 0.75rem;
+}
+
+.answer-layout-preview {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.answer-layout-button {
+  position: relative;
+  min-height: 18rem;
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr);
+  align-items: center;
+  gap: 1rem;
+  padding: 1.2rem;
+  border-radius: 8px;
+  overflow: hidden;
+  color: #fff;
+}
+
+.answer-layout-button .builder-answer-symbol,
+.answer-layout-button strong {
+  position: relative;
+  z-index: 2;
+}
+
+.answer-layout-button strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  line-height: 1;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.62);
+}
+
+.answer-layout-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.answer-layout-controls input[type="range"] {
+  width: 100%;
+  accent-color: #ff8a2d;
 }
 
 .archive-panel {
@@ -2392,6 +2490,7 @@ textarea {
 
 .answer-btn,
 .answer-stat {
+  position: relative;
   min-height: clamp(5rem, 16vw, 8rem);
   border-radius: 8px;
   padding: 1rem;
@@ -2415,12 +2514,13 @@ textarea {
 
 .answer-btn.has-image,
 .answer-stat.has-image {
-  grid-template-columns: 2.7rem minmax(4rem, 0.42fr) minmax(0, 1fr);
+  grid-template-columns: 2.7rem minmax(0, 1fr);
+  min-height: clamp(6.8rem, 18vw, 10rem);
 }
 
 .answer-btn.has-image.with-mark,
 .answer-stat.has-image.with-mark {
-  grid-template-columns: 2.7rem minmax(4rem, 0.42fr) minmax(0, 1fr) auto;
+  grid-template-columns: 2.7rem minmax(0, 1fr) auto;
 }
 
 .answer-btn:hover:not(:disabled) {
@@ -2434,7 +2534,7 @@ textarea {
 }
 
 .answer-btn.has-image.selected {
-  grid-template-columns: 2.7rem minmax(4rem, 0.42fr) minmax(0, 1fr) auto;
+  grid-template-columns: 2.7rem minmax(0, 1fr) auto;
 }
 
 .answer-btn.correct,
@@ -2453,6 +2553,8 @@ textarea {
 
 .answer-btn .letter,
 .answer-stat .letter {
+  position: relative;
+  z-index: 2;
   width: 2.7rem;
   height: 2.7rem;
   display: grid;
@@ -2465,6 +2567,8 @@ textarea {
 
 .answer-btn .answer-text,
 .answer-stat .answer-text {
+  position: relative;
+  z-index: 2;
   min-width: 0;
   overflow-wrap: anywhere;
   font-weight: 850;
@@ -2472,14 +2576,21 @@ textarea {
   font-size: clamp(1rem, 3vw, 1.35rem);
 }
 
+.answer-btn.has-image .answer-text,
+.answer-stat.has-image .answer-text {
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  font-size: clamp(1.15rem, 3.2vw, 1.55rem);
+}
+
 .answer-image {
-  width: 100%;
-  min-width: 0;
-  aspect-ratio: 16 / 10;
+  position: absolute;
+  inset: 0;
   display: block;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: inherit;
   background: rgba(255, 255, 255, 0.18);
+  z-index: 0;
 }
 
 .answer-image img {
@@ -2487,6 +2598,13 @@ textarea {
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.answer-selected-label,
+.answer-mark,
+.stat-bar {
+  position: relative;
+  z-index: 2;
 }
 
 .answer-selected-label {
@@ -3087,6 +3205,10 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .answer-layout-controls {
+    grid-template-columns: 1fr;
+  }
+
   .screen-lobby-grid,
   .screen-strip,
   .screen-live-layout {
@@ -3205,10 +3327,6 @@ textarea {
   .answer-btn.has-image.with-mark,
   .answer-stat.has-image.with-mark {
     grid-template-columns: 2.7rem minmax(0, 1fr);
-  }
-
-  .answer-image {
-    grid-column: 1 / -1;
   }
 
   .answer-mark,

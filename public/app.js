@@ -522,6 +522,7 @@ function renderBuilderAnswerCards(question, questionIndex, questionType) {
   const answers = editableAnswers(question);
   const correctIndexes = correctIndexesForQuestion(question, answers);
   const answerImages = answerImagesForQuestion(question, answers.length);
+  const answerLayouts = answerImageLayoutsForQuestion(question, answers.length);
   return `
     <div class="builder-answer-grid">
       ${answers.map((answer, answerIndex) => {
@@ -529,8 +530,10 @@ function renderBuilderAnswerCards(question, questionIndex, questionType) {
         const optional = answerIndex > 1 ? " facoltativa" : "";
         const rawImageUrl = answerImages[answerIndex] || "";
         const imageUrl = normalizeImageUrl(rawImageUrl);
+        const imageLayout = answerLayouts[answerIndex];
         return `
           <div class="builder-answer-card answer-${letterClass(answerIndex)} ${imageUrl ? "has-answer-image" : ""}">
+            ${imageUrl ? renderAnswerImageLayer(imageUrl, imageLayout, "builder-answer-bg") : ""}
             <span class="builder-answer-symbol">${answerShape(answerIndex)}</span>
             <div class="builder-answer-fields">
               <input data-answer-text data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(answer)}" maxlength="160" placeholder="Aggiungi risposta ${answerIndex + 1}${optional}" ${questionType === "true_false" ? "readonly" : ""} />
@@ -565,6 +568,7 @@ function renderQuestionHostPreview(question, questionIndex) {
   if (questionType === "slide") return renderSlideHostPreview(question, questionIndex);
   const answers = editableAnswers(question);
   const answerImages = answerImagesForQuestion(question, answers.length);
+  const answerLayouts = answerImageLayoutsForQuestion(question, answers.length);
   return `
     <article class="builder-live-preview builder-preview-only">
       <div class="builder-preview-question">
@@ -576,7 +580,8 @@ function renderQuestionHostPreview(question, questionIndex) {
         ${answers.map((answer, answerIndex) => renderAnswerDisplay({
           index: answerIndex,
           text: answer || `Risposta ${answerIndex + 1}`,
-          imageUrl: normalizeImageUrl(answerImages[answerIndex])
+          imageUrl: normalizeImageUrl(answerImages[answerIndex]),
+          imageLayout: answerLayouts[answerIndex]
         })).join("")}
       </div>
     </article>
@@ -678,9 +683,13 @@ function renderMediaDialog() {
   if (!question) return "";
   const isAnswer = dialog.target === "answer";
   const answerIndex = Number(dialog.answerIndex);
-  const answerImages = isAnswer ? answerImagesForQuestion(question, editableAnswers(question).length) : [];
+  const answerCount = editableAnswers(question).length;
+  const answerImages = isAnswer ? answerImagesForQuestion(question, answerCount) : [];
+  const answerLayouts = isAnswer ? answerImageLayoutsForQuestion(question, answerCount) : [];
   const rawImageUrl = isAnswer ? answerImages[answerIndex] || "" : question.imageUrl || "";
   const imageUrl = normalizeImageUrl(rawImageUrl);
+  const answerText = isAnswer ? editableAnswers(question)[answerIndex] || `Risposta ${answerLetters[answerIndex] || answerIndex + 1}` : "";
+  const answerLayout = isAnswer ? answerLayouts[answerIndex] : null;
   const title = isAnswer ? `Immagine risposta ${answerLetters[answerIndex] || answerIndex + 1}` : "Immagine principale";
   return `
     <div class="settings-backdrop">
@@ -692,9 +701,11 @@ function renderMediaDialog() {
           </div>
           <button class="btn small ghost" data-action="close-media-dialog">Chiudi</button>
         </div>
-        <div class="media-dialog-preview">
-          ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(isAnswer ? "" : question.imageAlt || "")}" />` : `<span>Immagine</span>`}
-        </div>
+        ${isAnswer
+          ? renderAnswerImageLayoutPreview(answerIndex, answerText, imageUrl, answerLayout)
+          : `<div class="media-dialog-preview">
+              ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(question.imageAlt || "")}" />` : `<span>Immagine</span>`}
+            </div>`}
         ${isAnswer ? renderAnswerMediaDialogFields(questionIndex, answerIndex, rawImageUrl, imageUrl) : renderQuestionMediaDialogFields(question, questionIndex, imageUrl)}
       </section>
     </div>
@@ -726,14 +737,45 @@ function renderQuestionMediaDialogFields(question, questionIndex, imageUrl) {
 
 function renderAnswerMediaDialogFields(questionIndex, answerIndex, rawImageUrl, imageUrl) {
   const generating = imageGeneratingState(questionIndex, answerIndex);
+  const question = local.quiz.questions[questionIndex];
+  const layout = answerImageLayoutForQuestion(question, answerIndex);
   return `
     <div class="media-dialog-grid">
       <input class="file-input" data-answer-image-upload data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
       <input data-answer-image-url data-question-index="${questionIndex}" data-answer-index="${answerIndex}" value="${escapeAttr(rawImageUrl)}" maxlength="500" placeholder="https:// immagine risposta" />
     </div>
+    ${imageUrl ? `
+      <div class="answer-layout-controls">
+        <label class="stack">
+          <span>Zoom</span>
+          <input data-answer-image-layout="zoom" data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="range" min="1" max="3" step="0.05" value="${Number(layout.zoom || 1)}" />
+        </label>
+        <label class="stack">
+          <span>Posizione orizzontale</span>
+          <input data-answer-image-layout="x" data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="range" min="0" max="100" step="1" value="${Number(layout.x || 50)}" />
+        </label>
+        <label class="stack">
+          <span>Posizione verticale</span>
+          <input data-answer-image-layout="y" data-question-index="${questionIndex}" data-answer-index="${answerIndex}" type="range" min="0" max="100" step="1" value="${Number(layout.y || 50)}" />
+        </label>
+      </div>
+    ` : ""}
     <div class="media-actions">
       <button class="btn small ghost" data-action="generate-answer-image" data-question-index="${questionIndex}" data-answer-index="${answerIndex}" ${generating.loading ? "disabled" : ""}>${generating.loading ? "Genero..." : "Genera gratis"}</button>
+      ${imageUrl ? `<button class="btn small ghost" data-action="reset-answer-image-layout" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Centra</button>` : ""}
       ${imageUrl ? `<button class="btn small ghost" data-action="clear-answer-image" data-question-index="${questionIndex}" data-answer-index="${answerIndex}">Rimuovi</button>` : ""}
+    </div>
+  `;
+}
+
+function renderAnswerImageLayoutPreview(answerIndex, answerText, imageUrl, layout) {
+  return `
+    <div class="answer-layout-preview">
+      <div class="answer-layout-button answer-${letterClass(answerIndex)} ${imageUrl ? "has-answer-image" : ""}">
+        ${imageUrl ? renderAnswerImageLayer(imageUrl, layout, "answer-layout-bg") : ""}
+        <span class="builder-answer-symbol">${answerShape(answerIndex)}</span>
+        <strong>${escapeHtml(answerText)}</strong>
+      </div>
     </div>
   `;
 }
@@ -2158,7 +2200,38 @@ function renderAnswerStat(answer, playerCount) {
 function renderAnswerImage(answer) {
   const imageUrl = answer && answer.imageUrl ? String(answer.imageUrl) : "";
   if (!imageUrl) return "";
-  return `<span class="answer-image"><img src="${escapeAttr(imageUrl)}" alt="" loading="lazy" /></span>`;
+  return renderAnswerImageLayer(imageUrl, answer.imageLayout, "answer-image");
+}
+
+function renderAnswerImageLayer(imageUrl, layout, className) {
+  const normalized = normalizeAnswerImageLayout(layout);
+  const style = answerImageStyle(imageUrl, normalized);
+  return `
+    <span class="${escapeAttr(className || "answer-image")}" style="${escapeAttr(style)}" aria-hidden="true">
+      <img src="${escapeAttr(imageUrl)}" alt="" loading="lazy" style="${escapeAttr(answerImageImgStyle(normalized))}" />
+    </span>
+  `;
+}
+
+function answerImageStyle(imageUrl, layout) {
+  return [
+    `--answer-image-url: url('${cssUrlEscape(imageUrl)}')`,
+    `--answer-image-x: ${layout.x}%`,
+    `--answer-image-y: ${layout.y}%`,
+    `--answer-image-zoom: ${layout.zoom}`
+  ].join("; ");
+}
+
+function answerImageImgStyle(layout) {
+  return [
+    `object-position: ${layout.x}% ${layout.y}%`,
+    `transform: scale(${layout.zoom})`,
+    `transform-origin: ${layout.x}% ${layout.y}%`
+  ].join("; ");
+}
+
+function cssUrlEscape(value) {
+  return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 function renderAnswerMark(correct, visible) {
@@ -2259,6 +2332,19 @@ function bindEvents() {
       render();
     });
   });
+  document.querySelectorAll("[data-answer-image-layout]").forEach((element) => {
+    const updateLayout = () => {
+      const question = local.quiz.questions[Number(element.dataset.questionIndex)];
+      if (!question) return;
+      updateAnswerImageLayout(question, Number(element.dataset.answerIndex), element.dataset.answerImageLayout, Number(element.value));
+      updateAnswerLayoutPreview(question, Number(element.dataset.answerIndex));
+    };
+    element.addEventListener("input", updateLayout);
+    element.addEventListener("change", () => {
+      updateLayout();
+      render();
+    });
+  });
   document.querySelectorAll("[data-question-time]").forEach((element) => {
     element.addEventListener("input", () => {
       local.quiz.questions[Number(element.dataset.questionIndex)].timeLimit = Number(element.value);
@@ -2282,11 +2368,13 @@ function bindEvents() {
       if (question.type === "true_false") {
         question.answers = ["Vero", "Falso"];
         question.answerImages = [];
+        question.answerImageLayouts = [];
         question.correctIndex = Math.min(Number(question.correctIndex) || 0, 1);
         question.correctIndexes = [question.correctIndex];
       } else if (question.type === "slide") {
         question.answers = [];
         question.answerImages = [];
+        question.answerImageLayouts = [];
         question.correctIndex = 0;
         question.correctIndexes = [];
         question.points = 0;
@@ -2294,13 +2382,16 @@ function bindEvents() {
       } else if (question.type === "multiple_select") {
         question.answers = question.answers && question.answers.length >= 2 ? question.answers : ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
         question.answerImages = answerImagesForQuestion(question, editableAnswers(question).length);
+        question.answerImageLayouts = answerImageLayoutsForQuestion(question, editableAnswers(question).length);
         question.correctIndexes = correctIndexesForQuestion(question, editableAnswers(question));
       } else if (!question.answers || question.answers.length < 2) {
         question.answers = ["Risposta A", "Risposta B", "Risposta C", "Risposta D"];
         question.answerImages = answerImagesForQuestion(question, editableAnswers(question).length);
+        question.answerImageLayouts = answerImageLayoutsForQuestion(question, editableAnswers(question).length);
         question.correctIndexes = [Number(question.correctIndex) || 0];
       } else {
         question.answerImages = answerImagesForQuestion(question, editableAnswers(question).length);
+        question.answerImageLayouts = answerImageLayoutsForQuestion(question, editableAnswers(question).length);
       }
       render();
     });
@@ -2437,6 +2528,7 @@ function handleAction(event) {
   if (action === "select-suggested-image") selectSuggestedImage(Number(target.dataset.questionIndex), Number(target.dataset.imageIndex));
   if (action === "clear-question-image") clearQuestionImage(Number(target.dataset.questionIndex));
   if (action === "clear-answer-image") clearAnswerImage(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
+  if (action === "reset-answer-image-layout") resetAnswerImageLayout(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
   if (action === "open-question-image-dialog") openQuestionImageDialog(Number(target.dataset.questionIndex));
   if (action === "open-answer-image-dialog") openAnswerImageDialog(Number(target.dataset.questionIndex), Number(target.dataset.answerIndex));
   if (action === "close-media-dialog") closeMediaDialog();
@@ -2498,6 +2590,7 @@ function addQuestion() {
     text: "Nuova domanda",
     answers: ["Risposta A", "Risposta B", "Risposta C", "Risposta D"],
     answerImages: [],
+    answerImageLayouts: [],
     correctIndex: 0,
     points: 0,
     timeLimit: 20
@@ -2764,6 +2857,7 @@ function addAnswer(questionIndex) {
   if (question.answers.length >= 6) return;
   question.answers.push("");
   question.answerImages = answerImagesForQuestion(question, question.answers.length);
+  question.answerImageLayouts = answerImageLayoutsForQuestion(question, question.answers.length);
   render();
 }
 
@@ -2777,6 +2871,8 @@ function removeAnswer(questionIndex, answerIndex) {
   question.answers = answers;
   question.answerImages = answerImagesForQuestion(question, answers.length + 1);
   question.answerImages.splice(answerIndex, 1);
+  question.answerImageLayouts = answerImageLayoutsForQuestion(question, answers.length + 1);
+  question.answerImageLayouts.splice(answerIndex, 1);
   const current = previousCorrect
     .filter((index) => index !== answerIndex)
     .map((index) => index > answerIndex ? index - 1 : index)
@@ -3002,6 +3098,7 @@ function clearAnswerImage(questionIndex, answerIndex) {
   const question = local.quiz.questions[questionIndex];
   if (!question || normalizeQuestionType(question.type) === "true_false") return;
   setAnswerImage(question, answerIndex, "");
+  resetAnswerImageLayout(questionIndex, answerIndex);
   render();
 }
 
@@ -3897,6 +3994,7 @@ function cleanQuiz(input) {
         .slice(0, 6);
       const correctIndexes = type === "slide" ? [] : normalizeCorrectIndexes(question, answers, type);
       const answerImages = type === "true_false" ? [] : normalizeAnswerImages(question.answerImages, answers.length);
+      const answerImageLayouts = type === "true_false" || type === "slide" ? [] : normalizeAnswerImageLayouts(question.answerImageLayouts, answers.length);
       return {
         type,
         text: String(question.text || `Domanda ${index + 1}`).trim().slice(0, 240),
@@ -3910,6 +4008,7 @@ function cleanQuiz(input) {
         videoUrl: type === "slide" ? "" : normalizeMediaUrl(question.videoUrl),
         answers,
         answerImages,
+        answerImageLayouts,
         correctIndex: correctIndexes[0] || 0,
         correctIndexes,
         points: type === "slide" ? 0 : normalizeQuestionPoints(question.points),
@@ -3946,7 +4045,73 @@ function answerImagesForQuestion(question, count) {
 function setAnswerImage(question, answerIndex, value) {
   const count = editableAnswers(question).length;
   question.answerImages = answerImagesForQuestion(question, count);
+  question.answerImageLayouts = answerImageLayoutsForQuestion(question, count);
   if (answerIndex >= 0 && answerIndex < count) question.answerImages[answerIndex] = String(value || "").trim().slice(0, 500);
+}
+
+function answerImageLayoutsForQuestion(question, count) {
+  const source = Array.isArray(question && question.answerImageLayouts) ? question.answerImageLayouts : [];
+  return Array.from({ length: Math.max(0, count) }, (_item, index) => normalizeAnswerImageLayout(source[index]));
+}
+
+function answerImageLayoutForQuestion(question, answerIndex) {
+  return answerImageLayoutsForQuestion(question, answerIndex + 1)[answerIndex] || defaultAnswerImageLayout();
+}
+
+function updateAnswerImageLayout(question, answerIndex, key, value) {
+  const count = editableAnswers(question).length;
+  if (answerIndex < 0 || answerIndex >= count) return;
+  question.answerImageLayouts = answerImageLayoutsForQuestion(question, count);
+  const layout = normalizeAnswerImageLayout(question.answerImageLayouts[answerIndex]);
+  if (key === "x") layout.x = clampNumber(value, 0, 100, 50);
+  if (key === "y") layout.y = clampNumber(value, 0, 100, 50);
+  if (key === "zoom") layout.zoom = clampNumber(value, 1, 3, 1);
+  question.answerImageLayouts[answerIndex] = layout;
+}
+
+function resetAnswerImageLayout(questionIndex, answerIndex) {
+  const question = local.quiz.questions[questionIndex];
+  if (!question) return;
+  const count = editableAnswers(question).length;
+  question.answerImageLayouts = answerImageLayoutsForQuestion(question, count);
+  if (answerIndex >= 0 && answerIndex < count) question.answerImageLayouts[answerIndex] = defaultAnswerImageLayout();
+  render();
+}
+
+function updateAnswerLayoutPreview(question, answerIndex) {
+  const imageUrl = normalizeImageUrl(answerImagesForQuestion(question, answerIndex + 1)[answerIndex]);
+  if (!imageUrl) return;
+  const layout = answerImageLayoutForQuestion(question, answerIndex);
+  document.querySelectorAll(".media-dialog .answer-layout-bg").forEach((layer) => {
+    layer.setAttribute("style", answerImageStyle(imageUrl, layout));
+    const image = layer.querySelector("img");
+    if (image) image.setAttribute("style", answerImageImgStyle(layout));
+  });
+}
+
+function normalizeAnswerImageLayout(layout) {
+  const source = layout && typeof layout === "object" ? layout : {};
+  return {
+    fit: source.fit === "contain" ? "contain" : "cover",
+    x: clampNumber(source.x, 0, 100, 50),
+    y: clampNumber(source.y, 0, 100, 50),
+    zoom: clampNumber(source.zoom, 1, 3, 1)
+  };
+}
+
+function normalizeAnswerImageLayouts(layouts, count) {
+  const source = Array.isArray(layouts) ? layouts : [];
+  return Array.from({ length: Math.max(0, count) }, (_item, index) => normalizeAnswerImageLayout(source[index]));
+}
+
+function defaultAnswerImageLayout() {
+  return { fit: "cover", x: 50, y: 50, zoom: 1 };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
 }
 
 function normalizeAnswerImages(images, count) {

@@ -92,8 +92,10 @@ async function main() {
     quiz.questions[0].imageProvider = "Pexels";
     quiz.questions[0].imagePageUrl = "https://www.pexels.com/photo/smoke-test-123/";
     quiz.questions[0].answerImages = [uploadedMedia.url, "", "", ""];
+    quiz.questions[0].answerImageLayouts = [{ x: 22, y: 64, zoom: 1.8 }, {}, {}, {}];
     quiz.questions[1].imageUrl = uploadedMedia.url;
     quiz.questions[2].answerImages = [uploadedMedia.url, "", "", uploadedMedia.url];
+    quiz.questions[2].answerImageLayouts = [{ x: 50, y: 50, zoom: 1.2 }, {}, {}, { x: 75, y: 35, zoom: 2.1 }];
 
     const imageSearch = await postJsonRaw("/api/images/search", {
       quiz: { subject: "Geografia" },
@@ -191,6 +193,7 @@ async function main() {
     assert.ok(archivedQuiz);
     assert.equal(archivedQuiz.visibility, "public");
     assert.equal(archivedQuiz.folder, "Smoke Library");
+    assert.equal(archivedQuiz.quiz.questions[0].answerImageLayouts[0].zoom, 1.8);
 
     const created = await emitAck(host, "host:create", { quiz });
     assert.equal(created.ok, true);
@@ -269,7 +272,9 @@ async function main() {
       state.question &&
       state.question.type === "speed" &&
       state.question.answers.length === 4 &&
-      state.question.answers[0].imageUrl === uploadedMedia.url
+      state.question.answers[0].imageUrl === uploadedMedia.url &&
+      state.question.answers[0].imageLayout &&
+      state.question.answers[0].imageLayout.x === 22
     );
     await waitForState(screen, (state) =>
       state.role === "screen" &&
@@ -277,6 +282,8 @@ async function main() {
       state.question &&
       state.question.answers.length === 4 &&
       state.question.answers[0].imageUrl === uploadedMedia.url &&
+      state.question.answers[0].imageLayout &&
+      state.question.answers[0].imageLayout.zoom === 1.8 &&
       state.question.answers.every((answer) => answer.correct === undefined && answer.count === undefined)
     );
 
@@ -403,7 +410,9 @@ async function main() {
       state.question &&
       state.question.type === "multiple_select" &&
       state.question.selectionCount === 3 &&
-      state.question.answers[3].imageUrl === uploadedMedia.url
+      state.question.answers[3].imageUrl === uploadedMedia.url &&
+      state.question.answers[3].imageLayout &&
+      state.question.answers[3].imageLayout.zoom === 2.1
     );
 
     const incompleteMultiAnswered = await emitAck(player, "player:answer", { answerIndexes: [0, 1] });

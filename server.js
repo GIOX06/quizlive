@@ -1957,6 +1957,7 @@ function serializeRoom(room, socket) {
           answers: question.answers.map((answer, index) => ({
             text: answer,
             imageUrl: answerImageUrl(question, index),
+            imageLayout: answerImageLayout(question, index),
             index,
             correct: revealMode ? correctIndexes(question).includes(index) : undefined,
             count: answerCountMode ? countAnswers(answerMap, index) : undefined
@@ -2336,6 +2337,7 @@ function resultsToJson(room) {
       videoUrl: question.videoUrl,
       answers: question.answers,
       answerImages: normalizedAnswerImages(question, question.answers.length),
+      answerImageLayouts: normalizedAnswerImageLayouts(question, question.answers.length),
       correctIndex: question.correctIndex,
       correctIndexes: correctIndexes(question),
       points: question.points || 0,
@@ -2550,6 +2552,7 @@ function resultFromRoom(room) {
         videoUrl: question.videoUrl,
         answers: question.answers,
         answerImages: normalizedAnswerImages(question, question.answers.length),
+        answerImageLayouts: normalizedAnswerImageLayouts(question, question.answers.length),
         correctIndex: question.correctIndex,
         correctIndexes: correctIndexes(question),
         stats: questionStats(question, answerMap, board.length),
@@ -2752,9 +2755,39 @@ function answerImageUrl(question, index) {
   return normalizeImageUrl(images[index]);
 }
 
+function answerImageLayout(question, index) {
+  return normalizedAnswerImageLayouts(question, index + 1)[index] || defaultAnswerImageLayout();
+}
+
 function normalizedAnswerImages(question, count) {
   const images = Array.isArray(question && question.answerImages) ? question.answerImages : [];
   return Array.from({ length: Math.max(0, count) }, (_item, index) => normalizeImageUrl(images[index]));
+}
+
+function normalizedAnswerImageLayouts(question, count) {
+  const layouts = Array.isArray(question && question.answerImageLayouts) ? question.answerImageLayouts : [];
+  return Array.from({ length: Math.max(0, count) }, (_item, index) => normalizeAnswerImageLayout(layouts[index]));
+}
+
+function normalizeAnswerImageLayout(layout) {
+  const source = layout && typeof layout === "object" ? layout : {};
+  const fit = source.fit === "contain" ? "contain" : "cover";
+  return {
+    fit,
+    x: clampNumber(source.x, 0, 100, 50),
+    y: clampNumber(source.y, 0, 100, 50),
+    zoom: clampNumber(source.zoom, 1, 3, 1)
+  };
+}
+
+function defaultAnswerImageLayout() {
+  return { fit: "cover", x: 50, y: 50, zoom: 1 };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
 }
 
 function questionStats(question, answerMap, playerCount) {
@@ -3511,6 +3544,7 @@ function normalizeQuestion(item, index) {
     videoUrl: type === "slide" ? "" : normalizeMediaUrl(item && item.videoUrl),
     answers: normalizedAnswers,
     answerImages: type === "true_false" || type === "slide" ? [] : normalizedAnswerImages(item, normalizedAnswers.length),
+    answerImageLayouts: type === "true_false" || type === "slide" ? [] : normalizedAnswerImageLayouts(item, normalizedAnswers.length),
     correctIndex,
     correctIndexes: normalizedCorrectIndexes,
     points,
