@@ -775,7 +775,10 @@ io.on("connection", (socket) => {
     }
     if (socket.data.role === "player") {
       const player = room.players.get(socket.data.playerId);
-      if (player) player.connected = false;
+      if (player) {
+        player.connected = false;
+        markFiftyPlayerDisconnected(room, player.id);
+      }
     }
     emitRoom(room);
   });
@@ -1448,6 +1451,7 @@ function readyFiftyPlayer(room, player, payload) {
   }
   participant.ready = true;
   participant.readyAt = Date.now();
+  participant.leftAt = null;
   participant.updatedAt = participant.readyAt;
 
   if (challenge.playerIds.every((playerId) => challenge.participants[playerId].ready)) {
@@ -1593,6 +1597,7 @@ function resolveFiftyChallenge(room, reason) {
       id: playerId,
       nickname: challenge.participants[playerId].nickname,
       saved: playerId === firstId ? firstSaved : secondSaved,
+      left: Boolean(challenge.participants[playerId].leftAt),
       delta: deltas[playerId],
       score: room.players.get(playerId) ? room.players.get(playerId).score : 0
     })),
@@ -1677,10 +1682,29 @@ function updateFiftyPlayerId(room, previousId, nextId) {
   if (!challenge || !challenge.participants[previousId]) return;
   challenge.participants[nextId] = {
     ...challenge.participants[previousId],
-    playerId: nextId
+    playerId: nextId,
+    holding: false,
+    leftAt: null,
+    updatedAt: Date.now()
   };
   delete challenge.participants[previousId];
   challenge.playerIds = challenge.playerIds.map((playerId) => playerId === previousId ? nextId : playerId);
+}
+
+function markFiftyPlayerDisconnected(room, playerId) {
+  const challenge = room.fifty && room.fifty.active;
+  if (!challenge || !challenge.participants[playerId]) return false;
+  const participant = challenge.participants[playerId];
+  const now = Date.now();
+  participant.holding = false;
+  participant.updatedAt = now;
+  if (challenge.status === "intro") {
+    participant.ready = false;
+    participant.readyAt = null;
+    return true;
+  }
+  participant.leftAt = participant.leftAt || now;
+  return true;
 }
 
 function cancelFiftyForPlayer(room, playerId) {
@@ -2115,6 +2139,7 @@ function serializeFiftyResult(result) {
     pot: result.pot,
     winnerNickname: result.winnerNickname,
     loserNickname: result.loserNickname,
+    reason: result.reason,
     players: result.players,
     resolvedAt: result.resolvedAt
   };

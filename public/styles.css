@@ -1714,6 +1714,13 @@ textarea {
   align-items: stretch;
 }
 
+.screen-fifty-result-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 14rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
 .screen-fifty-player,
 .screen-fifty-center {
   display: grid;
@@ -1734,6 +1741,35 @@ textarea {
 .screen-fifty-player.holding {
   border-color: rgba(68, 196, 161, 0.58);
   box-shadow: inset 0 0 0 1px rgba(68, 196, 161, 0.18);
+}
+
+.screen-fifty-player.result-card {
+  align-content: center;
+}
+
+.screen-fifty-player.result-card.winner {
+  border-color: rgba(68, 196, 161, 0.72);
+  background:
+    linear-gradient(145deg, rgba(68, 196, 161, 0.22), transparent 62%),
+    rgba(255, 255, 255, 0.07);
+}
+
+.screen-fifty-player.result-card.loser {
+  border-color: rgba(255, 93, 93, 0.52);
+}
+
+.result-delta {
+  font-size: clamp(1.1rem, 2vw, 1.7rem);
+  font-weight: 1000;
+  color: var(--stage-muted);
+}
+
+.result-delta.positive {
+  color: #44c4a1;
+}
+
+.result-delta.negative {
+  color: #ff8a2d;
 }
 
 .screen-fifty-center strong {
@@ -1813,6 +1849,26 @@ textarea {
 
 .fifty-arena.active .fifty-platform:not(.holding) .fifty-puppet {
   animation: puppet-danger 520ms ease-in-out infinite;
+}
+
+.fifty-arena.result {
+  min-height: 20rem;
+}
+
+.fifty-arena.result .fifty-platform:not(.ready) .fifty-puppet,
+.fifty-arena.result .fifty-platform.disconnected .fifty-puppet {
+  transform: translateY(2.2rem) rotate(8deg);
+  opacity: 0.62;
+  animation: none;
+}
+
+.fifty-arena.outcome-split .fifty-rope {
+  background: linear-gradient(90deg, #44c4a1, #44c4a1);
+}
+
+.fifty-arena.outcome-forfeit .fifty-chasm,
+.fifty-arena.outcome-both_drop .fifty-chasm {
+  color: #ffc257;
 }
 
 .fifty-platform span {
@@ -2325,6 +2381,26 @@ textarea {
     rgba(255, 255, 255, 0.06);
 }
 
+.live-control-section {
+  display: grid;
+  gap: 0.65rem;
+  border-top: 1px solid rgba(255, 139, 45, 0.24);
+  padding-top: 0.8rem;
+}
+
+.live-control-section.first {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.live-section-title {
+  margin: 0;
+  color: var(--stage-ink);
+  font-size: 0.9rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
 .live-event-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2358,8 +2434,8 @@ textarea {
 .live-wager-offer,
 .live-fifty-panel,
 .live-fifty-challenge {
-  border-top: 1px solid rgba(255, 139, 45, 0.24);
-  padding-top: 0.8rem;
+  display: grid;
+  gap: 0.65rem;
 }
 
 .live-wager-offer,
@@ -2372,6 +2448,17 @@ textarea {
 
 .live-fifty-challenge {
   gap: 1rem;
+}
+
+.live-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.live-quick-actions .btn {
+  width: 100%;
+  min-width: 0;
 }
 
 .fifty-rules {

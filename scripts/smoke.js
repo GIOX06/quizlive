@@ -492,6 +492,62 @@ async function main() {
       )
     );
 
+    const disconnectFiftyStarted = await emitAck(host, "host:fifty-start", {
+      stake: 1,
+      countdownMs: 300,
+      durationMs: 700
+    });
+    assert.equal(disconnectFiftyStarted.ok, true);
+
+    const disconnectPlayerReady = await emitAck(player, "player:fifty-ready", {
+      challengeId: disconnectFiftyStarted.challenge.id
+    });
+    assert.equal(disconnectPlayerReady.ok, true);
+
+    const disconnectDeclinerReady = await emitAck(decliningPlayer, "player:fifty-ready", {
+      challengeId: disconnectFiftyStarted.challenge.id
+    });
+    assert.equal(disconnectDeclinerReady.ok, true);
+
+    await waitForState(player, (state) =>
+      state.fiftyChallenge &&
+      state.fiftyChallenge.id === disconnectFiftyStarted.challenge.id &&
+      state.fiftyChallenge.status === "active"
+    );
+
+    const disconnectFiftyResultEvent = waitForSocketEvent(screen, "live:event");
+    const reconnectHold = await emitAck(player, "player:fifty-hold", {
+      challengeId: disconnectFiftyStarted.challenge.id,
+      holding: true
+    });
+    assert.equal(reconnectHold.ok, true);
+    decliningPlayer.disconnect();
+    await waitForCondition(() => !decliningPlayer.connected, "Timeout waiting for player disconnect");
+
+    const disconnectFiftyResult = await disconnectFiftyResultEvent;
+    assert.equal(disconnectFiftyResult.title, "50 e 50 risolto");
+
+    await waitForState(host, (state) =>
+      state.fifty &&
+      state.fifty.history &&
+      state.fifty.history.some((item) =>
+        item.id === disconnectFiftyStarted.challenge.id &&
+        item.outcome === "forfeit" &&
+        item.winnerNickname === "Smoke Player" &&
+        item.players.some((playerResult) => playerResult.nickname === "Smoke Decliner" && playerResult.left === true)
+      )
+    );
+
+    decliningPlayer.connect();
+    await waitForConnect(decliningPlayer);
+    const rejoinedDecliner = await emitAck(decliningPlayer, "player:join", {
+      code: created.code,
+      nickname: "Smoke Decliner",
+      sessionToken: decliningJoined.sessionToken
+    });
+    assert.equal(rejoinedDecliner.ok, true);
+    assert.equal(rejoinedDecliner.rejoined, true);
+
     const multiReveal = await emitAck(host, "host:reveal", {});
     assert.equal(multiReveal.ok, true);
 

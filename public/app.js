@@ -125,7 +125,7 @@ window.addEventListener("hashchange", () => {
 setInterval(() => {
   if (!local.room) return;
   if (local.room.status === "question") updateLiveTimers();
-  if (local.room.fiftyChallenge || local.room.activeFifty) updateFiftyTimers();
+  if (local.room.fiftyChallenge || local.room.activeFifty || recentFiftyResult(local.room) || document.querySelector(".screen-fifty-result")) updateFiftyTimers();
 }, 250);
 
 window.addEventListener("keydown", handleBuilderKeyboard);
@@ -1049,11 +1049,12 @@ function renderHostLobby(room) {
 
 function renderScreenGame(room) {
   const question = room.question;
+  const fiftyResult = recentFiftyResult(room);
   return `
     <section class="screen-live-layout">
       ${renderScreenLeaderboardPanel(room)}
       <div class="screen-live-stage">
-        ${room.activeFifty ? renderScreenFiftyChallenge(room.activeFifty) : `
+        ${room.activeFifty ? renderScreenFiftyChallenge(room.activeFifty) : fiftyResult ? renderScreenFiftyResult(fiftyResult) : `
           ${room.status === "lobby" ? renderScreenLobby(room) : ""}
           ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
           ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
@@ -1150,6 +1151,87 @@ function renderScreenFiftyPlayer(player, phase) {
       <strong>${escapeHtml(player.nickname)}</strong>
     </div>
   `;
+}
+
+function recentFiftyResult(room) {
+  const history = room && Array.isArray(room.fiftyHistory) ? room.fiftyHistory : [];
+  const result = history[0];
+  if (!result || !result.resolvedAt) return null;
+  return Date.now() - Number(result.resolvedAt) < 12000 ? result : null;
+}
+
+function renderScreenFiftyResult(result) {
+  const players = Array.isArray(result.players) ? result.players : [];
+  const first = players[0] || { nickname: "Giocatore 1", delta: 0 };
+  const second = players[1] || { nickname: "Giocatore 2", delta: 0 };
+  return `
+    <article class="screen-fifty-show screen-fifty-result panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Mini gioco live</p>
+        <h1 class="screen-title">${escapeHtml(fiftyResultHeadline(result))}</h1>
+        <p class="screen-subtitle">${escapeHtml(fiftyResultMessage(result))}</p>
+      </div>
+      <div class="screen-fifty-result-board">
+        ${renderScreenFiftyResultPlayer(first)}
+        <div class="screen-fifty-center">
+          <span class="status-pill">Piatto</span>
+          <strong>${Number(result.pot || 0)}</strong>
+          <span class="status-pill gold-pill">punti</span>
+        </div>
+        ${renderScreenFiftyResultPlayer(second)}
+      </div>
+      <div class="fifty-arena result outcome-${escapeAttr(result.outcome || "both_drop")}">
+        <div class="fifty-rope"></div>
+        <div class="fifty-platform left ${first.saved ? "ready" : ""} ${first.left ? "disconnected" : ""}">
+          <div class="fifty-puppet"></div>
+          <span>${escapeHtml(first.nickname)}</span>
+        </div>
+        <div class="fifty-chasm">
+          <span>${escapeHtml(fiftyResultArenaText(result))}</span>
+        </div>
+        <div class="fifty-platform right ${second.saved ? "ready" : ""} ${second.left ? "disconnected" : ""}">
+          <div class="fifty-puppet"></div>
+          <span>${escapeHtml(second.nickname)}</span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderScreenFiftyResultPlayer(player) {
+  const delta = Number(player.delta || 0);
+  const state = player.left ? "Disconnesso" : player.saved ? "Ha salvato" : "Ha mollato";
+  return `
+    <div class="screen-fifty-player result-card ${delta > 0 ? "winner" : delta < 0 ? "loser" : "even"}">
+      <span class="status-pill compact">${escapeHtml(state)}</span>
+      <strong>${escapeHtml(player.nickname || "Giocatore")}</strong>
+      <span class="result-delta ${delta > 0 ? "positive" : delta < 0 ? "negative" : ""}">${delta > 0 ? "+" : ""}${delta} pt</span>
+    </div>
+  `;
+}
+
+function fiftyResultHeadline(result) {
+  if (result.outcome === "split") return "Patto rispettato";
+  if (result.outcome === "drop_win") return `${result.winnerNickname || "Vincitore"} prende tutto`;
+  if (result.outcome === "forfeit") return `${result.winnerNickname || "Vincitore"} vince per abbandono`;
+  if (result.outcome === "cancelled") return "50 e 50 annullato";
+  return "Entrambi perdono";
+}
+
+function fiftyResultMessage(result) {
+  if (result.outcome === "split") return "Entrambi hanno tenuto premuto: nessuno perde punti.";
+  if (result.outcome === "drop_win") return `${result.winnerNickname || "Un giocatore"} ha lasciato cadere l'avversario al momento giusto.`;
+  if (result.outcome === "forfeit") return `${result.loserNickname || "Un giocatore"} e uscito o ha perso connessione prima del controllo finale.`;
+  if (result.outcome === "cancelled") return "La sfida non e partita: servono due giocatori pronti.";
+  return "Nessuno ha salvato l'avversario: la posta resta persa.";
+}
+
+function fiftyResultArenaText(result) {
+  if (result.outcome === "split") return "Posta divisa";
+  if (result.outcome === "drop_win") return "Tutto al vincitore";
+  if (result.outcome === "forfeit") return "Fuori dalla sfida";
+  if (result.outcome === "cancelled") return "Annullato";
+  return "Doppia caduta";
 }
 
 function renderScreenQuestion(room) {
@@ -1715,30 +1797,46 @@ function renderHostLiveEvents(room) {
     <section class="live-panel stack">
       <div>
         <h3 class="mini-title">Eventi live</h3>
-        <p class="subtle">Audio, vibrazione e messaggi durante la partita.</p>
+        <p class="subtle">Messaggi, scommesse, mini-giochi e monitor pubblico.</p>
       </div>
-      <div class="live-event-grid">
-        <button class="btn gold small" data-action="send-live-effect" data-live-target="all" data-live-tone="drum" data-live-vibrate="true" data-live-message="Colpo di scena in arrivo.">Colpo</button>
-        <button class="btn teal small" data-action="send-live-effect" data-live-target="players" data-live-tone="alert" data-live-vibrate="true" data-live-message="Attenzione alla prossima mossa.">Telefoni</button>
-        <button class="btn blue small" data-action="send-live-effect" data-live-target="screen" data-live-tone="success" data-live-message="Momento speciale sul monitor.">Monitor</button>
+      <div class="live-control-section stack first">
+        <h4 class="live-section-title">Messaggi/effetti</h4>
+        <div class="live-event-grid">
+          <button class="btn gold small" data-action="send-live-effect" data-live-target="all" data-live-tone="drum" data-live-vibrate="true" data-live-message="Colpo di scena in arrivo.">Colpo</button>
+          <button class="btn teal small" data-action="send-live-effect" data-live-target="players" data-live-tone="alert" data-live-vibrate="true" data-live-message="Attenzione alla prossima mossa.">Telefoni</button>
+          <button class="btn blue small" data-action="send-live-effect" data-live-target="screen" data-live-tone="success" data-live-message="Momento speciale sul monitor.">Monitor</button>
+        </div>
+        <label class="stack live-message-field">
+          <span>Messaggio</span>
+          <textarea data-live-event-message maxlength="160" placeholder="Pubblico o segreto">${escapeHtml(local.liveEventMessage || "")}</textarea>
+        </label>
+        <div class="live-target-row">
+          <select data-live-event-target aria-label="Destinatario evento live">
+            <option value="all" ${selected("all")}>Tutti + monitor</option>
+            <option value="players" ${selected("players")}>Solo telefoni</option>
+            <option value="screen" ${selected("screen")}>Solo monitor</option>
+            ${players.map((player) => `
+              <option value="player:${escapeAttr(player.id)}" ${selected(`player:${player.id}`)}>Segreto: ${escapeHtml(player.nickname)}</option>
+            `).join("")}
+          </select>
+          <button class="btn primary" data-action="send-live-message">Invia</button>
+        </div>
       </div>
-      <label class="stack live-message-field">
-        <span>Messaggio</span>
-        <textarea data-live-event-message maxlength="160" placeholder="Pubblico o segreto">${escapeHtml(local.liveEventMessage || "")}</textarea>
-      </label>
-      <div class="live-target-row">
-        <select data-live-event-target aria-label="Destinatario evento live">
-          <option value="all" ${selected("all")}>Tutti + monitor</option>
-          <option value="players" ${selected("players")}>Solo telefoni</option>
-          <option value="screen" ${selected("screen")}>Solo monitor</option>
-          ${players.map((player) => `
-            <option value="player:${escapeAttr(player.id)}" ${selected(`player:${player.id}`)}>Segreto: ${escapeHtml(player.nickname)}</option>
-          `).join("")}
-        </select>
-        <button class="btn primary" data-action="send-live-message">Invia</button>
+      <div class="live-control-section">
+        ${renderHostWagerPanel(room, players)}
       </div>
-      ${renderHostWagerPanel(room, players)}
-      ${renderHostFiftyPanel(room, players)}
+      <div class="live-control-section">
+        ${renderHostFiftyPanel(room, players)}
+      </div>
+      <div class="live-control-section stack">
+        <h4 class="live-section-title">Impostazioni rapide</h4>
+        <div class="live-quick-actions">
+          <button class="btn ghost small" data-action="open-waiting-screen">Apri monitor</button>
+          ${renderCastScreenButton()}
+          <button class="btn ghost small" data-action="release-screens">Monitor in attesa</button>
+          <button class="btn ghost small" data-action="copy-screen-link">Copia monitor</button>
+        </div>
+      </div>
     </section>
   `;
 }
@@ -3865,6 +3963,11 @@ function updateLiveTimers() {
 }
 
 function updateFiftyTimers() {
+  if (document.querySelector(".screen-fifty-result") && local.room && !recentFiftyResult(local.room)) {
+    render();
+    return;
+  }
+
   document.querySelectorAll("[data-fifty-countdown]").forEach((element) => {
     const pressStartsAt = Number(element.dataset.pressStartsAt || 0);
     const endsAt = Number(element.dataset.endsAt || 0);
