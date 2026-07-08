@@ -54,6 +54,10 @@ let local = {
   liveWagerPlayerId: "",
   liveWagerStake: 100,
   liveFiftyStake: 100,
+  miniGamesOpen: false,
+  miniGameTab: "fifty",
+  miniTokenPlayerId: "",
+  miniTokenAmount: 1,
   hostResumeCode: initialHostResumeCode(),
   hostResumeBusy: false,
   hostResumeAttemptedCode: "",
@@ -600,21 +604,27 @@ function renderQuestionHostPreview(question, questionIndex) {
   const answers = editableAnswers(question);
   const answerImages = answerImagesForQuestion(question, answers.length);
   const answerLayouts = answerImageLayoutsForQuestion(question, answers.length);
+  const previewAnswers = answers.map((answer, answerIndex) => ({
+    index: answerIndex,
+    text: answer || `Risposta ${answerIndex + 1}`,
+    imageUrl: normalizeImageUrl(answerImages[answerIndex]),
+    imageLayout: answerLayouts[answerIndex],
+    correct: correctIndexesForQuestion(question, answers).includes(answerIndex)
+  }));
   return `
-    <article class="builder-live-preview builder-preview-only">
+    <article class="builder-live-preview builder-preview-only ${shouldUseVisualAnswerBoard(question) ? "has-visual-board" : ""}">
       <div class="builder-preview-question">
         <p class="screen-kicker">Anteprima</p>
         <h2>${escapeHtml(question.text || `Domanda ${questionIndex + 1}`)}</h2>
       </div>
-      ${renderBuilderPreviewMedia(question)}
-      <div class="answers-grid builder-preview-answers">
-        ${answers.map((answer, answerIndex) => renderAnswerDisplay({
-          index: answerIndex,
-          text: answer || `Risposta ${answerIndex + 1}`,
-          imageUrl: normalizeImageUrl(answerImages[answerIndex]),
-          imageLayout: answerLayouts[answerIndex]
-        })).join("")}
-      </div>
+      ${shouldUseVisualAnswerBoard(question)
+        ? renderVisualAnswerBoard(question, previewAnswers, { compact: true, reveal: true })
+        : `
+          ${renderBuilderPreviewMedia(question)}
+          <div class="answers-grid builder-preview-answers">
+            ${previewAnswers.map(renderAnswerDisplay).join("")}
+          </div>
+        `}
     </article>
   `;
 }
@@ -1084,6 +1094,7 @@ function renderHostGame(room) {
         ${renderHostPlayers(room)}
       </aside>
     </section>
+    ${local.miniGamesOpen ? renderMiniGamesDialog(room) : ""}
   `;
 }
 
@@ -1365,7 +1376,7 @@ function renderScreenQuestion(room) {
   const question = room.question;
   if (normalizeQuestionType(question.type) === "slide") return renderScreenSlide(room);
   return `
-    <article class="question-card screen-question">
+    <article class="question-card screen-question ${shouldUseVisualAnswerBoard(question) ? "has-visual-board" : ""}">
       <div class="question-main">
         <p class="screen-kicker">Domanda ${room.currentIndex + 1}/${room.totalQuestions}</p>
         <h1 class="screen-title">${escapeHtml(question.text)}</h1>
@@ -1376,10 +1387,14 @@ function renderScreenQuestion(room) {
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
-      ${renderQuestionMedia(question)}
-      <div class="answers-grid screen-answers">
-        ${question.answers.map(renderAnswerDisplay).join("")}
-      </div>
+      ${shouldUseVisualAnswerBoard(question)
+        ? renderVisualAnswerBoard(question, question.answers, { reveal: false, playerCount: room.playerCount })
+        : `
+          ${renderQuestionMedia(question)}
+          <div class="answers-grid screen-answers">
+            ${question.answers.map(renderAnswerDisplay).join("")}
+          </div>
+        `}
     </article>
   `;
 }
@@ -1401,7 +1416,7 @@ function renderScreenSlide(room) {
 function renderScreenReveal(room) {
   const question = room.question;
   return `
-    <article class="question-card screen-question">
+    <article class="question-card screen-question ${shouldUseVisualAnswerBoard(question) ? "has-visual-board" : ""}">
       <div class="question-main">
         <p class="screen-kicker">Risultati domanda ${room.currentIndex + 1}/${room.totalQuestions}</p>
         <h1 class="screen-title">${escapeHtml(question.text)}</h1>
@@ -1411,10 +1426,14 @@ function renderScreenReveal(room) {
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
-      ${renderQuestionMedia(question)}
-      <div class="answers-grid screen-answers">
-        ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
-      </div>
+      ${shouldUseVisualAnswerBoard(question)
+        ? renderVisualAnswerBoard(question, question.answers, { reveal: true, playerCount: room.playerCount, showStats: true })
+        : `
+          ${renderQuestionMedia(question)}
+          <div class="answers-grid screen-answers">
+            ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
+          </div>
+        `}
       ${renderScreenWagerResults(room)}
       ${renderTopLeaderboardStrip(room)}
     </article>
@@ -1500,6 +1519,48 @@ function renderQuestionMedia(question) {
   `;
 }
 
+function shouldUseVisualAnswerBoard(question) {
+  const imageUrl = question && normalizeImageUrl(question.imageUrl);
+  const answers = question && Array.isArray(question.answers) ? question.answers : [];
+  return Boolean(imageUrl && answers.length >= 2 && answers.length <= 6);
+}
+
+function renderVisualAnswerBoard(question, answers, options = {}) {
+  const imageUrl = normalizeImageUrl(question && question.imageUrl);
+  if (!imageUrl) return "";
+  const items = Array.isArray(answers) ? answers.slice(0, 6) : [];
+  const compactClass = options.compact ? " compact" : "";
+  const revealClass = options.reveal ? " reveal" : "";
+  return `
+    <section class="visual-answer-board${compactClass}${revealClass}">
+      <img class="visual-answer-photo" src="${escapeAttr(imageUrl)}" alt="${escapeAttr(question.imageAlt || "")}" loading="lazy" />
+      <div class="visual-answer-scrim" aria-hidden="true"></div>
+      <div class="visual-answer-grid count-${items.length}">
+        ${items.map((answer) => renderVisualAnswerTile(answer, options)).join("")}
+      </div>
+      ${question.imageCredit ? `<div class="visual-answer-credit">${renderImageCredit(question)}</div>` : ""}
+    </section>
+  `;
+}
+
+function renderVisualAnswerTile(answer, options = {}) {
+  const index = Number(answer.index || 0);
+  const count = Number(answer.count || 0);
+  const playerCount = Number(options.playerCount || 0);
+  const percent = playerCount ? Math.round((count / playerCount) * 100) : 0;
+  const hasMark = options.reveal && typeof answer.correct === "boolean";
+  const hasImage = Boolean(answer.imageUrl);
+  return `
+    <article class="visual-answer-chip answer-${letterClass(index)} ${hasImage ? "has-thumb" : ""} ${hasMark ? "with-mark" : ""} ${answer.correct ? "correct" : hasMark ? "incorrect" : ""}">
+      <span class="letter">${answerLetters[index]}</span>
+      ${hasImage ? `<span class="visual-answer-thumb">${renderAnswerImage(answer)}</span>` : ""}
+      <strong>${escapeHtml(answer.text)}${options.showStats ? ` - ${count}` : ""}</strong>
+      ${renderAnswerMark(answer.correct, hasMark)}
+      ${options.showStats ? `<span class="stat-bar"><span style="width:${percent}%"></span></span>` : ""}
+    </article>
+  `;
+}
+
 function renderImageCredit(question) {
   if (!question || !question.imageCredit) return "";
   const provider = question.imageProvider || "Pexels";
@@ -1572,7 +1633,7 @@ function renderHostQuestion(room) {
   const question = room.question;
   if (normalizeQuestionType(question.type) === "slide") return renderHostSlide(room);
   return `
-    <article class="question-card">
+    <article class="question-card ${shouldUseVisualAnswerBoard(question) ? "has-visual-board" : ""}">
       <div class="question-main">
         <h1 class="question-title">${escapeHtml(question.text)}</h1>
         <div class="meta-row">
@@ -1583,10 +1644,14 @@ function renderHostQuestion(room) {
           <span class="status-pill">${room.answerCount}/${room.playerCount} risposte</span>
         </div>
       </div>
-      ${renderQuestionMedia(question)}
-      <div class="answers-grid">
-        ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
-      </div>
+      ${shouldUseVisualAnswerBoard(question)
+        ? renderVisualAnswerBoard(question, question.answers, { reveal: true, playerCount: room.playerCount, showStats: true })
+        : `
+          ${renderQuestionMedia(question)}
+          <div class="answers-grid">
+            ${question.answers.map((answer) => renderAnswerStat(answer, room.playerCount)).join("")}
+          </div>
+        `}
     </article>
     <div class="toolbar">
       <button class="btn gold" data-action="reveal-question">Mostra risposta</button>
@@ -2000,7 +2065,7 @@ function renderHostLiveEvents(room) {
         ${renderHostWagerPanel(room, players)}
       </div>
       <div class="live-control-section">
-        ${renderHostFiftyPanel(room, players)}
+        ${renderHostMiniGamesEntry(room)}
       </div>
       <div class="live-control-section stack">
         <h4 class="live-section-title">Impostazioni rapide</h4>
@@ -2010,6 +2075,127 @@ function renderHostLiveEvents(room) {
           <button class="btn ghost small" data-action="release-screens">Monitor in attesa</button>
           <button class="btn ghost small" data-action="copy-screen-link">Copia monitor</button>
         </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderHostMiniGamesEntry(room) {
+  return `
+    <div class="live-fifty-panel stack">
+      <div>
+        <h4 class="mini-title">Mini-giochi</h4>
+        <p class="subtle">50 e 50, sfide a tre, armi e token virtuali.</p>
+      </div>
+      <button class="btn gold" data-action="open-mini-games">Apri regia mini-giochi</button>
+      ${renderHostFiftyStatus(room)}
+    </div>
+  `;
+}
+
+function renderMiniGamesDialog(room) {
+  const players = Array.isArray(room.players) ? room.players : [];
+  const tab = local.miniGameTab || "fifty";
+  const tabButton = (value, label) => `
+    <button class="mini-game-tab ${tab === value ? "active" : ""}" data-action="set-mini-game-tab" data-mini-game-tab="${escapeAttr(value)}">${escapeHtml(label)}</button>
+  `;
+  return `
+    <section class="dialog-backdrop mini-games-backdrop">
+      <article class="panel mini-games-dialog stack">
+        <header class="dialog-head">
+          <div>
+            <p class="screen-kicker">Regia host</p>
+            <h2 class="section-title">Mini-giochi</h2>
+          </div>
+          <button class="btn small ghost" data-action="close-mini-games">Chiudi</button>
+        </header>
+        <div class="mini-game-tabs">
+          ${tabButton("fifty", "50 e 50")}
+          ${tabButton("trio", "Lupo/Agnello/Cavolo")}
+          ${tabButton("weapons", "Armi")}
+          ${tabButton("tokens", "Token")}
+        </div>
+        <div class="mini-game-body">
+          ${tab === "trio" ? renderTrioMiniGamePanel(players) : tab === "weapons" ? renderWeaponsMiniGamePanel(players, room) : tab === "tokens" ? renderTokenMiniGamePanel(players) : renderHostFiftyPanel(room, players)}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderTrioMiniGamePanel(players) {
+  return `
+    <section class="mini-game-card stack">
+      <div>
+        <h3 class="mini-title">Sfida a tre</h3>
+        <p class="subtle">Lupo batte agnello, agnello batte cavolo, cavolo batte lupo. Variante pronta anche per sasso/carta/forbice.</p>
+      </div>
+      <div class="mini-game-symbol-row">
+        <span>Lupo</span>
+        <span>Agnello</span>
+        <span>Cavolo</span>
+      </div>
+      <button class="btn ghost" data-action="mini-game-soon" ${players.length >= 3 ? "" : "disabled"}>Prepara sfida a 3</button>
+      ${players.length < 3 ? `<p class="subtle">Servono almeno tre giocatori collegati.</p>` : ""}
+    </section>
+  `;
+}
+
+function renderWeaponsMiniGamePanel(players, room) {
+  const targetOptions = players.length
+    ? players.map((player) => `<option value="${escapeAttr(player.id)}">${escapeHtml(player.nickname)}</option>`).join("")
+    : `<option value="">Nessun giocatore</option>`;
+  const answerOptions = room.question && Array.isArray(room.question.answers)
+    ? room.question.answers.map((answer) => `<option value="${answer.index}">${answerLetters[answer.index]} - ${escapeHtml(answer.text)}</option>`).join("")
+    : `<option value="">Prossima domanda</option>`;
+  return `
+    <section class="mini-game-card-grid">
+      <article class="mini-game-card stack">
+        <div>
+          <h3 class="mini-title">Oscura risposta</h3>
+          <p class="subtle">Un giocatore spende token per nascondere una risposta a un avversario o a un gruppo.</p>
+        </div>
+        <select aria-label="Bersaglio oscuramento">${targetOptions}</select>
+        <select aria-label="Risposta da oscurare">${answerOptions}</select>
+        <button class="btn ghost" data-action="mini-game-soon" ${players.length ? "" : "disabled"}>Prepara arma</button>
+      </article>
+      <article class="mini-game-card stack">
+        <div>
+          <h3 class="mini-title">Vero/Falso invertito</h3>
+          <p class="subtle">Su una domanda vero/falso, il bersaglio vede le scelte invertite.</p>
+        </div>
+        <select aria-label="Bersaglio inversione">${targetOptions}</select>
+        <button class="btn ghost" data-action="mini-game-soon" ${players.length ? "" : "disabled"}>Prepara inversione</button>
+      </article>
+    </section>
+  `;
+}
+
+function renderTokenMiniGamePanel(players) {
+  const selected = players.find((player) => player.id === local.miniTokenPlayerId) || players[0] || null;
+  const selectedId = selected ? selected.id : "";
+  const amount = Math.max(1, Math.min(99, Math.floor(Number(local.miniTokenAmount) || 1)));
+  return `
+    <section class="mini-game-card stack">
+      <div>
+        <h3 class="mini-title">Token virtuali</h3>
+        <p class="subtle">I token possono diventare la valuta delle armi: bonus consumazione, premio host, penalita o missioni speciali.</p>
+      </div>
+      <div class="mini-game-token-grid">
+        ${players.length ? players.map((player) => `
+          <div class="mini-token-row">
+            <span>${escapeHtml(player.nickname)}</span>
+            <strong>${Number(player.tokens || 0)} token</strong>
+          </div>
+        `).join("") : `<div class="empty">Nessun giocatore collegato</div>`}
+      </div>
+      <div class="mini-token-controls">
+        <select data-mini-token-player aria-label="Giocatore token" ${players.length ? "" : "disabled"}>
+          ${players.length ? players.map((player) => `<option value="${escapeAttr(player.id)}" ${player.id === selectedId ? "selected" : ""}>${escapeHtml(player.nickname)}</option>`).join("") : `<option value="">Nessun giocatore</option>`}
+        </select>
+        <input data-mini-token-amount type="number" min="1" max="99" value="${amount}" aria-label="Numero token" ${players.length ? "" : "disabled"} />
+        <button class="btn teal" data-action="add-player-tokens" ${players.length ? "" : "disabled"}>Assegna</button>
+        <button class="btn ghost" data-action="remove-player-tokens" ${players.length ? "" : "disabled"}>Togli</button>
       </div>
     </section>
   `;
@@ -2337,6 +2523,16 @@ function bindEvents() {
       local.liveFiftyStake = Number(element.value) || 1;
     });
   });
+  document.querySelectorAll("[data-mini-token-player]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.miniTokenPlayerId = element.value;
+    });
+  });
+  document.querySelectorAll("[data-mini-token-amount]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.miniTokenAmount = Number(element.value) || 1;
+    });
+  });
   document.querySelectorAll("[data-wager-target]").forEach((element) => {
     element.addEventListener("change", () => {
       local.wagerTargetId = element.value;
@@ -2630,6 +2826,12 @@ function handleAction(event) {
   if (action === "send-live-message") sendLiveMessage();
   if (action === "send-wager-offer") sendWagerOffer();
   if (action === "send-fifty-start") sendFiftyStart();
+  if (action === "open-mini-games") openMiniGames();
+  if (action === "close-mini-games") closeMiniGames();
+  if (action === "set-mini-game-tab") setMiniGameTab(target.dataset.miniGameTab);
+  if (action === "mini-game-soon") showToast("Regola pronta: attiviamo la logica nella prossima patch");
+  if (action === "add-player-tokens") adjustMiniTokens(1);
+  if (action === "remove-player-tokens") adjustMiniTokens(-1);
   if (action === "ready-fifty") readyFifty(target.dataset.challengeId);
   if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
   if (action === "accept-wager-chosen") respondWager(target.dataset.wagerId, true, "chosen");
@@ -3968,6 +4170,45 @@ function sendFiftyStart() {
       return;
     }
     showToast("50 e 50 avviato");
+  });
+}
+
+function openMiniGames() {
+  local.miniGamesOpen = true;
+  local.miniGameTab = local.miniGameTab || "fifty";
+  render();
+}
+
+function closeMiniGames() {
+  local.miniGamesOpen = false;
+  render();
+}
+
+function setMiniGameTab(tab) {
+  const allowed = new Set(["fifty", "trio", "weapons", "tokens"]);
+  local.miniGameTab = allowed.has(tab) ? tab : "fifty";
+  render();
+}
+
+function adjustMiniTokens(direction) {
+  const room = local.room;
+  const players = room && Array.isArray(room.players) ? room.players : [];
+  const player = players.find((item) => item.id === local.miniTokenPlayerId) || players[0];
+  if (!player) {
+    showToast("Nessun giocatore");
+    return;
+  }
+  const amount = Math.max(1, Math.min(99, Math.floor(Number(local.miniTokenAmount) || 1)));
+  socket.emit("host:tokens", {
+    playerId: player.id,
+    delta: direction > 0 ? amount : -amount
+  }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Token non aggiornati");
+      return;
+    }
+    local.miniTokenPlayerId = player.id;
+    showToast(direction > 0 ? "Token assegnati" : "Token tolti");
   });
 }
 

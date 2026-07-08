@@ -615,6 +615,22 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:tokens", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const player = adjustPlayerTokens(room, payload || {});
+      sendAck(ack, { ok: true, player: serializePlayer(player, room) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("screen:watch", async (_payload, ack) => {
     try {
       await sendScreenToWaiting(socket);
@@ -670,6 +686,7 @@ io.on("connection", (socket) => {
       nickname,
       team: room.quiz.teamMode ? assignTeam(room) : "",
       score: 0,
+      tokens: 0,
       streak: 0,
       connected: true,
       active: true,
@@ -1672,6 +1689,20 @@ function addFiftyScore(room, playerId, delta) {
   player.score = Math.max(0, Math.round(Number(player.score || 0) + delta));
 }
 
+function adjustPlayerTokens(room, payload) {
+  const playerId = normalizeShortText(payload.playerId, 120);
+  const player = playerId ? room.players.get(playerId) : null;
+  if (!player || !player.active) {
+    throw new Error("Giocatore non disponibile");
+  }
+  const delta = Math.round(Number(payload.delta) || 0);
+  if (!delta) {
+    throw new Error("Inserisci un numero di token");
+  }
+  player.tokens = Math.min(999, Math.max(0, Math.round(Number(player.tokens || 0) + delta)));
+  return player;
+}
+
 function normalizeFiftyStake(value) {
   const stake = Math.floor(Number(value) || 0);
   if (!stake || stake < 1) {
@@ -2217,6 +2248,7 @@ function serializePlayer(player, room) {
     nickname: player.nickname,
     team: player.team || "",
     score: player.score,
+    tokens: Number(player.tokens || 0),
     streak: player.streak,
     connected: player.connected,
     active: player.active,

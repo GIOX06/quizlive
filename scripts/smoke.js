@@ -236,6 +236,15 @@ async function main() {
     });
     assert.equal(joined.ok, true);
     assert.match(joined.sessionToken, /^[a-f0-9]{48}$/);
+    const tokenGrant = await emitAck(host, "host:tokens", {
+      playerId: joined.playerId,
+      delta: 3
+    });
+    assert.equal(tokenGrant.ok, true);
+    await waitForState(host, (state) =>
+      state.players &&
+      state.players.some((item) => item.id === joined.playerId && item.tokens === 3)
+    );
 
     const decliningJoined = await emitAck(decliningPlayer, "player:join", {
       code: created.code,
