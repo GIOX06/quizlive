@@ -123,7 +123,9 @@ window.addEventListener("hashchange", () => {
 });
 
 setInterval(() => {
-  if (local.room && local.room.status === "question") updateLiveTimers();
+  if (!local.room) return;
+  if (local.room.status === "question") updateLiveTimers();
+  if (local.room.fiftyChallenge || local.room.activeFifty) updateFiftyTimers();
 }, 250);
 
 window.addEventListener("keydown", handleBuilderKeyboard);
@@ -1051,10 +1053,12 @@ function renderScreenGame(room) {
     <section class="screen-live-layout">
       ${renderScreenLeaderboardPanel(room)}
       <div class="screen-live-stage">
-        ${room.status === "lobby" ? renderScreenLobby(room) : ""}
-        ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
-        ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
-        ${room.status === "ended" ? renderScreenEnded(room) : ""}
+        ${room.activeFifty ? renderScreenFiftyChallenge(room.activeFifty) : `
+          ${room.status === "lobby" ? renderScreenLobby(room) : ""}
+          ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
+          ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
+          ${room.status === "ended" ? renderScreenEnded(room) : ""}
+        `}
       </div>
     </section>
   `;
@@ -1093,6 +1097,57 @@ function renderScreenLobby(room) {
           ${room.teamMode ? `<span class="status-pill">Team mode</span>` : ""}
         </div>
       </div>
+    </div>
+  `;
+}
+
+function renderScreenFiftyChallenge(challenge) {
+  const players = Array.isArray(challenge.players) ? challenge.players : [];
+  const first = players[0] || { nickname: "Giocatore 1", ready: false, holding: false };
+  const second = players[1] || { nickname: "Giocatore 2", ready: false, holding: false };
+  const phase = fiftyPhase(challenge);
+  const label = phase === "intro" ? "Pronti?" : phase === "countdown" ? "3-2-1" : "Tieni premuto";
+  const timerLabel = fiftyCountdownLabel(challenge, phase);
+  return `
+    <article class="screen-fifty-show panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Mini gioco live</p>
+        <h1 class="screen-title">50 e 50</h1>
+        <p class="screen-subtitle">Se tieni premuto salvi l'avversario. Se molli alla fine, provi a prendere tutta la posta.</p>
+      </div>
+      <div class="screen-fifty-match">
+        ${renderScreenFiftyPlayer(first, phase)}
+        <div class="screen-fifty-center">
+          <span class="status-pill">${escapeHtml(label)}</span>
+          <strong data-screen-fifty-timer data-press-starts-at="${Number(challenge.pressStartsAt || 0)}" data-ends-at="${Number(challenge.endsAt || 0)}">${escapeHtml(timerLabel)}</strong>
+          <span class="status-pill gold-pill">${challenge.pot} pt</span>
+        </div>
+        ${renderScreenFiftyPlayer(second, phase)}
+      </div>
+      <div class="fifty-arena ${phase}">
+        <div class="fifty-rope"></div>
+        <div class="fifty-platform left ${first.holding ? "holding" : ""} ${first.ready ? "ready" : ""}">
+          <div class="fifty-puppet"></div>
+          <span>${escapeHtml(first.nickname)}</span>
+        </div>
+        <div class="fifty-chasm">
+          <span>${phase === "intro" ? "Accettate la sfida" : phase === "countdown" ? "Prepararsi" : "Ultimi 5 secondi"}</span>
+        </div>
+        <div class="fifty-platform right ${second.holding ? "holding" : ""} ${second.ready ? "ready" : ""}">
+          <div class="fifty-puppet"></div>
+          <span>${escapeHtml(second.nickname)}</span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderScreenFiftyPlayer(player, phase) {
+  const state = phase === "intro" ? player.ready ? "Pronto" : "Invitato" : player.holding ? "Tiene premuto" : "Mano libera";
+  return `
+    <div class="screen-fifty-player ${player.ready ? "ready" : ""} ${player.holding ? "holding" : ""}">
+      <span class="status-pill compact">${escapeHtml(state)}</span>
+      <strong>${escapeHtml(player.nickname)}</strong>
     </div>
   `;
 }
@@ -1392,27 +1447,76 @@ function renderPlayerWagerOffer(room) {
 function renderPlayerFiftyChallenge(room) {
   const challenge = room.fiftyChallenge;
   if (!challenge) return "";
-  const remainingSeconds = Math.max(1, Math.ceil((Number(challenge.endsAt || 0) - Date.now()) / 1000));
-  const dropped = Boolean(challenge.dropped);
-  const holding = Boolean(challenge.holding) && !dropped;
+  const phase = fiftyPhase(challenge);
+  const holding = Boolean(challenge.holding);
+  const ready = Boolean(challenge.ready);
+  const countdownLabel = fiftyCountdownLabel(challenge, phase);
+  const pressDisabled = phase !== "active";
   return `
     <section class="panel live-fifty-challenge stack">
       <div>
         <p class="screen-kicker">50 e 50</p>
-        <h2 class="section-title">Salvi ${escapeHtml(challenge.opponentNickname)}?</h2>
-        <p class="subtle">Posta ${challenge.pot} punti. Tieni premuto fino alla fine per salvare, oppure molla e prova a prendere tutto.</p>
+        <h2 class="section-title">${phase === "intro" ? `Sfidi ${escapeHtml(challenge.opponentNickname)}` : `Salvi ${escapeHtml(challenge.opponentNickname)}?`}</h2>
+        <p class="subtle">Posta ${challenge.pot} punti. Se al termine dei 5 secondi tieni premuto, salvi l'avversario. Se non tieni premuto, lo lasci cadere e provi a prendere tutto.</p>
       </div>
+      ${phase === "intro" ? `
+        <div class="fifty-rules">
+          <span>1. Leggi la regola</span>
+          <span>2. Premi pronto</span>
+          <span>3. Dopo 3-2-1 tieni premuto</span>
+        </div>
+        <button class="btn gold" data-action="ready-fifty" data-challenge-id="${escapeAttr(challenge.id)}" ${ready ? "disabled" : ""}>${ready ? "Pronto, aspetta l'altro" : "Sono pronto"}</button>
+      ` : `
+        <div class="fifty-phone-countdown" data-fifty-countdown data-press-starts-at="${Number(challenge.pressStartsAt || 0)}" data-ends-at="${Number(challenge.endsAt || 0)}">
+          ${escapeHtml(countdownLabel)}
+        </div>
+      `}
       <button
-        class="fifty-hold-button ${holding ? "holding" : ""} ${dropped ? "dropped" : ""}"
+        class="fifty-hold-button ${holding ? "holding" : ""}"
         data-fifty-hold
         data-challenge-id="${escapeAttr(challenge.id)}"
-        ${dropped ? "disabled" : ""}
+        data-press-starts-at="${Number(challenge.pressStartsAt || 0)}"
+        data-ends-at="${Number(challenge.endsAt || 0)}"
+        ${pressDisabled ? "disabled" : ""}
       >
-        ${dropped ? "Hai lasciato cadere" : holding ? "Stai salvando..." : "Tieni premuto per salvare"}
+        ${phase === "intro" ? "Aspetta il via" : phase === "countdown" ? "Preparati..." : holding ? "Stai salvando..." : "Tieni premuto ora"}
       </button>
-      <p class="subtle">${dropped ? "Decisione presa: ora aspetta l'altro giocatore." : `Tempo rimasto: ${remainingSeconds}s`}</p>
+      <p class="subtle" data-fifty-help>${fiftyPlayerHelpText(challenge, phase)}</p>
     </section>
   `;
+}
+
+function fiftyPhase(challenge) {
+  if (!challenge) return "idle";
+  const status = String(challenge.status || "intro");
+  if (status === "intro") return "intro";
+  if (status === "active") return "active";
+  if (status === "countdown") {
+    return Date.now() >= Number(challenge.pressStartsAt || 0) ? "active" : "countdown";
+  }
+  return status;
+}
+
+function fiftyCountdownLabel(challenge, phase = fiftyPhase(challenge)) {
+  if (!challenge) return "";
+  if (phase === "countdown") {
+    const left = Math.max(1, Math.ceil((Number(challenge.pressStartsAt || 0) - Date.now()) / 1000));
+    return left > 1 ? String(left) : "Spingi!";
+  }
+  if (phase === "active") {
+    const left = Math.max(0, Math.ceil((Number(challenge.endsAt || 0) - Date.now()) / 1000));
+    return `${left}s`;
+  }
+  return "Pronto?";
+}
+
+function fiftyPlayerHelpText(challenge, phase = fiftyPhase(challenge)) {
+  if (phase === "intro") {
+    return challenge.ready ? "Aspetta che anche l'altro giocatore sia pronto." : "Quando sei pronto, conferma e guarda il countdown.";
+  }
+  if (phase === "countdown") return "Al via tieni premuto il pulsante grande.";
+  if (phase === "active") return "Conta solo lo stato del tuo dito alla fine dei 5 secondi.";
+  return "Sfida in corso.";
 }
 
 function renderPlayerWaiting(room) {
@@ -1719,12 +1823,12 @@ function renderHostFiftyStatus(room) {
   const history = Array.isArray(fifty.history) ? fifty.history : [];
   const activeItems = active && Array.isArray(active.players)
     ? active.players.map((player) => ({
-      label: player.dropped ? "Molla" : player.holding ? "Salva" : "Attesa",
+      label: active.status === "intro" ? player.ready ? "Pronto" : "Invito" : player.holding ? "Premuto" : "Libero",
       text: `${player.nickname} - ${active.stake} pt`
     }))
     : [];
   const historyItems = history.slice(0, 3).map((item) => ({
-    label: item.outcome === "split" ? "Divisa" : item.outcome === "drop_win" ? "Presa" : "Persa",
+    label: item.outcome === "cancelled" ? "Annullata" : item.outcome === "split" ? "Divisa" : item.outcome === "drop_win" ? "Presa" : "Persa",
     text: fiftyHistoryText(item)
   }));
   const items = [...activeItems, ...historyItems];
@@ -1742,11 +1846,13 @@ function renderHostFiftyStatus(room) {
 }
 
 function fiftyHistoryText(item) {
+  if (item.outcome === "cancelled") return "Sfida interrotta";
   if (item.outcome === "split") {
     return item.players && item.players.length >= 2
       ? `${item.players[0].nickname} + ${item.players[1].nickname}: pari`
       : "Posta divisa";
   }
+  if (item.outcome === "forfeit") return `${item.winnerNickname} prende ${item.pot} pt`;
   if (item.outcome === "drop_win") return `${item.winnerNickname} prende ${item.pot} pt`;
   return `Entrambi -${item.stake} pt`;
 }
@@ -2085,12 +2191,16 @@ function bindFiftyHoldEvents() {
         }
       }
       sendFiftyHold(challengeId, true);
+      element.classList.add("holding");
+      element.textContent = "Stai salvando...";
     };
     const stopHold = (event) => {
       event.preventDefault();
       if (element.disabled) return;
       local.fiftyHoldingId = "";
       sendFiftyHold(challengeId, false);
+      element.classList.remove("holding");
+      element.textContent = "Tieni premuto ora";
     };
     element.addEventListener("pointerdown", startHold);
     element.addEventListener("pointerup", stopHold);
@@ -2172,6 +2282,7 @@ function handleAction(event) {
   if (action === "send-live-message") sendLiveMessage();
   if (action === "send-wager-offer") sendWagerOffer();
   if (action === "send-fifty-start") sendFiftyStart();
+  if (action === "ready-fifty") readyFifty(target.dataset.challengeId);
   if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
   if (action === "accept-wager-chosen") respondWager(target.dataset.wagerId, true, "chosen");
   if (action === "decline-wager") respondWager(target.dataset.wagerId, false, "chosen");
@@ -3454,6 +3565,16 @@ function sendFiftyStart() {
   });
 }
 
+function readyFifty(challengeId) {
+  socket.emit("player:fifty-ready", { challengeId }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Pronto non registrato");
+      return;
+    }
+    showToast("Pronto");
+  });
+}
+
 function sendFiftyHold(challengeId, holding) {
   socket.emit("player:fifty-hold", {
     challengeId,
@@ -3740,6 +3861,50 @@ function updateLiveTimers() {
     if (timer && timer.textContent !== String(left)) timer.textContent = String(left);
     if (bar) bar.style.width = `${percent}%`;
     element.classList.toggle("urgent", left <= 5);
+  });
+}
+
+function updateFiftyTimers() {
+  document.querySelectorAll("[data-fifty-countdown]").forEach((element) => {
+    const pressStartsAt = Number(element.dataset.pressStartsAt || 0);
+    const endsAt = Number(element.dataset.endsAt || 0);
+    const now = Date.now();
+    if (pressStartsAt && now < pressStartsAt) {
+      const left = Math.max(1, Math.ceil((pressStartsAt - now) / 1000));
+      element.textContent = left > 1 ? String(left) : "Spingi!";
+      element.classList.remove("active");
+      return;
+    }
+    const left = Math.max(0, Math.ceil((endsAt - now) / 1000));
+    element.textContent = `${left}s`;
+    element.classList.add("active");
+  });
+
+  document.querySelectorAll("[data-fifty-hold]").forEach((button) => {
+    const pressStartsAt = Number(button.dataset.pressStartsAt || 0);
+    const endsAt = Number(button.dataset.endsAt || 0);
+    const now = Date.now();
+    const active = pressStartsAt && endsAt && now >= pressStartsAt && now <= endsAt;
+    button.disabled = !active;
+    if (!active && now < pressStartsAt) {
+      button.textContent = "Preparati...";
+    } else if (active && !button.classList.contains("holding")) {
+      button.textContent = "Tieni premuto ora";
+    }
+    const help = button.parentElement ? button.parentElement.querySelector("[data-fifty-help]") : null;
+    if (help && active) help.textContent = "Conta solo lo stato del tuo dito alla fine dei 5 secondi.";
+  });
+
+  document.querySelectorAll("[data-screen-fifty-timer]").forEach((element) => {
+    const pressStartsAt = Number(element.dataset.pressStartsAt || 0);
+    const endsAt = Number(element.dataset.endsAt || 0);
+    const now = Date.now();
+    if (pressStartsAt && now < pressStartsAt) {
+      const left = Math.max(1, Math.ceil((pressStartsAt - now) / 1000));
+      element.textContent = left > 1 ? String(left) : "Spingi!";
+      return;
+    }
+    element.textContent = `${Math.max(0, Math.ceil((endsAt - now) / 1000))}s`;
   });
 }
 

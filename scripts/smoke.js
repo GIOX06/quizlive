@@ -434,12 +434,36 @@ async function main() {
     const fiftyDeclinerEvent = waitForSocketEvent(decliningPlayer, "live:event");
     const fiftyStarted = await emitAck(host, "host:fifty-start", {
       stake: 50,
-      durationMs: 900
+      countdownMs: 300,
+      durationMs: 700
     });
     assert.equal(fiftyStarted.ok, true);
     assert.equal(fiftyStarted.challenge.pot, 100);
+    assert.equal(fiftyStarted.challenge.status, "intro");
     assert.equal((await fiftyPlayerEvent).title, "50 e 50");
     assert.equal((await fiftyDeclinerEvent).title, "50 e 50");
+
+    const playerReady = await emitAck(player, "player:fifty-ready", {
+      challengeId: fiftyStarted.challenge.id
+    });
+    assert.equal(playerReady.ok, true);
+
+    const declinerReady = await emitAck(decliningPlayer, "player:fifty-ready", {
+      challengeId: fiftyStarted.challenge.id
+    });
+    assert.equal(declinerReady.ok, true);
+
+    await waitForState(screen, (state) =>
+      state.activeFifty &&
+      state.activeFifty.id === fiftyStarted.challenge.id &&
+      state.activeFifty.status === "countdown" &&
+      state.activeFifty.players.every((item) => item.ready === true)
+    );
+    await waitForState(player, (state) =>
+      state.fiftyChallenge &&
+      state.fiftyChallenge.id === fiftyStarted.challenge.id &&
+      state.fiftyChallenge.status === "active"
+    );
 
     const fiftyResultEvent = waitForSocketEvent(screen, "live:event");
     const fiftyHold = await emitAck(player, "player:fifty-hold", {
@@ -451,6 +475,7 @@ async function main() {
     await waitForState(player, (state) =>
       state.fiftyChallenge &&
       state.fiftyChallenge.id === fiftyStarted.challenge.id &&
+      state.fiftyChallenge.status === "active" &&
       state.fiftyChallenge.holding === true
     );
 

@@ -1692,6 +1692,163 @@ textarea {
   min-height: calc(100vh - 8rem);
 }
 
+.screen-fifty-show {
+  min-height: calc(100vh - 8rem);
+  display: grid;
+  grid-template-rows: auto auto minmax(18rem, 1fr);
+  gap: clamp(1rem, 2vw, 1.5rem);
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(255, 139, 45, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(8, 8, 9, 0.96), rgba(38, 20, 12, 0.92));
+}
+
+.screen-fifty-header {
+  text-align: center;
+}
+
+.screen-fifty-match {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 14rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.screen-fifty-player,
+.screen-fifty-center {
+  display: grid;
+  place-items: center;
+  gap: 0.55rem;
+  min-height: 8rem;
+  border: 1px solid rgba(255, 139, 45, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  text-align: center;
+}
+
+.screen-fifty-player strong {
+  font-size: clamp(1.4rem, 2.8vw, 2.6rem);
+}
+
+.screen-fifty-player.ready,
+.screen-fifty-player.holding {
+  border-color: rgba(68, 196, 161, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(68, 196, 161, 0.18);
+}
+
+.screen-fifty-center strong {
+  font-size: clamp(3rem, 7vw, 6rem);
+  line-height: 0.95;
+  color: #ffc257;
+}
+
+.gold-pill {
+  color: #181009;
+  background: #ffc257;
+  border-color: rgba(255, 194, 87, 0.75);
+}
+
+.fifty-arena {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 0.65fr) minmax(8rem, 1fr);
+  align-items: end;
+  gap: 1rem;
+  min-height: 22rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 139, 45, 0.28);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 50%),
+    rgba(0, 0, 0, 0.22);
+}
+
+.fifty-rope {
+  position: absolute;
+  left: 16%;
+  right: 16%;
+  top: 34%;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #44c4a1, #ffc257, #44c4a1);
+  transform-origin: center;
+  animation: rope-pulse 900ms ease-in-out infinite;
+}
+
+.fifty-platform {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: end;
+  gap: 0.6rem;
+  min-height: 15rem;
+  padding-bottom: 1rem;
+}
+
+.fifty-platform::after {
+  content: "";
+  width: min(13rem, 80%);
+  height: 1.1rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.28);
+}
+
+.fifty-platform.ready::after,
+.fifty-platform.holding::after {
+  background: rgba(68, 196, 161, 0.78);
+}
+
+.fifty-puppet {
+  width: 4.6rem;
+  aspect-ratio: 1;
+  border-radius: 50% 50% 46% 46%;
+  background:
+    radial-gradient(circle at 35% 36%, #181009 0 0.22rem, transparent 0.24rem),
+    radial-gradient(circle at 65% 36%, #181009 0 0.22rem, transparent 0.24rem),
+    linear-gradient(145deg, #fff7ed, #ffc257);
+  border: 0.25rem solid rgba(255, 255, 255, 0.5);
+  animation: puppet-bob 1100ms ease-in-out infinite;
+}
+
+.fifty-arena.active .fifty-platform:not(.holding) .fifty-puppet {
+  animation: puppet-danger 520ms ease-in-out infinite;
+}
+
+.fifty-platform span {
+  font-weight: 1000;
+  color: #fff7ed;
+}
+
+.fifty-chasm {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  min-height: 16rem;
+  border-radius: 0 0 40% 40%;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 139, 45, 0.22), transparent 54%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.72));
+  color: var(--stage-muted);
+  font-weight: 1000;
+  text-align: center;
+}
+
+@keyframes puppet-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-0.45rem); }
+}
+
+@keyframes puppet-danger {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(1.2rem) rotate(4deg); }
+}
+
+@keyframes rope-pulse {
+  0%, 100% { transform: scaleX(0.98); opacity: 0.7; }
+  50% { transform: scaleX(1.02); opacity: 1; }
+}
+
 .screen-lobby {
   align-content: center;
   text-align: center;
@@ -2213,6 +2370,40 @@ textarea {
     var(--stage-panel);
 }
 
+.live-fifty-challenge {
+  gap: 1rem;
+}
+
+.fifty-rules {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(255, 139, 45, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--stage-ink);
+  font-weight: 850;
+}
+
+.fifty-phone-countdown {
+  min-height: 5.2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 194, 87, 0.38);
+  background: rgba(255, 194, 87, 0.12);
+  color: #ffc257;
+  font-size: clamp(2.8rem, 16vw, 5.2rem);
+  font-weight: 1000;
+  line-height: 1;
+}
+
+.fifty-phone-countdown.active {
+  color: #44c4a1;
+  border-color: rgba(68, 196, 161, 0.48);
+  background: rgba(68, 196, 161, 0.12);
+}
+
 .fifty-hold-button {
   min-height: 5.5rem;
   border: 1px solid rgba(255, 194, 87, 0.55);
@@ -2242,8 +2433,8 @@ textarea {
 .fifty-hold-button:disabled {
   cursor: default;
   background:
-    linear-gradient(145deg, rgba(239, 91, 91, 0.86), rgba(80, 45, 45, 0.92)),
-    #ef5b5b;
+    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(80, 70, 63, 0.92)),
+    #4b4039;
   color: #fff7ed;
   opacity: 0.95;
 }
@@ -2617,6 +2808,15 @@ textarea {
     position: static;
     min-height: auto;
     max-height: none;
+  }
+
+  .screen-fifty-match,
+  .fifty-arena {
+    grid-template-columns: 1fr;
+  }
+
+  .fifty-rope {
+    display: none;
   }
 
   .screen-code {
