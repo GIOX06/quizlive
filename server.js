@@ -38,6 +38,7 @@ const STORE_FILE = path.join(DATA_DIR, "quizlive-store.json");
 const HOST_SESSION_COOKIE = "quizlive_host";
 const HOST_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_MEDIA_BYTES = 1.5 * 1024 * 1024;
+const MAX_AVATAR_DATA_URL_LENGTH = 280000;
 const QUESTION_TYPE_LABELS = {
   multiple: "Multipla",
   true_false: "Vero/Falso",
@@ -565,6 +566,36 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:scan-screens", async (_payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      sendAck(ack, { ok: true, screens: await screenDiscovery(room) });
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("host:claim-screens", async (_payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const attached = await attachWaitingScreens(room, true);
+      sendAck(ack, { ok: true, attached, screens: await screenDiscovery(room) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("host:live-event", async (payload, ack) => {
     const room = getHostRoom(socket);
     if (!room) {
@@ -672,8 +703,10 @@ io.on("connection", (socket) => {
     }
 
     const nickname = normalizeNickname(payload && payload.nickname);
+    const avatarUrl = normalizeAvatarDataUrl(payload && payload.avatarUrl);
     if (existingPlayer) {
       reattachPlayerSocket(room, existingPlayer, socket, nickname);
+      if (avatarUrl) existingPlayer.avatarUrl = avatarUrl;
       sendAck(ack, { ok: true, code, playerId: existingPlayer.id, sessionToken: existingPlayer.sessionToken, rejoined: true });
       emitRoom(room);
       return;
@@ -684,6 +717,7 @@ io.on("connection", (socket) => {
       id: socket.id,
       sessionToken: playerSessionToken,
       nickname,
+      avatarUrl,
       team: room.quiz.teamMode ? assignTeam(room) : "",
       score: 0,
       tokens: 0,
@@ -701,6 +735,22 @@ io.on("connection", (socket) => {
     socket.data.playerSessionToken = playerSessionToken;
     socket.join(roomChannel(code));
     sendAck(ack, { ok: true, code, playerId: socket.id, sessionToken: playerSessionToken });
+    emitRoom(room);
+  });
+
+  socket.on("player:avatar", (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+    const avatarUrl = normalizeAvatarDataUrl(payload && payload.avatarUrl);
+    player.avatarUrl = avatarUrl;
+    if (room.fifty && room.fifty.active && room.fifty.active.participants[player.id]) {
+      room.fifty.active.participants[player.id].avatarUrl = avatarUrl;
+    }
+    sendAck(ack, { ok: true, player: serializePlayer(player, room) });
     emitRoom(room);
   });
 
@@ -1069,12 +1119,13 @@ function removePlayer(room, playerId, message) {
   target.data.playerId = null;
 }
 
-async function attachWaitingScreens(room) {
+async function attachWaitingScreens(room, includeAll = false) {
   const screens = await io.in(waitingScreenChannel()).fetchSockets();
   const matchingScreens = screens.filter((target) => {
-    return !target.data.followRoomCode || target.data.followRoomCode === room.code;
+    return includeAll || !target.data.followRoomCode || target.data.followRoomCode === room.code;
   });
   await Promise.all(matchingScreens.map((target) => attachScreenToRoom(target, room)));
+  return matchingScreens.length;
 }
 
 async function attachScreenToRoom(socket, room) {
@@ -1104,6 +1155,17 @@ async function sendScreenToWaiting(socket) {
   socket.data.playerId = null;
   await socket.join(waitingScreenChannel());
   socket.emit("screen:waiting", { waiting: true });
+}
+
+async function screenDiscovery(room) {
+  const waiting = await io.in(waitingScreenChannel()).fetchSockets();
+  const roomSockets = await io.in(roomChannel(room.code)).fetchSockets();
+  const connected = roomSockets.filter((target) => target.data.role === "screen");
+  return {
+    waiting: waiting.length,
+    connected: connected.length,
+    total: waiting.length + connected.length
+  };
 }
 
 function submitAnswer(room, player, payload) {
@@ -1466,6 +1528,7 @@ function startFiftyChallenge(room, payload) {
     return [player.id, {
       playerId: player.id,
       nickname: player.nickname,
+      avatarUrl: player.avatarUrl || "",
       ready: false,
       readyAt: null,
       holding: false,
@@ -1662,6 +1725,7 @@ function resolveFiftyChallenge(room, reason) {
     players: challenge.playerIds.map((playerId) => ({
       id: playerId,
       nickname: challenge.participants[playerId].nickname,
+      avatarUrl: challenge.participants[playerId].avatarUrl || "",
       saved: playerId === firstId ? firstSaved : secondSaved,
       left: Boolean(challenge.participants[playerId].leftAt),
       delta: deltas[playerId],
@@ -2172,6 +2236,7 @@ function serializeFiftyChallenge(challenge) {
     players: challenge.playerIds.map((playerId) => ({
       id: playerId,
       nickname: challenge.participants[playerId].nickname,
+      avatarUrl: challenge.participants[playerId].avatarUrl || "",
       ready: Boolean(challenge.participants[playerId].ready),
       holding: Boolean(challenge.participants[playerId].holding),
       left: Boolean(challenge.participants[playerId].leftAt)
@@ -2246,6 +2311,7 @@ function serializePlayer(player, room) {
   return {
     id: player.id,
     nickname: player.nickname,
+    avatarUrl: player.avatarUrl || "",
     team: player.team || "",
     score: player.score,
     tokens: Number(player.tokens || 0),
@@ -2262,6 +2328,7 @@ function leaderboard(room) {
     .map((player) => ({
       id: player.id,
       nickname: player.nickname,
+      avatarUrl: player.avatarUrl || "",
       team: player.team || "",
       score: player.score,
       streak: player.streak,
@@ -3984,6 +4051,13 @@ function normalizeQuestionType(value) {
 function normalizeNickname(value) {
   const nickname = String(value || "").trim().replace(/\s+/g, " ").slice(0, 24);
   return nickname || `Player ${Math.floor(100 + Math.random() * 900)}`;
+}
+
+function normalizeAvatarDataUrl(value) {
+  const dataUrl = String(value || "").trim();
+  if (!dataUrl) return "";
+  if (dataUrl.length > MAX_AVATAR_DATA_URL_LENGTH) return "";
+  return /^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(dataUrl) ? dataUrl : "";
 }
 
 function normalizeCode(value) {

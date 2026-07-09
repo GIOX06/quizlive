@@ -61,6 +61,7 @@ async function main() {
   const screen = createSocket(false);
   let player = createSocket(false);
   const decliningPlayer = createSocket(false);
+  let extraScreen = null;
 
   try {
     await Promise.all([waitForConnect(host), waitForConnect(screen), waitForConnect(player), waitForConnect(decliningPlayer)]);
@@ -201,6 +202,21 @@ async function main() {
 
     await waitForState(host, (state) => state.role === "host" && state.status === "lobby");
 
+    extraScreen = createSocket(false);
+    await waitForConnect(extraScreen);
+    extraScreen.on("room:state", (state) => {
+      extraScreen.latestState = state;
+    });
+    const extraScreenWaiting = await emitAck(extraScreen, "screen:watch", {});
+    assert.equal(extraScreenWaiting.ok, true);
+    const scannedScreens = await emitAck(host, "host:scan-screens", {});
+    assert.equal(scannedScreens.ok, true);
+    assert.ok(scannedScreens.screens.waiting >= 1);
+    const claimedScreens = await emitAck(host, "host:claim-screens", {});
+    assert.equal(claimedScreens.ok, true);
+    assert.ok(claimedScreens.attached >= 1);
+    await waitForState(extraScreen, (state) => state.role === "screen" && state.code === created.code);
+
     const recoveryHost = createSocket(true);
     await waitForConnect(recoveryHost);
     recoveryHost.on("room:state", (state) => {
@@ -232,10 +248,13 @@ async function main() {
 
     const joined = await emitAck(player, "player:join", {
       code: created.code,
-      nickname: "Smoke Player"
+      nickname: "Smoke Player",
+      avatarUrl: tinyPngDataUrl
     });
     assert.equal(joined.ok, true);
     assert.match(joined.sessionToken, /^[a-f0-9]{48}$/);
+    await waitForState(player, (state) => state.player && state.player.avatarUrl === tinyPngDataUrl);
+    assert.equal(player.latestState.leaderboard[0].avatarUrl, tinyPngDataUrl);
     const tokenGrant = await emitAck(host, "host:tokens", {
       playerId: joined.playerId,
       delta: 3
@@ -635,7 +654,7 @@ async function main() {
     screen.waitingEvents = 0;
     const releasedScreens = await emitAck(host, "host:release-screens", {});
     assert.equal(releasedScreens.ok, true);
-    assert.equal(releasedScreens.released, 1);
+    assert.ok(releasedScreens.released >= 1);
     await waitForCondition(() => screen.waitingEvents >= 1, "Timeout waiting for screen waiting state");
 
     const reset = await emitAck(host, "host:reset", {});
@@ -734,6 +753,7 @@ async function main() {
     screen.close();
     player.close();
     decliningPlayer.close();
+    if (extraScreen) extraScreen.close();
   }
 }
 

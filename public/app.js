@@ -1,6 +1,7 @@
 const socket = io();
 
 const PLAYER_SESSION_STORAGE_KEY = "quizlive_player_session";
+const PLAYER_AVATAR_STORAGE_KEY = "quizlive_player_avatar";
 const HOST_ROOM_STORAGE_KEY = "quizlive_host_room";
 const MAX_IMAGE_UPLOAD_BYTES = 1.5 * 1024 * 1024;
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
@@ -45,6 +46,7 @@ let local = {
   screenJoining: false,
   screenWaiting: false,
   nickname: initialNickname(),
+  avatarUrl: loadPlayerAvatar(),
   playerSession: loadPlayerSession(),
   playerRejoining: false,
   playerBaseUrl: window.location.origin,
@@ -56,6 +58,8 @@ let local = {
   liveFiftyStake: 100,
   screenCastHelpOpen: false,
   screenCastHelpReason: "",
+  monitorScan: null,
+  monitorScanLoading: false,
   miniGamesOpen: false,
   miniGameTab: "wagers",
   miniTokenPlayerId: "",
@@ -106,6 +110,10 @@ socket.on("room:state", (room) => {
   if (room.role === "screen") {
     local.screenCode = room.code;
     window.history.replaceState(null, "", `#screen=${encodeURIComponent(room.code)}`);
+  }
+  if (room.role === "player" && room.player && room.player.avatarUrl && room.player.avatarUrl !== local.avatarUrl) {
+    local.avatarUrl = room.player.avatarUrl;
+    savePlayerAvatar(local.avatarUrl);
   }
   if (room.status !== "question") {
     local.selectedAnswer = null;
@@ -255,11 +263,31 @@ function renderJoinHome() {
           <span>Nickname</span>
           <input data-field="join-name" maxlength="24" placeholder="Nome" value="${escapeAttr(local.nickname)}" />
         </label>
+        ${renderPlayerAvatarPicker("join")}
         <div class="toolbar">
           <button class="btn teal" data-action="join-room" ${local.playerRejoining ? "disabled" : ""}>${local.playerRejoining ? "Rientro..." : "Entra in partita"}</button>
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderPlayerAvatarPicker(surface = "join") {
+  const current = local.avatarUrl || (local.room && local.room.player && local.room.player.avatarUrl) || "";
+  const hasAvatar = Boolean(current);
+  return `
+    <div class="avatar-picker">
+      ${renderPlayerAvatar({ nickname: local.nickname || "Tu", avatarUrl: current }, "avatar-preview")}
+      <div class="avatar-picker-copy">
+        <strong>${hasAvatar ? "Selfie pronto" : "Aggiungi selfie"}</strong>
+        <span>${surface === "lobby" ? "Comparira in classifica e nei mini-giochi." : "Lo useremo come avatar in classifica e nei giochi."}</span>
+      </div>
+      <label class="btn ghost avatar-upload-button">
+        ${hasAvatar ? "Cambia foto" : "Scatta selfie"}
+        <input data-player-avatar-input type="file" accept="image/png,image/jpeg,image/webp" capture="user" />
+      </label>
+      ${hasAvatar ? `<button class="btn ghost small" data-action="clear-player-avatar" type="button">Rimuovi</button>` : ""}
+    </div>
   `;
 }
 
@@ -1278,6 +1306,7 @@ function renderScreenFiftyPlayer(player, phase) {
   return `
     <div class="screen-fifty-player ${player.ready ? "ready" : ""} ${player.holding ? "holding" : ""}">
       <span class="status-pill compact">${escapeHtml(state)}</span>
+      ${renderPlayerAvatar(player, "avatar-screen")}
       <strong>${escapeHtml(player.nickname)}</strong>
     </div>
   `;
@@ -1388,6 +1417,7 @@ function renderScreenFiftyResultPlayer(player) {
   return `
     <div class="screen-fifty-player result-card ${delta > 0 ? "winner" : delta < 0 ? "loser" : "even"}">
       <span class="status-pill compact">${escapeHtml(state)}</span>
+      ${renderPlayerAvatar(player, "avatar-screen")}
       <strong>${escapeHtml(player.nickname || "Giocatore")}</strong>
       <span class="result-delta ${delta > 0 ? "positive" : delta < 0 ? "negative" : ""}">${delta > 0 ? "+" : ""}${delta} pt</span>
     </div>
@@ -1727,7 +1757,7 @@ function renderPlayerGame(room) {
   if (room.player && room.player.rematch === "pending") return renderPlayerRematch(room);
   if (room.player && room.player.active === false) return renderPlayerExcluded(room);
   return `
-    <section class="game-layout">
+    <section class="game-layout player-game-layout">
       <div class="stage">
         ${renderPlayerWagerOffer(room)}
         ${renderPlayerFiftyChallenge(room)}
@@ -1737,7 +1767,8 @@ function renderPlayerGame(room) {
         ${room.status === "ended" ? renderEnded(room, false) : ""}
       </div>
       <aside class="panel stack">
-        <div>
+        <div class="player-side-head">
+          ${renderPlayerAvatar(room.player || {}, "avatar-preview")}
           <h2 class="section-title">${escapeHtml(room.player ? room.player.nickname : "Player")}</h2>
           <p class="subtle">Punti ${room.player ? room.player.score : 0} - Rank ${room.player && room.player.rank ? room.player.rank : "-"}</p>
         </div>
@@ -1891,6 +1922,7 @@ function renderPlayerWaiting(room) {
     <div class="panel stack">
       <h1 class="section-title">Sei dentro</h1>
       <p class="subtle">Codice ${escapeHtml(room.code)} - in attesa dell'host.</p>
+      ${renderPlayerAvatarPicker("lobby")}
       ${room.player && room.player.team ? `<span class="team-pill">${escapeHtml(room.player.team)}</span>` : ""}
     </div>
   `;
@@ -1915,8 +1947,8 @@ function renderPlayerQuestion(room) {
       <div class="answers-grid">
         ${question.answers.map((answer) => renderAnswerButton(answer, question)).join("")}
       </div>
+      ${question.type === "multiple_select" && !question.answered ? renderSubmitMultiple(question) : ""}
     </article>
-    ${question.type === "multiple_select" && !question.answered ? renderSubmitMultiple(question) : ""}
   `;
 }
 
@@ -2112,6 +2144,7 @@ function renderHostLiveEvents(room) {
       </div>
       <div class="live-control-section stack">
         <h4 class="live-section-title">Impostazioni rapide</h4>
+        ${renderMonitorDiscoveryPanel()}
         <div class="live-quick-actions">
           <button class="btn ghost small" data-action="open-waiting-screen">Apri monitor</button>
           ${renderCastScreenButton()}
@@ -2120,6 +2153,24 @@ function renderHostLiveEvents(room) {
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderMonitorDiscoveryPanel() {
+  const scan = local.monitorScan;
+  const waiting = scan && scan.waiting ? Number(scan.waiting) : 0;
+  const connected = scan && scan.connected ? Number(scan.connected) : 0;
+  return `
+    <div class="monitor-discovery">
+      <div>
+        <strong>Monitor nel locale</strong>
+        <span>${scan ? `${connected} collegati - ${waiting} in attesa` : "Cerca monitor QuizLive sulla rete"}</span>
+      </div>
+      <div class="monitor-discovery-actions">
+        <button class="btn ghost small" data-action="scan-monitors" ${local.monitorScanLoading ? "disabled" : ""}>${local.monitorScanLoading ? "Cerco..." : "Cerca"}</button>
+        <button class="btn blue small" data-action="claim-monitors" ${waiting > 0 ? "" : "disabled"}>Aggancia</button>
+      </div>
+    </div>
   `;
 }
 
@@ -2390,6 +2441,7 @@ function renderHostPlayers(room) {
       ${room.players.map((player) => `
         <div class="player-row">
           <span class="dot ${player.answered ? "answered" : player.connected ? "on" : ""}"></span>
+          ${renderPlayerAvatar(player)}
           <span class="name">${escapeHtml(player.nickname)} ${player.team ? `<span class="team-pill">${escapeHtml(player.team)}</span>` : ""}</span>
           <span class="score">${player.score}</span>
         </div>
@@ -2406,11 +2458,23 @@ function renderLeaderboard(room) {
       ${room.leaderboard.map((player, index) => `
         <div class="leader-row ${player.id === selfId ? "self" : ""}">
           <span class="rank">${index + 1}</span>
+          ${renderPlayerAvatar(player)}
           <span class="name">${escapeHtml(player.nickname)} ${player.team ? `<span class="team-pill">${escapeHtml(player.team)}</span>` : ""}</span>
           <span class="score">${player.score}</span>
         </div>
       `).join("")}
     </div>
+  `;
+}
+
+function renderPlayerAvatar(player, className = "player-avatar") {
+  const nickname = String(player && player.nickname ? player.nickname : "?");
+  const avatarUrl = player && player.avatarUrl ? String(player.avatarUrl) : "";
+  const initials = nickname.trim().slice(0, 2).toUpperCase() || "?";
+  return `
+    <span class="${escapeAttr(className)}">
+      ${avatarUrl ? `<img src="${escapeAttr(avatarUrl)}" alt="" />` : `<span>${escapeHtml(initials)}</span>`}
+    </span>
   `;
 }
 
@@ -2740,6 +2804,12 @@ function bindEvents() {
       local.nickname = joinNameField.value;
     });
   }
+  document.querySelectorAll("[data-player-avatar-input]").forEach((element) => {
+    element.addEventListener("change", () => {
+      handlePlayerAvatarFile(element.files && element.files[0]);
+      element.value = "";
+    });
+  });
   const screenCodeField = document.querySelector("[data-field='screen-code']");
   if (screenCodeField) {
     screenCodeField.addEventListener("input", () => {
@@ -2859,6 +2929,7 @@ function handleAction(event) {
   if (action === "host-logout") hostLogout();
   if (action === "copy-player-link") copyPlayerLink();
   if (action === "open-player-link") openPlayerLink();
+  if (action === "clear-player-avatar") clearPlayerAvatar();
   if (action === "open-waiting-screen") openWaitingScreen();
   if (action === "copy-screen-link") copyScreenLink();
   if (action === "open-screen-link") openScreenLink();
@@ -2876,6 +2947,8 @@ function handleAction(event) {
   if (action === "back-to-builder") editCurrentRoomQuiz();
   if (action === "cancel-room-edit") cancelRoomEdit();
   if (action === "release-screens") releaseScreens();
+  if (action === "scan-monitors") scanMonitors();
+  if (action === "claim-monitors") claimMonitors();
   if (action === "send-live-effect") sendLiveEffect(target);
   if (action === "send-live-message") sendLiveMessage();
   if (action === "send-wager-offer") sendWagerOffer();
@@ -3778,13 +3851,75 @@ function joinRoom() {
   const code = codeField ? codeField.value : local.joinCode;
   const nickname = nameField ? nameField.value : local.nickname;
   const sessionToken = sessionTokenForCode(code);
-  socket.emit("player:join", { code, nickname, sessionToken }, (response) => {
+  socket.emit("player:join", { code, nickname, sessionToken, avatarUrl: local.avatarUrl || "" }, (response) => {
     if (!response || !response.ok) {
       showToast(response && response.error ? response.error : "Impossibile entrare");
       return;
     }
     savePlayerSession(response.code || code, nickname, response.sessionToken);
     showToast(response.rejoined ? "Rientrato" : "Entrato");
+  });
+}
+
+async function handlePlayerAvatarFile(file) {
+  if (!file) return;
+  if (!/^image\/(png|jpe?g|webp)$/i.test(file.type || "")) {
+    showToast("Scegli una foto");
+    return;
+  }
+  try {
+    const avatarUrl = await resizeAvatarImage(file);
+    local.avatarUrl = avatarUrl;
+    savePlayerAvatar(avatarUrl);
+    if (local.room && local.room.role === "player") {
+      socket.emit("player:avatar", { avatarUrl }, (response) => {
+        if (!response || !response.ok) {
+          showToast(response && response.error ? response.error : "Avatar non aggiornato");
+          return;
+        }
+        showToast("Avatar aggiornato");
+      });
+    } else {
+      showToast("Selfie pronto");
+    }
+    render();
+  } catch (error) {
+    showToast(error.message || "Foto non caricata");
+  }
+}
+
+function clearPlayerAvatar() {
+  local.avatarUrl = "";
+  savePlayerAvatar("");
+  if (local.room && local.room.role === "player") {
+    socket.emit("player:avatar", { avatarUrl: "" }, () => {});
+  }
+  showToast("Avatar rimosso");
+  render();
+}
+
+function resizeAvatarImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Foto non leggibile"));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("Foto non valida"));
+      image.onload = () => {
+        const size = 360;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        const sourceSize = Math.min(image.naturalWidth || image.width, image.naturalHeight || image.height);
+        const sx = ((image.naturalWidth || image.width) - sourceSize) / 2;
+        const sy = ((image.naturalHeight || image.height) - sourceSize) / 2;
+        ctx.drawImage(image, sx, sy, sourceSize, sourceSize, 0, 0, size, size);
+        resolve(canvas.toDataURL("image/jpeg", 0.72));
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
   });
 }
 
@@ -4153,6 +4288,36 @@ function releaseScreens() {
       return;
     }
     showToast(response.released ? "Monitor in attesa" : "Nessun monitor collegato");
+    local.monitorScan = null;
+  });
+}
+
+function scanMonitors() {
+  local.monitorScanLoading = true;
+  render();
+  socket.emit("host:scan-screens", {}, (response) => {
+    local.monitorScanLoading = false;
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Ricerca monitor non riuscita");
+      render();
+      return;
+    }
+    local.monitorScan = response.screens || { waiting: 0, connected: 0, total: 0 };
+    const total = Number(local.monitorScan.total || 0);
+    showToast(total ? `Monitor trovati: ${total}` : "Nessun monitor in attesa");
+    render();
+  });
+}
+
+function claimMonitors() {
+  socket.emit("host:claim-screens", {}, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Monitor non agganciati");
+      return;
+    }
+    local.monitorScan = response.screens || null;
+    showToast(response.attached ? `Monitor agganciati: ${response.attached}` : "Nessun monitor da agganciare");
+    render();
   });
 }
 
@@ -4746,6 +4911,26 @@ function loadPlayerSession() {
     };
   } catch (error) {
     return null;
+  }
+}
+
+function loadPlayerAvatar() {
+  try {
+    return window.localStorage.getItem(PLAYER_AVATAR_STORAGE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function savePlayerAvatar(avatarUrl) {
+  try {
+    if (avatarUrl) {
+      window.localStorage.setItem(PLAYER_AVATAR_STORAGE_KEY, avatarUrl);
+    } else {
+      window.localStorage.removeItem(PLAYER_AVATAR_STORAGE_KEY);
+    }
+  } catch (error) {
+    // Avatar persistence is optional when storage is unavailable or full.
   }
 }
 

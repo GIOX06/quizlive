@@ -596,6 +596,81 @@ textarea {
   margin: 0;
 }
 
+.avatar-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 139, 45, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.avatar-picker-copy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.avatar-picker-copy span {
+  color: var(--stage-muted, var(--muted));
+  font-size: 0.9rem;
+}
+
+.avatar-upload-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.avatar-upload-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.player-avatar,
+.avatar-preview,
+.avatar-screen {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(255, 139, 45, 0.3);
+  border-radius: 999px;
+  background: linear-gradient(145deg, rgba(255, 139, 45, 0.28), rgba(34, 29, 26, 0.94));
+  color: #fff;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.player-avatar {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.75rem;
+}
+
+.avatar-preview {
+  width: 3.25rem;
+  height: 3.25rem;
+  font-size: 1rem;
+}
+
+.avatar-screen {
+  width: 4.4rem;
+  height: 4.4rem;
+  font-size: 1.2rem;
+}
+
+.player-avatar img,
+.avatar-preview img,
+.avatar-screen img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .stack {
   display: grid;
   gap: 0.8rem;
@@ -3035,6 +3110,22 @@ textarea {
   gap: 0.6rem;
 }
 
+.player-side-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: center;
+}
+
+.player-side-head .avatar-preview {
+  grid-row: span 2;
+}
+
+.player-side-head .section-title,
+.player-side-head .subtle {
+  grid-column: 2;
+}
+
 .live-panel {
   padding: 0.85rem;
   border: 1px solid rgba(255, 139, 45, 0.28);
@@ -3126,6 +3217,31 @@ textarea {
 .live-quick-actions .btn {
   width: 100%;
   min-width: 0;
+}
+
+.monitor-discovery {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 139, 45, 0.22);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.monitor-discovery > div:first-child {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.monitor-discovery span {
+  color: var(--stage-muted, var(--muted));
+  font-size: 0.9rem;
+}
+
+.monitor-discovery-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
 }
 
 .fifty-rules {
@@ -3395,7 +3511,7 @@ textarea {
 .player-row,
 .leader-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   gap: 0.65rem;
   align-items: center;
   padding: 0.75rem;
@@ -3661,6 +3777,176 @@ textarea {
 
   .cast-help-qr .qr-code {
     width: min(100%, 10.5rem);
+  }
+
+  .avatar-picker {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
+
+  .shell-player .topbar {
+    display: none;
+  }
+
+  .shell-player .main {
+    min-height: 100svh;
+    padding: 0.45rem;
+  }
+
+  .shell-player .player-game-layout {
+    display: block;
+    height: calc(100svh - 0.9rem);
+    overflow: hidden;
+  }
+
+  .shell-player .player-game-layout > aside {
+    display: none;
+  }
+
+  .shell-player .stage {
+    height: 100%;
+    gap: 0.45rem;
+    overflow: hidden;
+  }
+
+  .shell-player .question-card {
+    height: 100%;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+
+  .shell-player .question-main {
+    padding: 0.65rem;
+  }
+
+  .shell-player .question-title {
+    font-size: clamp(1.05rem, 5vw, 1.45rem);
+    line-height: 1.06;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .shell-player .meta-row {
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+  }
+
+  .shell-player .meta-row .status-pill {
+    min-height: 1.75rem;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  .shell-player .countdown {
+    min-width: 3.2rem;
+    gap: 0.2rem;
+  }
+
+  .shell-player .timer {
+    width: 2.65rem;
+    height: 2.65rem;
+    font-size: 1rem;
+  }
+
+  .shell-player .time-track {
+    width: 3.2rem;
+    height: 0.28rem;
+  }
+
+  .shell-player .question-media {
+    padding: 0 0.65rem 0.35rem;
+  }
+
+  .shell-player .question-media img,
+  .shell-player .question-media video,
+  .shell-player .question-media iframe {
+    max-height: 16svh;
+  }
+
+  .shell-player .question-card > .answers-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+    gap: 0.45rem;
+    padding: 0.45rem;
+  }
+
+  .shell-player .answer-btn {
+    min-height: 0;
+    padding: 0.5rem;
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: 0.4rem;
+  }
+
+  .shell-player .answer-btn.has-image,
+  .shell-player .answer-btn.has-image.selected,
+  .shell-player .answer-btn.has-image.with-mark {
+    grid-template-columns: 2rem minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .shell-player .answer-btn .letter {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.85rem;
+  }
+
+  .shell-player .answer-btn .answer-text {
+    font-size: clamp(0.82rem, 3.8vw, 1rem);
+    line-height: 1.08;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .shell-player .answer-image {
+    width: 2.2rem;
+    height: 2.2rem;
+  }
+
+  .shell-player .answer-submit {
+    padding: 0 0.45rem 0.45rem;
+    gap: 0.35rem;
+  }
+
+  .shell-player .answer-submit .toolbar {
+    gap: 0.35rem;
+  }
+
+  .shell-player .answer-submit .subtle {
+    display: none;
+  }
+
+  .shell-player .live-wager-offer,
+  .shell-player .live-fifty-challenge {
+    height: 100%;
+    align-content: stretch;
+    overflow: hidden;
+  }
+
+  .shell-player .live-fifty-challenge .section-title,
+  .shell-player .live-wager-offer .section-title {
+    font-size: clamp(1.2rem, 6vw, 1.6rem);
+  }
+
+  .shell-player .fifty-rules {
+    gap: 0.3rem;
+    padding: 0.55rem;
+  }
+
+  .shell-player .fifty-phone-countdown {
+    font-size: clamp(2.5rem, 18vw, 4.4rem);
+    min-height: 4.8rem;
+  }
+
+  .shell-player .fifty-hold-button {
+    min-height: min(42svh, 18rem);
+    font-size: clamp(1.25rem, 8vw, 2rem);
   }
 
   .live-event-grid,
