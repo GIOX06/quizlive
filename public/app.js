@@ -54,6 +54,8 @@ let local = {
   liveWagerPlayerId: "",
   liveWagerStake: 100,
   liveFiftyStake: 100,
+  screenCastHelpOpen: false,
+  screenCastHelpReason: "",
   miniGamesOpen: false,
   miniGameTab: "wagers",
   miniTokenPlayerId: "",
@@ -206,7 +208,7 @@ function renderMain() {
 }
 
 function shell(main, topbar) {
-  return `<div class="shell shell-${shellSurface()}">${topbar}<main class="main">${main}</main>${renderLiveEventOverlay()}</div>`;
+  return `<div class="shell shell-${shellSurface()}">${topbar}<main class="main">${main}</main>${renderLiveEventOverlay()}${renderScreenCastHelpDialog()}</div>`;
 }
 
 function shellSurface() {
@@ -296,7 +298,51 @@ function renderCastScreenButton() {
   if (isScreenPresentationConnected()) {
     return `<button class="btn ghost" data-action="disconnect-screen-cast">Scollega TV</button>`;
   }
-  return `<button class="btn ghost" data-action="cast-screen">Trasmetti TV</button>`;
+  const label = supportsScreenPresentation() ? "Trasmetti TV" : "Collega TV";
+  return `<button class="btn ghost" data-action="cast-screen">${label}</button>`;
+}
+
+function renderScreenCastHelpDialog() {
+  if (!local.screenCastHelpOpen) return "";
+  const link = currentScreenLink();
+  const title = local.screenCastHelpReason === "not-found" ? "TV non trovata" : "Collega monitor alla TV";
+  const message = local.screenCastHelpReason === "ios"
+    ? "Su iPhone Chrome non puo cercare direttamente Chromecast dalla pagina web. Usa AirPlay/screen mirroring oppure apri questo link sulla TV."
+    : local.screenCastHelpReason === "not-found"
+      ? "Il browser non ha trovato una TV compatibile. Puoi comunque usare il monitor pubblico con link, QR o mirroring dello schermo."
+      : "Questo browser non supporta il cast diretto dalla pagina web. Usa una delle alternative qui sotto.";
+  return `
+    <div class="dialog-backdrop">
+      <section class="panel cast-help-dialog stack">
+        <header class="dialog-head">
+          <div>
+            <p class="screen-kicker">Monitor pubblico</p>
+            <h2 class="section-title">${escapeHtml(title)}</h2>
+          </div>
+          <button class="btn small ghost" data-action="close-screen-cast-help">Chiudi</button>
+        </header>
+        <p class="subtle">${escapeHtml(message)}</p>
+        <div class="cast-help-grid">
+          <div class="cast-help-qr">
+            <img class="qr-code" src="${escapeAttr(qrCodeForUrl(link))}" alt="QR code monitor pubblico" />
+            <span class="status-pill ${playerAccessClass()}">${escapeHtml(playerBaseLabel())}</span>
+          </div>
+          <div class="cast-help-steps stack">
+            <div class="cast-help-link">${escapeHtml(link)}</div>
+            <div class="toolbar">
+              <button class="btn primary" data-action="copy-screen-link">Copia link monitor</button>
+              <button class="btn ghost" data-action="open-screen-link">Apri monitor</button>
+            </div>
+            <ol>
+              <li>Se la TV ha browser, apri il link monitor direttamente sulla TV.</li>
+              <li>Se usi Android, prova Cast schermo dal menu rapido o Google Home.</li>
+              <li>Se usi iPhone, usa AirPlay/Duplica schermo verso Apple TV o TV compatibile.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function renderHostHome() {
@@ -2818,6 +2864,7 @@ function handleAction(event) {
   if (action === "open-screen-link") openScreenLink();
   if (action === "cast-screen") castScreenToTv();
   if (action === "disconnect-screen-cast") disconnectScreenFromTv();
+  if (action === "close-screen-cast-help") closeScreenCastHelp();
   if (action === "join-screen") joinScreen();
   if (action === "create-room") createRoom();
   if (action === "resume-host-room") resumeHostRoom();
@@ -3823,7 +3870,7 @@ function openPlayerLink() {
 }
 
 async function copyScreenLink() {
-  const link = screenLink(local.room && local.room.code);
+  const link = currentScreenLink();
   try {
     await navigator.clipboard.writeText(link);
     showToast("Link monitor copiato");
@@ -3834,14 +3881,15 @@ async function copyScreenLink() {
 }
 
 function openScreenLink() {
-  const link = screenLink(local.room && local.room.code);
+  const link = currentScreenLink();
   window.open(link, "_blank", "noopener,noreferrer");
 }
 
 async function castScreenToTv() {
-  const link = screenLink(local.room && local.room.code);
+  const link = currentScreenLink();
   if (!supportsScreenPresentation()) {
-    showToast("Usa Chrome: menu Trasmetti");
+    openScreenCastHelp(isIosDevice() ? "ios" : "unsupported");
+    showToast("Apro le alternative TV");
     return;
   }
   if (isScreenPresentationConnected()) {
@@ -3861,8 +3909,21 @@ async function castScreenToTv() {
       showToast("Trasmissione annullata");
       return;
     }
-    showToast("TV non trovata o non supportata");
+    openScreenCastHelp(name === "NotFoundError" ? "not-found" : "unsupported");
+    showToast("TV non trovata: uso alternative");
   }
+}
+
+function openScreenCastHelp(reason = "unsupported") {
+  local.screenCastHelpOpen = true;
+  local.screenCastHelpReason = reason;
+  render();
+}
+
+function closeScreenCastHelp() {
+  local.screenCastHelpOpen = false;
+  local.screenCastHelpReason = "";
+  render();
 }
 
 function disconnectScreenFromTv() {
@@ -3897,7 +3958,7 @@ function openWaitingScreen() {
 function updateScreenPresentationRequest() {
   if (!supportsScreenPresentation()) return;
   try {
-    const link = screenLink(local.room && local.room.code);
+    const link = currentScreenLink();
     if (link === screenPresentationUrl) return;
     screenPresentationRequest = createScreenPresentationRequest(link);
     screenPresentationUrl = link;
@@ -4764,8 +4825,20 @@ function screenLink(code) {
   return `${playerBaseUrl()}/#screen=${encodeURIComponent(code || "")}`;
 }
 
+function currentScreenCode() {
+  return local.room && local.room.code ? local.room.code : local.screenCode;
+}
+
+function currentScreenLink() {
+  return screenLink(currentScreenCode());
+}
+
 function qrCodeSrc(code) {
-  return `/api/qr.svg?url=${encodeURIComponent(playerLink(code))}`;
+  return qrCodeForUrl(playerLink(code));
+}
+
+function qrCodeForUrl(url) {
+  return `/api/qr.svg?url=${encodeURIComponent(url)}`;
 }
 
 function playerBaseUrl() {
@@ -4842,6 +4915,11 @@ function isPrivateIPv4(address) {
   return /^10\./.test(address) ||
     /^192\.168\./.test(address) ||
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(address);
+}
+
+function isIosDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent || "") ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
 function fallbackCopy(text) {

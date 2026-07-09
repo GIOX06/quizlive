@@ -1543,6 +1543,55 @@ textarea {
   overflow: auto;
 }
 
+.cast-help-dialog {
+  width: min(100%, 44rem);
+  max-height: min(92vh, 46rem);
+  overflow: auto;
+  border-color: rgba(255, 139, 45, 0.38);
+  background:
+    linear-gradient(145deg, rgba(255, 139, 45, 0.14), transparent 62%),
+    var(--stage-panel, #171719);
+}
+
+.cast-help-grid {
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.cast-help-qr {
+  display: grid;
+  justify-items: center;
+  gap: 0.75rem;
+}
+
+.cast-help-qr .qr-code {
+  width: min(100%, 12rem);
+  height: auto;
+}
+
+.cast-help-link {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(255, 139, 45, 0.24);
+  border-radius: 8px;
+  padding: 0.85rem;
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--stage-ink, #fff);
+  font-weight: 850;
+}
+
+.cast-help-steps ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--stage-muted, #d4ccc5);
+}
+
+.cast-help-steps li + li {
+  margin-top: 0.45rem;
+}
+
 .mini-games-dialog {
   width: min(100%, 58rem);
   max-height: min(92vh, 54rem);
@@ -3604,6 +3653,14 @@ textarea {
 
   .media-dialog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cast-help-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cast-help-qr .qr-code {
+    width: min(100%, 10.5rem);
   }
 
   .live-event-grid,
