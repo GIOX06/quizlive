@@ -630,6 +630,57 @@ textarea {
   cursor: pointer;
 }
 
+.selfie-dialog {
+  width: min(100%, 34rem);
+}
+
+.selfie-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border: 1px solid rgba(255, 139, 45, 0.32);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255, 139, 45, 0.22), transparent 34%),
+    #070707;
+}
+
+.selfie-stage::after {
+  content: "";
+  position: absolute;
+  inset: 12%;
+  border: 2px dashed rgba(255, 255, 255, 0.38);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.selfie-stage.captured::after {
+  display: none;
+}
+
+.selfie-video,
+.selfie-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.selfie-video {
+  transform: scaleX(-1);
+}
+
+.selfie-error {
+  margin: 0;
+  color: #ffd6a8;
+  font-weight: 800;
+}
+
+.selfie-actions {
+  align-items: stretch;
+}
+
 .player-avatar,
 .avatar-preview,
 .avatar-screen {

@@ -58,6 +58,9 @@ let local = {
   liveFiftyStake: 100,
   screenCastHelpOpen: false,
   screenCastHelpReason: "",
+  selfieDialogOpen: false,
+  selfieCapturedUrl: "",
+  selfieError: "",
   monitorScan: null,
   monitorScanLoading: false,
   miniGamesOpen: false,
@@ -81,6 +84,8 @@ let builderDragAutoScrollSpeed = 0;
 let screenPresentationDisconnecting = false;
 let liveEventTimer = null;
 let liveAudioContext = null;
+let selfieStream = null;
+let selfieStarting = false;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -173,6 +178,7 @@ function render() {
   bindEvents();
   syncBuilderDeckScroll();
   updateScreenPresentationRequest();
+  bindSelfieVideo();
 }
 
 function renderTopbar() {
@@ -216,7 +222,7 @@ function renderMain() {
 }
 
 function shell(main, topbar) {
-  return `<div class="shell shell-${shellSurface()}">${topbar}<main class="main">${main}</main>${renderLiveEventOverlay()}${renderScreenCastHelpDialog()}</div>`;
+  return `<div class="shell shell-${shellSurface()}">${topbar}<main class="main">${main}</main>${renderLiveEventOverlay()}${renderScreenCastHelpDialog()}${renderSelfieDialog()}</div>`;
 }
 
 function shellSurface() {
@@ -282,11 +288,51 @@ function renderPlayerAvatarPicker(surface = "join") {
         <strong>${hasAvatar ? "Selfie pronto" : "Aggiungi selfie"}</strong>
         <span>${surface === "lobby" ? "Comparira in classifica e nei mini-giochi." : "Lo useremo come avatar in classifica e nei giochi."}</span>
       </div>
+      <button class="btn ghost" data-action="open-selfie-camera" type="button">${hasAvatar ? "Cambia selfie" : "Scatta selfie"}</button>
       <label class="btn ghost avatar-upload-button">
-        ${hasAvatar ? "Cambia foto" : "Scatta selfie"}
-        <input data-player-avatar-input type="file" accept="image/png,image/jpeg,image/webp" capture="user" />
+        Carica foto
+        <input data-player-avatar-input type="file" accept="image/png,image/jpeg,image/webp" />
       </label>
       ${hasAvatar ? `<button class="btn ghost small" data-action="clear-player-avatar" type="button">Rimuovi</button>` : ""}
+    </div>
+  `;
+}
+
+function renderSelfieDialog() {
+  if (!local.selfieDialogOpen) return "";
+  const captured = local.selfieCapturedUrl || "";
+  return `
+    <div class="dialog-backdrop">
+      <section class="panel selfie-dialog stack">
+        <header class="dialog-head">
+          <div>
+            <p class="screen-kicker">Ambiente giocatore</p>
+            <h2 class="section-title">Selfie avatar</h2>
+          </div>
+          <button class="btn small ghost" data-action="close-selfie-camera" type="button">Chiudi</button>
+        </header>
+        <div class="selfie-stage ${captured ? "captured" : ""}">
+          ${captured
+            ? `<img class="selfie-photo" src="${escapeAttr(captured)}" alt="Selfie avatar" />`
+            : `<video class="selfie-video" data-selfie-video autoplay playsinline muted></video>`}
+        </div>
+        ${local.selfieError
+          ? `<p class="selfie-error">${escapeHtml(local.selfieError)}</p>`
+          : `<p class="subtle">Inquadra il viso, scatta, poi salva il selfie nell'app.</p>`}
+        <div class="toolbar selfie-actions">
+          ${captured
+            ? `
+              <button class="btn ghost" data-action="retake-selfie" type="button">Rifai</button>
+              <button class="btn teal" data-action="save-selfie-avatar" type="button">Salva nell'app</button>
+              <button class="btn ghost" data-action="download-selfie" type="button">Scarica sul telefono</button>
+            `
+            : `<button class="btn primary" data-action="capture-selfie" type="button">Scatta</button>`}
+          <label class="btn ghost avatar-upload-button">
+            Carica foto
+            <input data-player-avatar-input type="file" accept="image/png,image/jpeg,image/webp" />
+          </label>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -2929,6 +2975,12 @@ function handleAction(event) {
   if (action === "host-logout") hostLogout();
   if (action === "copy-player-link") copyPlayerLink();
   if (action === "open-player-link") openPlayerLink();
+  if (action === "open-selfie-camera") openSelfieCamera();
+  if (action === "close-selfie-camera") closeSelfieCamera();
+  if (action === "capture-selfie") captureSelfie();
+  if (action === "retake-selfie") retakeSelfie();
+  if (action === "save-selfie-avatar") saveSelfieAvatar();
+  if (action === "download-selfie") downloadSelfie();
   if (action === "clear-player-avatar") clearPlayerAvatar();
   if (action === "open-waiting-screen") openWaitingScreen();
   if (action === "copy-screen-link") copyScreenLink();
@@ -3869,23 +3921,191 @@ async function handlePlayerAvatarFile(file) {
   }
   try {
     const avatarUrl = await resizeAvatarImage(file);
-    local.avatarUrl = avatarUrl;
-    savePlayerAvatar(avatarUrl);
-    if (local.room && local.room.role === "player") {
-      socket.emit("player:avatar", { avatarUrl }, (response) => {
-        if (!response || !response.ok) {
-          showToast(response && response.error ? response.error : "Avatar non aggiornato");
-          return;
-        }
-        showToast("Avatar aggiornato");
-      });
-    } else {
-      showToast("Selfie pronto");
-    }
-    render();
+    applyPlayerAvatarUrl(avatarUrl, "Avatar aggiornato", { closeSelfie: local.selfieDialogOpen });
   } catch (error) {
     showToast(error.message || "Foto non caricata");
   }
+}
+
+function applyPlayerAvatarUrl(avatarUrl, message = "Avatar aggiornato", options = {}) {
+  local.avatarUrl = avatarUrl;
+  savePlayerAvatar(avatarUrl);
+  const finish = () => {
+    if (options.closeSelfie) {
+      stopSelfieStream();
+      local.selfieDialogOpen = false;
+      local.selfieCapturedUrl = "";
+      local.selfieError = "";
+    }
+    showToast(message);
+    render();
+  };
+
+  if (local.room && local.room.role === "player") {
+    socket.emit("player:avatar", { avatarUrl }, (response) => {
+      if (!response || !response.ok) {
+        showToast(response && response.error ? response.error : "Avatar non aggiornato");
+        render();
+        return;
+      }
+      finish();
+    });
+    return;
+  }
+
+  finish();
+}
+
+function openSelfieCamera() {
+  local.selfieDialogOpen = true;
+  local.selfieCapturedUrl = "";
+  local.selfieError = "";
+  render();
+}
+
+function closeSelfieCamera() {
+  stopSelfieStream();
+  local.selfieDialogOpen = false;
+  local.selfieCapturedUrl = "";
+  local.selfieError = "";
+  render();
+}
+
+async function bindSelfieVideo() {
+  if (!local.selfieDialogOpen || local.selfieCapturedUrl) return;
+  const video = document.querySelector("[data-selfie-video]");
+  if (!video) return;
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+    const message = "Fotocamera non disponibile qui: carica una foto dal telefono.";
+    if (local.selfieError !== message) {
+      local.selfieError = message;
+      render();
+    }
+    return;
+  }
+  if (selfieStream) {
+    video.srcObject = selfieStream;
+    try {
+      await video.play();
+    } catch (_error) {
+      // Mobile browsers may require a second tap before autoplaying the preview.
+    }
+    return;
+  }
+  if (selfieStarting) return;
+
+  selfieStarting = true;
+  try {
+    selfieStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "user" },
+        width: { ideal: 720 },
+        height: { ideal: 720 }
+      },
+      audio: false
+    });
+    local.selfieError = "";
+    const freshVideo = document.querySelector("[data-selfie-video]");
+    if (freshVideo) {
+      freshVideo.srcObject = selfieStream;
+      await freshVideo.play().catch(() => {});
+    }
+  } catch (error) {
+    local.selfieError = "Fotocamera non autorizzata o non disponibile: carica una foto dal telefono.";
+    showToast("Fotocamera non disponibile");
+    render();
+  } finally {
+    selfieStarting = false;
+  }
+}
+
+function captureSelfie() {
+  const video = document.querySelector("[data-selfie-video]");
+  if (!video || !video.videoWidth || !video.videoHeight) {
+    showToast("Camera non pronta");
+    return;
+  }
+  const size = 360;
+  const sourceSize = Math.min(video.videoWidth, video.videoHeight);
+  const sx = (video.videoWidth - sourceSize) / 2;
+  const sy = (video.videoHeight - sourceSize) / 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.translate(size, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, sx, sy, sourceSize, sourceSize, 0, 0, size, size);
+  local.selfieCapturedUrl = canvas.toDataURL("image/jpeg", 0.72);
+  stopSelfieStream();
+  render();
+}
+
+function retakeSelfie() {
+  local.selfieCapturedUrl = "";
+  local.selfieError = "";
+  render();
+}
+
+function saveSelfieAvatar() {
+  if (!local.selfieCapturedUrl) {
+    showToast("Scatta prima il selfie");
+    return;
+  }
+  applyPlayerAvatarUrl(local.selfieCapturedUrl, "Selfie salvato", { closeSelfie: true });
+}
+
+async function downloadSelfie() {
+  const avatarUrl = local.selfieCapturedUrl || local.avatarUrl;
+  if (!avatarUrl) {
+    showToast("Nessun selfie da scaricare");
+    return;
+  }
+  const filename = "quizlive-selfie.jpg";
+  try {
+    const blob = dataUrlToBlob(avatarUrl);
+    const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+      await navigator.share({ files: [file], title: "QuizLive selfie" });
+      return;
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    downloadUrl(objectUrl, filename);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    return;
+  } catch (error) {
+    downloadUrl(avatarUrl, filename);
+  }
+}
+
+function downloadUrl(url, filename) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, base64] = String(dataUrl || "").split(",");
+  if (!header || !base64 || !/^data:/i.test(header)) throw new Error("Formato selfie non valido");
+  const mimeMatch = header.match(/^data:([^;]+)/i);
+  const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+function stopSelfieStream() {
+  if (selfieStream) {
+    selfieStream.getTracks().forEach((track) => track.stop());
+  }
+  selfieStream = null;
+  selfieStarting = false;
 }
 
 function clearPlayerAvatar() {
@@ -3893,6 +4113,12 @@ function clearPlayerAvatar() {
   savePlayerAvatar("");
   if (local.room && local.room.role === "player") {
     socket.emit("player:avatar", { avatarUrl: "" }, () => {});
+  }
+  if (local.selfieDialogOpen) {
+    stopSelfieStream();
+    local.selfieDialogOpen = false;
+    local.selfieCapturedUrl = "";
+    local.selfieError = "";
   }
   showToast("Avatar rimosso");
   render();
