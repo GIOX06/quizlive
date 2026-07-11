@@ -6,6 +6,13 @@ const HOST_ROOM_STORAGE_KEY = "quizlive_host_room";
 const MAX_IMAGE_UPLOAD_BYTES = 1.5 * 1024 * 1024;
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const answerClasses = ["answer-a", "answer-b", "answer-c", "answer-d", "answer-e", "answer-f"];
+const liveGameAssets = {
+  wagers: "/assets/live-games/scommessa-clandestina.png",
+  fifty: "/assets/live-games/cinquanta-cinquanta.png",
+  trio: "/assets/live-games/lupo-agnello-cavolo.png",
+  weapons: "/assets/live-games/inverti-risposta.png",
+  tokens: "/assets/live-games/scommessa-clandestina.png"
+};
 const questionTypes = [
   { value: "multiple", label: "Scelta multipla" },
   { value: "true_false", label: "Vero/Falso" },
@@ -73,6 +80,10 @@ let local = {
   miniGameTab: "wagers",
   miniTokenPlayerId: "",
   miniTokenAmount: 1,
+  playerWeaponOpen: false,
+  playerWeaponType: "hide_answer",
+  playerWeaponTargetId: "",
+  playerWeaponTargetMode: "player",
   hostResumeCode: initialHostResumeCode(),
   hostResumeBusy: false,
   hostResumeAttemptedCode: "",
@@ -1876,17 +1887,18 @@ function renderPlayerGame(room) {
   const question = room.question;
   if (room.player && room.player.rematch === "pending") return renderPlayerRematch(room);
   if (room.player && room.player.active === false) return renderPlayerExcluded(room);
-  const miniGame = renderPlayerTrioChallenge(room) || renderPlayerFiftyChallenge(room);
+  const miniGame = renderPlayerMiniGame(room);
   return `
     <section class="game-layout player-game-layout">
       <div class="stage">
-        ${renderPlayerWagerOffer(room)}
         ${miniGame || `
           ${room.status === "lobby" ? renderPlayerWaiting(room) : ""}
           ${room.status === "question" && question ? renderPlayerQuestion(room) : ""}
           ${room.status === "reveal" && question ? renderReveal(room, false) : ""}
           ${room.status === "ended" ? renderEnded(room, false) : ""}
+          ${renderPlayerWeaponLauncher(room)}
         `}
+        ${renderPlayerWeaponDialog(room)}
       </div>
       <aside class="panel stack">
         <div class="player-side-head">
@@ -1897,6 +1909,78 @@ function renderPlayerGame(room) {
         ${renderLeaderboard(room)}
       </aside>
     </section>
+  `;
+}
+
+function renderPlayerMiniGame(room) {
+  return renderPlayerFiftyChallenge(room) || renderPlayerTrioChallenge(room) || renderPlayerWagerOffer(room);
+}
+
+function playerWeaponTargets(room) {
+  const playerId = room && room.player && room.player.id;
+  const board = room && Array.isArray(room.leaderboard) ? room.leaderboard : [];
+  return board.filter((player) => player.id !== playerId && player.connected && player.active !== false);
+}
+
+function renderPlayerWeaponLauncher(room) {
+  const tokens = Number(room.player && room.player.tokens ? room.player.tokens : 0);
+  const targets = playerWeaponTargets(room);
+  if (!tokens || !targets.length || room.status === "ended") return "";
+  return `
+    <button class="player-weapon-fab" data-action="open-player-weapons">
+      <span>Armi</span>
+      <strong>${tokens}</strong>
+    </button>
+  `;
+}
+
+function renderPlayerWeaponDialog(room) {
+  if (!local.playerWeaponOpen) return "";
+  const tokens = Number(room.player && room.player.tokens ? room.player.tokens : 0);
+  const targets = playerWeaponTargets(room);
+  const selectedTarget = targets.find((player) => player.id === local.playerWeaponTargetId) || targets[0] || null;
+  const targetMode = local.playerWeaponTargetMode === "all" ? "all" : "player";
+  const type = local.playerWeaponType === "invert_true_false" ? "invert_true_false" : "hide_answer";
+  const targetOptions = targets.length
+    ? targets.map((player) => `<option value="${escapeAttr(player.id)}" ${selectedTarget && selectedTarget.id === player.id ? "selected" : ""}>${escapeHtml(player.nickname)}</option>`).join("")
+    : `<option value="">Nessun avversario</option>`;
+  return `
+    <section class="player-weapon-backdrop">
+      <article class="player-weapon-dialog stack">
+        <header class="dialog-head">
+          <div>
+            <p class="screen-kicker">Armi a token</p>
+            <h2 class="section-title">Scegli il malus</h2>
+          </div>
+          <button class="btn small ghost" data-action="close-player-weapons">Chiudi</button>
+        </header>
+        <p class="subtle">Hai ${tokens} token. Ogni malus costa 1 token e colpisce la domanda corrente o la prossima compatibile.</p>
+        <div class="player-weapon-choice-grid">
+          ${renderPlayerWeaponChoice(type, "hide_answer", "Oscura risposta", "Nasconde una risposta a caso al bersaglio.")}
+          ${renderPlayerWeaponChoice(type, "invert_true_false", "Inverti vero/falso", "Scambia Vero e Falso alla prossima domanda compatibile.")}
+        </div>
+        <div class="player-weapon-target-grid">
+          <select data-player-weapon-target-mode aria-label="Tipo bersaglio" ${targets.length ? "" : "disabled"}>
+            <option value="player" ${targetMode === "player" ? "selected" : ""}>Un avversario</option>
+            <option value="all" ${targetMode === "all" ? "selected" : ""}>Tutti gli avversari</option>
+          </select>
+          <select data-player-weapon-target aria-label="Avversario" ${targets.length && targetMode === "player" ? "" : "disabled"}>
+            ${targetOptions}
+          </select>
+        </div>
+        <button class="btn gold" data-action="send-player-weapon" ${tokens > 0 && targets.length ? "" : "disabled"}>Scaglia malus</button>
+      </article>
+    </section>
+  `;
+}
+
+function renderPlayerWeaponChoice(selectedType, type, title, text) {
+  const selected = selectedType === type;
+  return `
+    <button class="player-weapon-choice ${selected ? "selected" : ""}" data-action="set-player-weapon-type" data-player-weapon-type="${escapeAttr(type)}">
+      <span>${escapeHtml(title)}</span>
+      <small>${escapeHtml(text)}</small>
+    </button>
   `;
 }
 
@@ -1942,7 +2026,7 @@ function renderPlayerWagerOffer(room) {
     : targets[0] && targets[0].id;
   if (selectedTarget && selectedTarget !== local.wagerTargetId) local.wagerTargetId = selectedTarget;
   return `
-    <section class="panel live-wager-offer stack">
+    <section class="panel player-mini-game live-wager-offer stack">
       <div>
         <p class="screen-kicker">Scommessa live</p>
         <h2 class="section-title">Punti in gioco: ${offer.stake}</h2>
@@ -1969,7 +2053,7 @@ function renderPlayerTrioChallenge(room) {
   if (!challenge) return "";
   const hasChoice = Boolean(challenge.choice);
   return `
-    <section class="panel live-trio-challenge stack">
+    <section class="panel player-mini-game live-trio-challenge stack">
       <div>
         <p class="screen-kicker">Sfida segreta</p>
         <h2 class="section-title">Lupo, agnello, cavolo</h2>
@@ -2012,7 +2096,7 @@ function renderPlayerFiftyChallenge(room) {
   const countdownLabel = fiftyCountdownLabel(challenge, phase);
   const pressDisabled = phase !== "active";
   return `
-    <section class="panel live-fifty-challenge stack">
+    <section class="panel player-mini-game live-fifty-challenge stack">
       <div>
         <p class="screen-kicker">50 e 50</p>
         <h2 class="section-title">${phase === "intro" ? `Sfidi ${escapeHtml(challenge.opponentNickname)}` : `Salvi ${escapeHtml(challenge.opponentNickname)}?`}</h2>
@@ -2355,7 +2439,10 @@ function renderMiniGamesDialog(room) {
   const players = Array.isArray(room.players) ? room.players : [];
   const tab = local.miniGameTab || "wagers";
   const tabButton = (value, label) => `
-    <button class="mini-game-tab ${tab === value ? "active" : ""}" data-action="set-mini-game-tab" data-mini-game-tab="${escapeAttr(value)}">${escapeHtml(label)}</button>
+    <button class="mini-game-tab ${tab === value ? "active" : ""}" data-action="set-mini-game-tab" data-mini-game-tab="${escapeAttr(value)}">
+      <span class="mini-game-tab-icon" style="background-image:url('${escapeAttr(liveGameAssets[value] || liveGameAssets.wagers)}')" aria-hidden="true"></span>
+      <span>${escapeHtml(label)}</span>
+    </button>
   `;
   return `
     <section class="dialog-backdrop mini-games-backdrop">
@@ -2947,6 +3034,17 @@ function bindEvents() {
       local.miniTokenAmount = Number(element.value) || 1;
     });
   });
+  document.querySelectorAll("[data-player-weapon-target]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.playerWeaponTargetId = element.value;
+    });
+  });
+  document.querySelectorAll("[data-player-weapon-target-mode]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.playerWeaponTargetMode = element.value;
+      render();
+    });
+  });
   document.querySelectorAll("[data-wager-target]").forEach((element) => {
     element.addEventListener("change", () => {
       local.wagerTargetId = element.value;
@@ -3265,6 +3363,10 @@ function handleAction(event) {
   if (action === "mini-game-soon") showToast("Regola pronta: attiviamo la logica nella prossima patch");
   if (action === "add-player-tokens") adjustMiniTokens(1);
   if (action === "remove-player-tokens") adjustMiniTokens(-1);
+  if (action === "open-player-weapons") openPlayerWeapons();
+  if (action === "close-player-weapons") closePlayerWeapons();
+  if (action === "set-player-weapon-type") setPlayerWeaponType(target.dataset.playerWeaponType);
+  if (action === "send-player-weapon") sendPlayerWeapon();
   if (action === "ready-fifty") readyFifty(target.dataset.challengeId);
   if (action === "choose-trio") chooseTrio(target.dataset.challengeId, target.dataset.trioChoice);
   if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
@@ -4968,6 +5070,52 @@ function adjustMiniTokens(direction) {
     }
     local.miniTokenPlayerId = player.id;
     showToast(direction > 0 ? "Token assegnati" : "Token tolti");
+  });
+}
+
+function openPlayerWeapons() {
+  local.playerWeaponOpen = true;
+  render();
+}
+
+function closePlayerWeapons() {
+  local.playerWeaponOpen = false;
+  render();
+}
+
+function setPlayerWeaponType(type) {
+  local.playerWeaponType = type === "invert_true_false" ? "invert_true_false" : "hide_answer";
+  render();
+}
+
+function sendPlayerWeapon() {
+  const room = local.room;
+  const tokens = Number(room && room.player && room.player.tokens ? room.player.tokens : 0);
+  const targets = playerWeaponTargets(room);
+  const targetMode = local.playerWeaponTargetMode === "all" ? "all" : "player";
+  const selectedTarget = targets.find((player) => player.id === local.playerWeaponTargetId) || targets[0] || null;
+  if (tokens <= 0) {
+    showToast("Non hai token disponibili");
+    return;
+  }
+  if (!targets.length || (targetMode !== "all" && !selectedTarget)) {
+    showToast("Scegli un avversario");
+    return;
+  }
+  socket.emit("player:weapon", {
+    type: local.playerWeaponType === "invert_true_false" ? "invert_true_false" : "hide_answer",
+    targetMode,
+    targetId: targetMode === "all" ? "" : selectedTarget.id,
+    cost: 1
+  }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Malus non attivato");
+      return;
+    }
+    local.playerWeaponOpen = false;
+    if (selectedTarget) local.playerWeaponTargetId = selectedTarget.id;
+    showToast(response.delivered ? "Malus lanciato" : "Malus attivato");
+    render();
   });
 }
 

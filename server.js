@@ -707,6 +707,24 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("player:weapon", async (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+
+    try {
+      const weapon = createMiniWeapon(room, { ...(payload || {}), ownerId: player.id });
+      const delivered = await dispatchLiveEvent(room, weaponLiveEvent(room, weapon));
+      sendAck(ack, { ok: true, delivered, weapon: serializeWeapon(weapon, room, true) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("player:trio-choice", async (payload, ack) => {
     const room = getPlayerRoom(socket);
     const player = room && room.players.get(socket.data.playerId);
@@ -1177,6 +1195,11 @@ function pendingInviteCount(room) {
   return Array.from(room.players.values()).filter((player) => player.rematch === "pending").length;
 }
 
+function allConnectedPlayersAnswered(room, answerMap) {
+  const expectedPlayers = activePlayers(room).filter((player) => player.connected);
+  return expectedPlayers.length > 0 && expectedPlayers.every((player) => answerMap.has(player.id));
+}
+
 function removeInactivePlayers(room, message) {
   for (const player of Array.from(room.players.values())) {
     if (!player.active) removePlayer(room, player.id, message);
@@ -1314,8 +1337,10 @@ function submitAnswer(room, player, payload) {
   });
 
   const wagerResults = resolveWagersForAnswer(room, player, room.currentIndex, isCorrect);
+  const completedByPlayers = allConnectedPlayersAnswered(room, answerMap);
+  if (completedByPlayers) revealQuestion(room);
 
-  return { ok: true, correct: isCorrect, partial: isPartial, points, wagerResults };
+  return { ok: true, correct: isCorrect, partial: isPartial, points, wagerResults, completedByPlayers };
 }
 
 function createWagerState() {
@@ -2053,7 +2078,7 @@ function createMiniWeapon(room, payload) {
     throw new Error(type === "invert_true_false" ? "Non c'e una domanda vero/falso disponibile" : "Non c'e una domanda disponibile");
   }
   const question = room.quiz.questions[questionIndex];
-  const answerIndex = type === "hide_answer" ? normalizeWeaponAnswerIndex(payload.answerIndex, question) : -1;
+  const answerIndex = type === "hide_answer" ? weaponAnswerIndex(payload.answerIndex, question) : -1;
 
   owner.tokens = Math.max(0, Math.round(Number(owner.tokens || 0) - cost));
   const weapon = {
@@ -2077,14 +2102,15 @@ function createMiniWeapon(room, payload) {
 
 function normalizeWeaponTargets(room, payload) {
   const mode = normalizeShortText(payload.targetMode, 20);
+  const ownerId = normalizeShortText(payload.ownerId, 120);
   if (mode === "all") {
     return activePlayers(room)
-      .filter((player) => player.active && player.connected && player.id !== normalizeShortText(payload.ownerId, 120))
+      .filter((player) => player.active && player.connected && player.id !== ownerId)
       .map((player) => player.id);
   }
   const targetId = normalizeShortText(payload.targetId, 120);
   const target = targetId ? room.players.get(targetId) : null;
-  return target && target.active && target.connected ? [target.id] : [];
+  return target && target.active && target.connected && target.id !== ownerId ? [target.id] : [];
 }
 
 function weaponQuestionIndex(room, type) {
@@ -2104,6 +2130,17 @@ function normalizeWeaponAnswerIndex(value, question) {
     throw new Error("Risposta da oscurare non valida");
   }
   return answerIndex;
+}
+
+function weaponAnswerIndex(value, question) {
+  const numeric = Number(value);
+  if (Number.isInteger(numeric) && numeric >= 0) {
+    return normalizeWeaponAnswerIndex(numeric, question);
+  }
+  if (!question || !Array.isArray(question.answers) || !question.answers.length) {
+    throw new Error("Risposta da oscurare non valida");
+  }
+  return Math.floor(Math.random() * question.answers.length);
 }
 
 function normalizeWeaponCost(value) {

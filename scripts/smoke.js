@@ -264,6 +264,7 @@ async function main() {
       delta: 3
     });
     assert.equal(tokenGrant.ok, true);
+    await waitForState(player, (state) => state.player && state.player.tokens === 3);
     await waitForState(host, (state) =>
       state.players &&
       state.players.some((item) => item.id === joined.playerId && item.tokens === 3)
@@ -291,6 +292,17 @@ async function main() {
       Array.isArray(state.teamLeaderboard) &&
       state.teamLeaderboard.length >= 2
     );
+
+    const playerWeaponEvent = waitForSocketEvent(screen, "live:event");
+    const playerWeapon = await emitAck(player, "player:weapon", {
+      type: "hide_answer",
+      targetId: trioJoined.playerId,
+      cost: 1
+    });
+    assert.equal(playerWeapon.ok, true);
+    assert.equal(playerWeapon.weapon.type, "hide_answer");
+    assert.equal((await playerWeaponEvent).title, "Arma: risposta oscurata");
+    await waitForState(player, (state) => state.player && state.player.tokens === 2);
 
     const hideWeapon = await emitAck(host, "host:weapon", {
       type: "hide_answer",
@@ -825,6 +837,8 @@ async function main() {
     const deletedQuiz = await deleteJson(`/api/archive/quizzes/${savedQuiz.quiz.id}`);
     assert.equal(deletedQuiz.ok, true);
 
+    await runAutoRevealAndPlayerWeaponSmoke();
+
     console.log(JSON.stringify({
       ok: true,
       code: created.code,
@@ -837,6 +851,87 @@ async function main() {
     decliningPlayer.close();
     trioPlayer.close();
     if (extraScreen) extraScreen.close();
+  }
+}
+
+async function runAutoRevealAndPlayerWeaponSmoke() {
+  const host = createSocket(true);
+  const first = createSocket(false);
+  const second = createSocket(false);
+  try {
+    await Promise.all([waitForConnect(host), waitForConnect(first), waitForConnect(second)]);
+    host.on("room:state", (state) => {
+      host.latestState = state;
+    });
+    first.on("room:state", (state) => {
+      first.latestState = state;
+    });
+    second.on("room:state", (state) => {
+      second.latestState = state;
+    });
+
+    const miniQuiz = {
+      title: "Auto reveal smoke",
+      questions: [
+        {
+          type: "multiple",
+          text: "Stop timer?",
+          answers: ["Yes", "No"],
+          correctIndex: 0,
+          timeLimit: 30
+        },
+        {
+          type: "true_false",
+          text: "Weapon target?",
+          answers: ["Vero", "Falso"],
+          correctIndex: 0,
+          timeLimit: 30
+        }
+      ]
+    };
+    const created = await emitAck(host, "host:create", { quiz: miniQuiz });
+    assert.equal(created.ok, true);
+
+    const firstJoined = await emitAck(first, "player:join", { code: created.code, nickname: "Auto One" });
+    const secondJoined = await emitAck(second, "player:join", { code: created.code, nickname: "Auto Two" });
+    assert.equal(firstJoined.ok, true);
+    assert.equal(secondJoined.ok, true);
+    await waitForState(host, (state) => state.status === "lobby" && state.playerCount === 2);
+
+    const tokenGrant = await emitAck(host, "host:tokens", { playerId: firstJoined.playerId, delta: 1 });
+    assert.equal(tokenGrant.ok, true);
+    await waitForState(first, (state) => state.player && state.player.tokens === 1);
+
+    const playerWeapon = await emitAck(first, "player:weapon", {
+      type: "invert_true_false",
+      targetId: secondJoined.playerId,
+      cost: 1
+    });
+    assert.equal(playerWeapon.ok, true);
+    assert.equal(playerWeapon.weapon.type, "invert_true_false");
+    await waitForState(first, (state) => state.player && state.player.tokens === 0);
+
+    const started = await emitAck(host, "host:start", {});
+    assert.equal(started.ok, true);
+    await waitForState(host, (state) => state.status === "question" && state.currentIndex === 0);
+
+    const firstAnswer = await emitAck(first, "player:answer", { answerIndex: 0 });
+    assert.equal(firstAnswer.ok, true);
+    assert.equal(firstAnswer.completedByPlayers, false);
+    await waitForState(host, (state) => state.status === "question" && state.answerCount === 1);
+
+    const secondAnswer = await emitAck(second, "player:answer", { answerIndex: 0 });
+    assert.equal(secondAnswer.ok, true);
+    assert.equal(secondAnswer.completedByPlayers, true);
+    await waitForState(host, (state) =>
+      state.status === "reveal" &&
+      state.questionEndsAt === null &&
+      state.answerCount === 2
+    );
+  } finally {
+    host.close();
+    first.close();
+    second.close();
   }
 }
 

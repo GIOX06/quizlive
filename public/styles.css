@@ -1736,11 +1736,25 @@ textarea {
 
 .mini-game-tab {
   min-height: 2.6rem;
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
   border: 1px solid rgba(255, 139, 45, 0.28);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.08);
   color: var(--stage-ink, #fff);
   font-weight: 950;
+  text-align: left;
+}
+
+.mini-game-tab-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 8px;
+  background-position: center;
+  background-size: cover;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
 
 .mini-game-tab.active {
@@ -1812,6 +1826,107 @@ textarea {
   grid-template-columns: minmax(9rem, 1.2fr) minmax(8rem, 0.8fr) minmax(9rem, 1fr) 5.5rem;
   gap: 0.55rem;
   align-items: center;
+}
+
+.player-weapon-fab {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 40;
+  min-width: 5.6rem;
+  min-height: 3.3rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.55rem 0.45rem 0.8rem;
+  border: 1px solid rgba(255, 196, 83, 0.75);
+  border-radius: 999px;
+  background:
+    linear-gradient(145deg, rgba(255, 196, 83, 0.92), rgba(180, 50, 34, 0.9)),
+    #ff8a2d;
+  color: #17120a;
+  font-weight: 950;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
+}
+
+.player-weapon-fab strong {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+}
+
+.player-weapon-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 0.85rem;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.player-weapon-dialog {
+  position: relative;
+  width: min(100%, 34rem);
+  max-height: min(96svh, 44rem);
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid rgba(255, 196, 83, 0.48);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(255, 139, 45, 0.16), rgba(0, 0, 0, 0.72)),
+    var(--stage-panel, #171719);
+  color: var(--stage-ink, #fff);
+}
+
+.player-weapon-dialog::before {
+  background-image: url("/assets/live-games/inverti-risposta.png");
+  opacity: 0.24;
+}
+
+.player-weapon-choice-grid,
+.player-weapon-target-grid {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.player-weapon-choice-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.player-weapon-choice {
+  min-height: 7rem;
+  display: grid;
+  gap: 0.35rem;
+  align-content: end;
+  padding: 0.8rem;
+  border: 1px solid rgba(255, 196, 83, 0.28);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.72)),
+    url("/assets/live-games/inverti-risposta.png") center/cover;
+  color: #fff;
+  font-weight: 950;
+  text-align: left;
+}
+
+.player-weapon-choice small {
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.25;
+}
+
+.player-weapon-choice.selected {
+  border-color: rgba(255, 196, 83, 0.92);
+  box-shadow: 0 0 0 2px rgba(255, 196, 83, 0.24);
+}
+
+.player-weapon-target-grid {
+  grid-template-columns: 0.85fr 1.15fr;
 }
 
 .media-dialog {
@@ -3349,17 +3464,62 @@ textarea {
 .live-wager-panel,
 .live-wager-offer,
 .live-fifty-panel,
-.live-fifty-challenge {
+.live-fifty-challenge,
+.live-trio-challenge {
   display: grid;
   gap: 0.65rem;
 }
 
 .live-wager-offer,
-.live-fifty-challenge {
+.live-fifty-challenge,
+.live-trio-challenge {
+  position: relative;
+  overflow: hidden;
   border: 1px solid rgba(255, 139, 45, 0.42);
   background:
     linear-gradient(145deg, rgba(255, 138, 45, 0.14), transparent 62%),
     var(--stage-panel);
+}
+
+.player-mini-game::before,
+.player-weapon-dialog::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-position: center;
+  background-size: cover;
+  opacity: 0.32;
+  filter: saturate(1.1) contrast(1.05);
+}
+
+.player-mini-game::after,
+.player-weapon-dialog::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 50% 24%, rgba(255, 160, 56, 0.24), transparent 34%),
+    linear-gradient(180deg, rgba(3, 3, 4, 0.25), rgba(3, 3, 4, 0.9));
+}
+
+.player-mini-game > *,
+.player-weapon-dialog > * {
+  position: relative;
+  z-index: 1;
+}
+
+.live-wager-offer::before {
+  background-image: url("/assets/live-games/scommessa-clandestina.png");
+}
+
+.live-fifty-challenge::before {
+  background-image: url("/assets/live-games/cinquanta-cinquanta.png");
+}
+
+.live-trio-challenge::before {
+  background-image: url("/assets/live-games/lupo-agnello-cavolo.png");
 }
 
 .live-fifty-challenge {
@@ -4029,7 +4189,7 @@ textarea {
   }
 
   .shell-player .question-card > .answers-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     grid-auto-rows: minmax(0, 1fr);
     min-height: 0;
     overflow: hidden;
@@ -4088,8 +4248,10 @@ textarea {
   .shell-player .live-fifty-challenge,
   .shell-player .live-trio-challenge {
     height: 100%;
-    align-content: stretch;
+    min-height: 100%;
+    align-content: center;
     overflow: hidden;
+    padding: 1rem;
   }
 
   .shell-player .live-fifty-challenge .section-title,
@@ -4111,6 +4273,28 @@ textarea {
   .shell-player .fifty-hold-button {
     min-height: min(42svh, 18rem);
     font-size: clamp(1.25rem, 8vw, 2rem);
+  }
+
+  .shell-player .player-weapon-fab {
+    right: 0.7rem;
+    bottom: 0.7rem;
+  }
+
+  .player-weapon-backdrop {
+    padding: 0;
+  }
+
+  .player-weapon-dialog {
+    width: 100%;
+    height: 100svh;
+    max-height: none;
+    border-radius: 0;
+    align-content: center;
+  }
+
+  .player-weapon-choice-grid,
+  .player-weapon-target-grid {
+    grid-template-columns: 1fr;
   }
 
   .live-event-grid,
