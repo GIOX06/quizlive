@@ -56,6 +56,12 @@ let local = {
   liveWagerPlayerId: "",
   liveWagerStake: 100,
   liveFiftyStake: 100,
+  liveTrioPot: 600,
+  weaponOwnerId: "",
+  weaponTargetId: "",
+  weaponTargetMode: "player",
+  weaponAnswerIndex: 0,
+  weaponCost: 1,
   screenCastHelpOpen: false,
   screenCastHelpReason: "",
   selfieDialogOpen: false,
@@ -166,7 +172,7 @@ window.addEventListener("hashchange", () => {
 setInterval(() => {
   if (!local.room) return;
   if (local.room.status === "question") updateLiveTimers();
-  if (local.room.fiftyChallenge || local.room.activeFifty || recentFiftyResult(local.room) || document.querySelector(".screen-fifty-result")) updateFiftyTimers();
+  if (local.room.fiftyChallenge || local.room.activeFifty || recentFiftyResult(local.room) || recentTrioResult(local.room) || document.querySelector(".screen-fifty-result") || document.querySelector(".screen-trio-result")) updateFiftyTimers();
 }, 250);
 
 window.addEventListener("keydown", handleBuilderKeyboard);
@@ -1254,11 +1260,12 @@ function renderHostLobby(room) {
 function renderScreenGame(room) {
   const question = room.question;
   const fiftyResult = recentFiftyResult(room);
+  const trioResult = recentTrioResult(room);
   return `
     <section class="screen-live-layout">
       ${renderScreenLeaderboardPanel(room)}
       <div class="screen-live-stage">
-        ${room.activeFifty ? renderScreenFiftyChallenge(room.activeFifty) : fiftyResult ? renderScreenFiftyResult(fiftyResult) : `
+        ${room.activeTrio ? renderScreenTrioChallenge(room.activeTrio) : trioResult ? renderScreenTrioResult(trioResult) : room.activeFifty ? renderScreenFiftyChallenge(room.activeFifty) : fiftyResult ? renderScreenFiftyResult(fiftyResult) : `
           ${room.status === "lobby" ? renderScreenLobby(room) : ""}
           ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
           ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
@@ -1331,14 +1338,14 @@ function renderScreenFiftyChallenge(challenge) {
       </div>
       <div class="fifty-arena ${phase}">
         <div class="fifty-rope"></div>
-        <div class="fifty-platform left ${first.holding ? "holding" : ""} ${first.ready ? "ready" : ""}">
+        <div class="fifty-platform left ${first.ready ? "ready" : ""}">
           <div class="fifty-puppet"></div>
           <span>${escapeHtml(first.nickname)}</span>
         </div>
         <div class="fifty-chasm">
           <span>${phase === "intro" ? "Accettate la sfida" : phase === "countdown" ? "Prepararsi" : "Ultimi 5 secondi"}</span>
         </div>
-        <div class="fifty-platform right ${second.holding ? "holding" : ""} ${second.ready ? "ready" : ""}">
+        <div class="fifty-platform right ${second.ready ? "ready" : ""}">
           <div class="fifty-puppet"></div>
           <span>${escapeHtml(second.nickname)}</span>
         </div>
@@ -1347,10 +1354,70 @@ function renderScreenFiftyChallenge(challenge) {
   `;
 }
 
-function renderScreenFiftyPlayer(player, phase) {
-  const state = phase === "intro" ? player.ready ? "Pronto" : "Invitato" : player.holding ? "Tiene premuto" : "Mano libera";
+function renderScreenTrioChallenge(challenge) {
   return `
-    <div class="screen-fifty-player ${player.ready ? "ready" : ""} ${player.holding ? "holding" : ""}">
+    <article class="screen-trio-show panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Mini gioco live</p>
+        <h1 class="screen-title">Lupo, agnello, cavolo</h1>
+        <p class="screen-subtitle">Posta ${Number(challenge.pot || 0)} punti. Le scelte restano segrete.</p>
+      </div>
+      <div class="screen-trio-grid">
+        ${(challenge.players || []).map((player) => `
+          <div class="screen-trio-player ${player.chosen ? "ready" : ""}">
+            ${renderPlayerAvatar(player, "avatar-screen")}
+            <strong>${escapeHtml(player.nickname)}</strong>
+            <span>${player.chosen ? "Scelta registrata" : "Sta scegliendo"}</span>
+          </div>
+        `).join("")}
+      </div>
+      <div class="trio-symbol-strip">
+        <span>Lupo batte agnello</span>
+        <span>Agnello batte cavolo</span>
+        <span>Cavolo batte lupo</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderScreenTrioResult(result) {
+  const winners = Array.isArray(result.winners) ? result.winners : [];
+  return `
+    <article class="screen-trio-show screen-trio-result panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Risultato mini-gioco</p>
+        <h1 class="screen-title">${escapeHtml(trioResultHeadline(result))}</h1>
+        <p class="screen-subtitle">${escapeHtml(trioHistoryText(result))}</p>
+      </div>
+      <div class="screen-trio-grid">
+        ${(result.players || []).map((player) => `
+          <div class="screen-trio-player result-card ${player.won ? "winner" : ""}">
+            ${renderPlayerAvatar(player, "avatar-screen")}
+            <strong>${escapeHtml(player.nickname)}</strong>
+            <span>${escapeHtml(player.choiceLabel || "Nessuna scelta")}</span>
+            <em>${player.delta > 0 ? `+${player.delta}` : "0"} pt</em>
+          </div>
+        `).join("")}
+      </div>
+      <div class="trio-symbol-strip">
+        <span>${winners.length ? `Vince: ${winners.map((player) => player.nickname).join(", ")}` : "Nessun vincitore"}</span>
+      </div>
+    </article>
+  `;
+}
+
+function trioResultHeadline(result) {
+  if (result.outcome === "single_win") return "Un solo vincitore";
+  if (result.outcome === "team_win") return "Posta divisa in due";
+  if (result.outcome === "all_split") return "Tre simboli, posta divisa";
+  if (result.outcome === "draw_split") return "Pareggio";
+  return "Nessuna scelta valida";
+}
+
+function renderScreenFiftyPlayer(player, phase) {
+  const state = phase === "intro" ? player.ready ? "Pronto" : "Invitato" : phase === "countdown" ? "Preparati" : "In gioco";
+  return `
+    <div class="screen-fifty-player ${player.ready ? "ready" : ""}">
       <span class="status-pill compact">${escapeHtml(state)}</span>
       ${renderPlayerAvatar(player, "avatar-screen")}
       <strong>${escapeHtml(player.nickname)}</strong>
@@ -1360,6 +1427,13 @@ function renderScreenFiftyPlayer(player, phase) {
 
 function recentFiftyResult(room) {
   const history = room && Array.isArray(room.fiftyHistory) ? room.fiftyHistory : [];
+  const result = history[0];
+  if (!result || !result.resolvedAt) return null;
+  return Date.now() - Number(result.resolvedAt) < 22000 ? result : null;
+}
+
+function recentTrioResult(room) {
+  const history = room && Array.isArray(room.trioHistory) ? room.trioHistory : [];
   const result = history[0];
   if (!result || !result.resolvedAt) return null;
   return Date.now() - Number(result.resolvedAt) < 22000 ? result : null;
@@ -1802,15 +1876,17 @@ function renderPlayerGame(room) {
   const question = room.question;
   if (room.player && room.player.rematch === "pending") return renderPlayerRematch(room);
   if (room.player && room.player.active === false) return renderPlayerExcluded(room);
+  const miniGame = renderPlayerTrioChallenge(room) || renderPlayerFiftyChallenge(room);
   return `
     <section class="game-layout player-game-layout">
       <div class="stage">
         ${renderPlayerWagerOffer(room)}
-        ${renderPlayerFiftyChallenge(room)}
-        ${room.status === "lobby" ? renderPlayerWaiting(room) : ""}
-        ${room.status === "question" && question ? renderPlayerQuestion(room) : ""}
-        ${room.status === "reveal" && question ? renderReveal(room, false) : ""}
-        ${room.status === "ended" ? renderEnded(room, false) : ""}
+        ${miniGame || `
+          ${room.status === "lobby" ? renderPlayerWaiting(room) : ""}
+          ${room.status === "question" && question ? renderPlayerQuestion(room) : ""}
+          ${room.status === "reveal" && question ? renderReveal(room, false) : ""}
+          ${room.status === "ended" ? renderEnded(room, false) : ""}
+        `}
       </div>
       <aside class="panel stack">
         <div class="player-side-head">
@@ -1885,6 +1961,45 @@ function renderPlayerWagerOffer(room) {
         <button class="btn teal" data-action="accept-wager-chosen" data-wager-id="${escapeAttr(offer.id)}" ${targets.length ? "" : "disabled"}>Scelgo io x2</button>
       </div>
     </section>
+  `;
+}
+
+function renderPlayerTrioChallenge(room) {
+  const challenge = room.trioChallenge;
+  if (!challenge) return "";
+  const hasChoice = Boolean(challenge.choice);
+  return `
+    <section class="panel live-trio-challenge stack">
+      <div>
+        <p class="screen-kicker">Sfida segreta</p>
+        <h2 class="section-title">Lupo, agnello, cavolo</h2>
+        <p class="subtle">Posta ${Number(challenge.pot || 0)} punti. Scegli in segreto: lupo batte agnello, agnello batte cavolo, cavolo batte lupo.</p>
+      </div>
+      <div class="trio-opponents">
+        ${(challenge.opponents || []).map((opponent) => `
+          <div>
+            ${renderPlayerAvatar(opponent, "player-avatar")}
+            <span>${escapeHtml(opponent.nickname)}</span>
+            <strong>${opponent.chosen ? "Scelta fatta" : "In attesa"}</strong>
+          </div>
+        `).join("")}
+      </div>
+      <div class="trio-choice-grid">
+        ${trioChoiceButton(challenge, "wolf", "Lupo")}
+        ${trioChoiceButton(challenge, "sheep", "Agnello")}
+        ${trioChoiceButton(challenge, "cabbage", "Cavolo")}
+      </div>
+      <p class="subtle">${hasChoice ? `Hai scelto ${escapeHtml(challenge.choiceLabel)}. Aspetta il risultato sul monitor.` : "La scelta non viene mostrata agli altri fino alla fine."}</p>
+    </section>
+  `;
+}
+
+function trioChoiceButton(challenge, choice, label) {
+  const selected = challenge.choice === choice;
+  return `
+    <button class="btn trio-choice ${selected ? "selected" : ""}" data-action="choose-trio" data-challenge-id="${escapeAttr(challenge.id)}" data-trio-choice="${escapeAttr(choice)}" ${challenge.choice ? "disabled" : ""}>
+      <span>${escapeHtml(label)}</span>
+    </button>
   `;
 }
 
@@ -2230,6 +2345,8 @@ function renderHostMiniGamesEntry(room) {
       <button class="btn gold" data-action="open-mini-games">Apri regia</button>
       ${renderHostWagerStatus(room)}
       ${renderHostFiftyStatus(room)}
+      ${renderHostTrioStatus(room)}
+      ${renderHostWeaponsStatus(room)}
     </div>
   `;
 }
@@ -2261,7 +2378,7 @@ function renderMiniGamesDialog(room) {
           ${tab === "fifty"
             ? renderHostFiftyPanel(room, players)
             : tab === "trio"
-              ? renderTrioMiniGamePanel(players)
+              ? renderTrioMiniGamePanel(players, room)
               : tab === "weapons"
                 ? renderWeaponsMiniGamePanel(players, room)
                 : tab === "tokens"
@@ -2273,51 +2390,83 @@ function renderMiniGamesDialog(room) {
   `;
 }
 
-function renderTrioMiniGamePanel(players) {
+function renderTrioMiniGamePanel(players, room) {
+  const connectedPlayers = players.filter((player) => player.connected);
+  const active = room.trio && room.trio.active;
+  const pot = Math.max(30, Math.min(10000, Math.floor(Number(local.liveTrioPot) || 600)));
   return `
     <section class="mini-game-card stack">
       <div>
         <h3 class="mini-title">Sfida a tre</h3>
-        <p class="subtle">Lupo batte agnello, agnello batte cavolo, cavolo batte lupo. Variante pronta anche per sasso/carta/forbice.</p>
+        <p class="subtle">Lupo batte agnello, agnello batte cavolo, cavolo batte lupo. Le scelte restano segrete fino al risultato.</p>
       </div>
       <div class="mini-game-symbol-row">
         <span>Lupo</span>
         <span>Agnello</span>
         <span>Cavolo</span>
       </div>
-      <button class="btn ghost" data-action="mini-game-soon" ${players.length >= 3 ? "" : "disabled"}>Prepara sfida a 3</button>
-      ${players.length < 3 ? `<p class="subtle">Servono almeno tre giocatori collegati.</p>` : ""}
+      <div class="live-target-row">
+        <input data-live-trio-pot type="number" min="30" max="10000" value="${pot}" aria-label="Posta sfida a tre" ${connectedPlayers.length >= 3 && !active ? "" : "disabled"} />
+        <button class="btn gold" data-action="send-trio-start" ${connectedPlayers.length >= 3 && !active ? "" : "disabled"}>Avvia sfida a 3</button>
+      </div>
+      ${connectedPlayers.length < 3 ? `<p class="subtle">Servono almeno tre giocatori collegati.</p>` : ""}
+      ${renderHostTrioStatus(room)}
     </section>
   `;
 }
 
 function renderWeaponsMiniGamePanel(players, room) {
-  const targetOptions = players.length
-    ? players.map((player) => `<option value="${escapeAttr(player.id)}">${escapeHtml(player.nickname)}</option>`).join("")
+  const connectedPlayers = players.filter((player) => player.connected);
+  const owners = connectedPlayers.filter((player) => Number(player.tokens || 0) > 0);
+  const owner = owners.find((player) => player.id === local.weaponOwnerId) || owners[0] || null;
+  const ownerId = owner ? owner.id : "";
+  const targetMode = local.weaponTargetMode === "all" ? "all" : "player";
+  const targets = connectedPlayers.filter((player) => !owner || player.id !== owner.id);
+  const target = targets.find((player) => player.id === local.weaponTargetId) || targets[0] || null;
+  const targetOptions = targets.length
+    ? targets.map((player) => `<option value="${escapeAttr(player.id)}" ${target && target.id === player.id ? "selected" : ""}>${escapeHtml(player.nickname)}</option>`).join("")
     : `<option value="">Nessun giocatore</option>`;
-  const answerOptions = room.question && Array.isArray(room.question.answers)
-    ? room.question.answers.map((answer) => `<option value="${answer.index}">${answerLetters[answer.index]} - ${escapeHtml(answer.text)}</option>`).join("")
+  const answerOptions = room.question && Array.isArray(room.question.answers) && room.question.answers.length
+    ? room.question.answers.map((answer) => `<option value="${answer.originalIndex != null ? answer.originalIndex : answer.index}" ${Number(local.weaponAnswerIndex) === Number(answer.originalIndex != null ? answer.originalIndex : answer.index) ? "selected" : ""}>${answerLetters[answer.originalIndex != null ? answer.originalIndex : answer.index]} - ${escapeHtml(answer.text)}</option>`).join("")
     : `<option value="">Prossima domanda</option>`;
+  const cost = Math.max(1, Math.min(20, Math.floor(Number(local.weaponCost) || 1)));
+  const ownerOptions = owners.length
+    ? owners.map((player) => `<option value="${escapeAttr(player.id)}" ${player.id === ownerId ? "selected" : ""}>${escapeHtml(player.nickname)} - ${Number(player.tokens || 0)} token</option>`).join("")
+    : `<option value="">Nessun giocatore con token</option>`;
   return `
+    <section class="mini-game-card stack">
+      <div>
+        <h3 class="mini-title">Armi a token</h3>
+        <p class="subtle">Il giocatore che usa l'arma spende token. L'effetto vale sulla domanda corrente o sulla prossima compatibile.</p>
+      </div>
+      <div class="mini-weapon-controls">
+        <select data-weapon-owner aria-label="Giocatore che spende token" ${owners.length ? "" : "disabled"}>${ownerOptions}</select>
+        <select data-weapon-target-mode aria-label="Tipo bersaglio" ${targets.length ? "" : "disabled"}>
+          <option value="player" ${targetMode === "player" ? "selected" : ""}>Un avversario</option>
+          <option value="all" ${targetMode === "all" ? "selected" : ""}>Tutti gli avversari</option>
+        </select>
+        <select data-weapon-target aria-label="Bersaglio arma" ${targets.length && targetMode === "player" ? "" : "disabled"}>${targetOptions}</select>
+        <input data-weapon-cost type="number" min="1" max="20" value="${cost}" aria-label="Costo token" ${owners.length ? "" : "disabled"} />
+      </div>
+    </section>
     <section class="mini-game-card-grid">
       <article class="mini-game-card stack">
         <div>
           <h3 class="mini-title">Oscura risposta</h3>
-          <p class="subtle">Un giocatore spende token per nascondere una risposta a un avversario o a un gruppo.</p>
+          <p class="subtle">Nasconde un pulsante al bersaglio. Sul telefono non potra selezionarlo.</p>
         </div>
-        <select aria-label="Bersaglio oscuramento">${targetOptions}</select>
-        <select aria-label="Risposta da oscurare">${answerOptions}</select>
-        <button class="btn ghost" data-action="mini-game-soon" ${players.length ? "" : "disabled"}>Prepara arma</button>
+        <select data-weapon-answer-index aria-label="Risposta da oscurare" ${owners.length && targets.length ? "" : "disabled"}>${answerOptions}</select>
+        <button class="btn gold" data-action="send-hide-answer-weapon" ${owners.length && targets.length ? "" : "disabled"}>Attiva oscuramento</button>
       </article>
       <article class="mini-game-card stack">
         <div>
           <h3 class="mini-title">Vero/Falso invertito</h3>
-          <p class="subtle">Su una domanda vero/falso, il bersaglio vede le scelte invertite.</p>
+          <p class="subtle">Il bersaglio vede Vero e Falso scambiati sulla prossima domanda compatibile.</p>
         </div>
-        <select aria-label="Bersaglio inversione">${targetOptions}</select>
-        <button class="btn ghost" data-action="mini-game-soon" ${players.length ? "" : "disabled"}>Prepara inversione</button>
+        <button class="btn gold" data-action="send-invert-tf-weapon" ${owners.length && targets.length ? "" : "disabled"}>Attiva inversione</button>
       </article>
     </section>
+    ${renderHostWeaponsStatus(room)}
   `;
 }
 
@@ -2453,6 +2602,61 @@ function renderHostFiftyStatus(room) {
   `;
 }
 
+function renderHostTrioStatus(room) {
+  const trio = room.trio || {};
+  const active = trio.active;
+  const history = Array.isArray(trio.history) ? trio.history : [];
+  const activeItems = active && Array.isArray(active.players)
+    ? active.players.map((player) => ({
+      label: player.left ? "Fuori" : player.chosen ? "Scelta fatta" : "In attesa",
+      text: `${player.nickname} - ${active.pot} pt`
+    }))
+    : [];
+  const historyItems = history.slice(0, 3).map((item) => ({
+    label: trioHistoryLabel(item),
+    text: trioHistoryText(item)
+  }));
+  const items = [...activeItems, ...historyItems];
+  if (!items.length) return "";
+  return `
+    <div class="live-wager-list">
+      ${items.map((item) => `
+        <div class="live-wager-row">
+          <span class="status-pill compact">${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(item.text)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderHostWeaponsStatus(room) {
+  const weapons = room.weapons || {};
+  const active = Array.isArray(weapons.active) ? weapons.active : [];
+  const history = Array.isArray(weapons.history) ? weapons.history : [];
+  const items = [
+    ...active.map((item) => ({
+      label: `D${Number(item.questionNumber || 0)}`,
+      text: `${item.typeLabel}: ${item.ownerNickname} -> ${(item.targetNicknames || []).join(", ")}`
+    })),
+    ...history.slice(0, 3).map((item) => ({
+      label: "Usata",
+      text: `${item.typeLabel}: ${(item.targetNicknames || []).join(", ")}`
+    }))
+  ];
+  if (!items.length) return "";
+  return `
+    <div class="live-wager-list">
+      ${items.map((item) => `
+        <div class="live-wager-row">
+          <span class="status-pill compact">${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(item.text)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function fiftyActivePlayerLabel(active, player) {
   if (player && player.left) return "Disconnesso";
   if (active.status === "intro") return player && player.ready ? "Pronto" : "Invito";
@@ -2478,6 +2682,20 @@ function fiftyHistoryText(item) {
   if (item.outcome === "forfeit") return `${item.loserNickname} fuori: ${item.winnerNickname} +${item.pot} pt`;
   if (item.outcome === "drop_win") return `${item.loserNickname} cade: ${item.winnerNickname} +${item.pot} pt`;
   return `Entrambi -${item.stake} pt`;
+}
+
+function trioHistoryLabel(item) {
+  if (item.outcome === "single_win") return "Vincitore";
+  if (item.outcome === "team_win") return "Coppia";
+  if (item.outcome === "all_split") return "Tre simboli";
+  if (item.outcome === "draw_split") return "Pari";
+  return "Vuota";
+}
+
+function trioHistoryText(item) {
+  const winners = Array.isArray(item.winners) ? item.winners : [];
+  if (!winners.length) return "Nessun punto assegnato";
+  return `${winners.map((player) => player.nickname).join(", ")} +${winners[0].delta || 0} pt`;
 }
 
 function renderHostPlayers(room) {
@@ -2552,14 +2770,16 @@ function renderAnswerButton(answer, question, reveal = false) {
   const correct = hasMark && answer.correct;
   const wrong = hasMark && !answer.correct;
   const hasImage = Boolean(answer.imageUrl);
+  const blocked = Boolean(answer.blocked);
   return `
-    <button class="answer-btn ${answerClasses[answer.index]} ${hasImage ? "has-image" : ""} ${selected ? "selected" : ""} ${hasMark ? "with-mark" : ""} ${correct ? "correct" : ""} ${wrong ? "wrong" : ""}"
+    <button class="answer-btn ${answerClasses[answer.index]} ${hasImage ? "has-image" : ""} ${selected ? "selected" : ""} ${hasMark ? "with-mark" : ""} ${correct ? "correct" : ""} ${wrong ? "wrong" : ""} ${blocked ? "blocked" : ""}"
       data-action="answer"
       data-answer-index="${answer.index}"
-      ${question.answered || reveal ? "disabled" : ""}>
+      ${question.answered || reveal || blocked ? "disabled" : ""}>
       <span class="letter">${answerLetters[answer.index]}</span>
       ${renderAnswerImage(answer)}
       <span class="answer-text">${escapeHtml(answer.text)}</span>
+      ${blocked ? `<span class="answer-selected-label">Oscurata</span>` : ""}
       ${question.type === "multiple_select" && selected && !reveal ? `<span class="answer-selected-label">Selezionata</span>` : ""}
       ${renderAnswerMark(answer.correct, hasMark)}
     </button>
@@ -2684,6 +2904,37 @@ function bindEvents() {
   document.querySelectorAll("[data-live-fifty-stake]").forEach((element) => {
     element.addEventListener("input", () => {
       local.liveFiftyStake = Number(element.value) || 1;
+    });
+  });
+  document.querySelectorAll("[data-live-trio-pot]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.liveTrioPot = Number(element.value) || 600;
+    });
+  });
+  document.querySelectorAll("[data-weapon-owner]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.weaponOwnerId = element.value;
+    });
+  });
+  document.querySelectorAll("[data-weapon-target]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.weaponTargetId = element.value;
+    });
+  });
+  document.querySelectorAll("[data-weapon-target-mode]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.weaponTargetMode = element.value;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-weapon-answer-index]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.weaponAnswerIndex = Number(element.value) || 0;
+    });
+  });
+  document.querySelectorAll("[data-weapon-cost]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.weaponCost = Number(element.value) || 1;
     });
   });
   document.querySelectorAll("[data-mini-token-player]").forEach((element) => {
@@ -3005,6 +3256,9 @@ function handleAction(event) {
   if (action === "send-live-message") sendLiveMessage();
   if (action === "send-wager-offer") sendWagerOffer();
   if (action === "send-fifty-start") sendFiftyStart();
+  if (action === "send-trio-start") sendTrioStart();
+  if (action === "send-hide-answer-weapon") sendMiniWeapon("hide_answer");
+  if (action === "send-invert-tf-weapon") sendMiniWeapon("invert_true_false");
   if (action === "open-mini-games") openMiniGames();
   if (action === "close-mini-games") closeMiniGames();
   if (action === "set-mini-game-tab") setMiniGameTab(target.dataset.miniGameTab);
@@ -3012,6 +3266,7 @@ function handleAction(event) {
   if (action === "add-player-tokens") adjustMiniTokens(1);
   if (action === "remove-player-tokens") adjustMiniTokens(-1);
   if (action === "ready-fifty") readyFifty(target.dataset.challengeId);
+  if (action === "choose-trio") chooseTrio(target.dataset.challengeId, target.dataset.trioChoice);
   if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
   if (action === "accept-wager-chosen") respondWager(target.dataset.wagerId, true, "chosen");
   if (action === "decline-wager") respondWager(target.dataset.wagerId, false, "chosen");
@@ -4632,6 +4887,51 @@ function sendFiftyStart() {
   });
 }
 
+function sendTrioStart() {
+  const pot = Math.max(30, Math.floor(Number(local.liveTrioPot) || 600));
+  socket.emit("host:trio-start", { pot }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Sfida a tre non avviata");
+      return;
+    }
+    showToast("Sfida a tre avviata");
+  });
+}
+
+function sendMiniWeapon(type) {
+  const room = local.room;
+  const players = room && Array.isArray(room.players) ? room.players.filter((player) => player.connected) : [];
+  const owners = players.filter((player) => Number(player.tokens || 0) > 0);
+  const owner = owners.find((player) => player.id === local.weaponOwnerId) || owners[0];
+  if (!owner) {
+    showToast("Nessun giocatore con token");
+    return;
+  }
+  const targets = players.filter((player) => player.id !== owner.id);
+  const target = targets.find((player) => player.id === local.weaponTargetId) || targets[0];
+  const targetMode = local.weaponTargetMode === "all" ? "all" : "player";
+  if (targetMode !== "all" && !target) {
+    showToast("Scegli un bersaglio");
+    return;
+  }
+  socket.emit("host:weapon", {
+    type,
+    ownerId: owner.id,
+    targetMode,
+    targetId: target ? target.id : "",
+    answerIndex: Number(local.weaponAnswerIndex) || 0,
+    cost: Math.max(1, Math.floor(Number(local.weaponCost) || 1))
+  }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Arma non attivata");
+      return;
+    }
+    local.weaponOwnerId = owner.id;
+    if (target) local.weaponTargetId = target.id;
+    showToast("Arma attivata");
+  });
+}
+
 function openMiniGames() {
   local.miniGamesOpen = true;
   local.miniGameTab = local.miniGameTab || "wagers";
@@ -4691,6 +4991,16 @@ function sendFiftyHold(challengeId, holding) {
       return;
     }
     if (!holding) showToast("Hai lasciato cadere");
+  });
+}
+
+function chooseTrio(challengeId, choice) {
+  socket.emit("player:trio-choice", { challengeId, choice }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Scelta non registrata");
+      return;
+    }
+    showToast("Scelta registrata");
   });
 }
 
@@ -5040,6 +5350,10 @@ function updateLiveTimers() {
 
 function updateFiftyTimers() {
   if (document.querySelector(".screen-fifty-result") && local.room && !recentFiftyResult(local.room)) {
+    render();
+    return;
+  }
+  if (document.querySelector(".screen-trio-result") && local.room && !recentTrioResult(local.room)) {
     render();
     return;
   }

@@ -61,10 +61,11 @@ async function main() {
   const screen = createSocket(false);
   let player = createSocket(false);
   const decliningPlayer = createSocket(false);
+  const trioPlayer = createSocket(false);
   let extraScreen = null;
 
   try {
-    await Promise.all([waitForConnect(host), waitForConnect(screen), waitForConnect(player), waitForConnect(decliningPlayer)]);
+    await Promise.all([waitForConnect(host), waitForConnect(screen), waitForConnect(player), waitForConnect(decliningPlayer), waitForConnect(trioPlayer)]);
     host.on("room:state", (state) => {
       host.latestState = state;
     });
@@ -79,6 +80,9 @@ async function main() {
     });
     decliningPlayer.on("room:state", (state) => {
       decliningPlayer.latestState = state;
+    });
+    trioPlayer.on("room:state", (state) => {
+      trioPlayer.latestState = state;
     });
 
     const uploadedMedia = await postJson("/api/media", { file: tinyPngDataUrl, filename: "tiny.png" });
@@ -271,14 +275,36 @@ async function main() {
     });
     assert.equal(decliningJoined.ok, true);
 
+    const trioJoined = await emitAck(trioPlayer, "player:join", {
+      code: created.code,
+      nickname: "Smoke Trio"
+    });
+    assert.equal(trioJoined.ok, true);
+
     await waitForState(host, (state) =>
       state.role === "host" &&
       Array.isArray(state.players) &&
       state.players.some((item) => item.nickname === "Smoke Player") &&
       state.players.some((item) => item.nickname === "Smoke Decliner") &&
+      state.players.some((item) => item.nickname === "Smoke Trio") &&
       state.players.every((item) => item.team) &&
       Array.isArray(state.teamLeaderboard) &&
-      state.teamLeaderboard.length === 2
+      state.teamLeaderboard.length >= 2
+    );
+
+    const hideWeapon = await emitAck(host, "host:weapon", {
+      type: "hide_answer",
+      ownerId: joined.playerId,
+      targetId: decliningJoined.playerId,
+      answerIndex: 1,
+      cost: 1
+    });
+    assert.equal(hideWeapon.ok, true);
+    assert.equal(hideWeapon.weapon.type, "hide_answer");
+    await waitForState(host, (state) =>
+      state.weapons &&
+      state.weapons.active &&
+      state.weapons.active.some((item) => item.type === "hide_answer" && item.questionNumber === 1)
     );
 
     const publicPlayerEvent = waitForSocketEvent(player, "live:event");
@@ -324,6 +350,14 @@ async function main() {
       state.question.answers[0].imageUrl === uploadedMedia.url &&
       state.question.answers[0].imageLayout &&
       state.question.answers[0].imageLayout.x === 22
+    );
+    await waitForState(decliningPlayer, (state) =>
+      state.role === "player" &&
+      state.status === "question" &&
+      state.question &&
+      state.question.answers[1] &&
+      state.question.answers[1].blocked === true &&
+      state.question.answers[1].text === "Risposta oscurata"
     );
     await waitForState(screen, (state) =>
       state.role === "screen" &&
@@ -624,6 +658,50 @@ async function main() {
     assert.equal(rejoinedDecliner.ok, true);
     assert.equal(rejoinedDecliner.rejoined, true);
 
+    const trioStartedEvent = waitForSocketEvent(screen, "live:event");
+    const trioStarted = await emitAck(host, "host:trio-start", {
+      pot: 600,
+      durationMs: 8000
+    });
+    assert.equal(trioStarted.ok, true);
+    assert.equal(trioStarted.challenge.pot, 600);
+    assert.equal(trioStarted.challenge.players.length, 3);
+    assert.equal((await trioStartedEvent).title, "Lupo, agnello, cavolo");
+
+    await waitForState(player, (state) =>
+      state.trioChallenge &&
+      state.trioChallenge.id === trioStarted.challenge.id &&
+      state.trioChallenge.opponents.length === 2
+    );
+
+    const trioResultEvent = waitForSocketEvent(screen, "live:event");
+    const trioChoicePlayer = await emitAck(player, "player:trio-choice", {
+      challengeId: trioStarted.challenge.id,
+      choice: "wolf"
+    });
+    assert.equal(trioChoicePlayer.ok, true);
+    const trioChoiceDecliner = await emitAck(decliningPlayer, "player:trio-choice", {
+      challengeId: trioStarted.challenge.id,
+      choice: "sheep"
+    });
+    assert.equal(trioChoiceDecliner.ok, true);
+    const trioChoiceThird = await emitAck(trioPlayer, "player:trio-choice", {
+      challengeId: trioStarted.challenge.id,
+      choice: "cabbage"
+    });
+    assert.equal(trioChoiceThird.ok, true);
+    assert.equal((await trioResultEvent).title, "Sfida a tre risolta");
+
+    await waitForState(host, (state) =>
+      state.trio &&
+      state.trio.history &&
+      state.trio.history.some((item) =>
+        item.id === trioStarted.challenge.id &&
+        item.outcome === "all_split" &&
+        item.winners.length === 3
+      )
+    );
+
     const multiReveal = await emitAck(host, "host:reveal", {});
     assert.equal(multiReveal.ok, true);
 
@@ -680,7 +758,7 @@ async function main() {
     await waitForState(host, (state) =>
       state.status === "lobby" &&
       state.playerCount === 0 &&
-      state.pendingInviteCount === 2
+      state.pendingInviteCount === 3
     );
 
     const accepted = await emitAck(player, "player:rematch", { accept: true });
@@ -689,6 +767,10 @@ async function main() {
     const declined = await emitAck(decliningPlayer, "player:rematch", { accept: false });
     assert.equal(declined.ok, true);
     assert.equal(declined.left, true);
+
+    const trioDeclined = await emitAck(trioPlayer, "player:rematch", { accept: false });
+    assert.equal(trioDeclined.ok, true);
+    assert.equal(trioDeclined.left, true);
 
     await waitForState(host, (state) =>
       state.status === "lobby" &&
@@ -753,6 +835,7 @@ async function main() {
     screen.close();
     player.close();
     decliningPlayer.close();
+    trioPlayer.close();
     if (extraScreen) extraScreen.close();
   }
 }

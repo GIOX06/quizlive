@@ -48,6 +48,17 @@ const QUESTION_TYPE_LABELS = {
 };
 const LIVE_EVENT_TONES = new Set(["spark", "drum", "success", "alert", "secret"]);
 const LIVE_EVENT_TARGETS = new Set(["all", "players", "screen", "player"]);
+const TRIO_CHOICES = {
+  wolf: "Lupo",
+  sheep: "Agnello",
+  cabbage: "Cavolo"
+};
+const TRIO_BEATS = {
+  wolf: "sheep",
+  sheep: "cabbage",
+  cabbage: "wolf"
+};
+const WEAPON_TYPES = new Set(["hide_answer", "invert_true_false"]);
 const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const QUESTION_TYPE_ALIASES = {
   multipla: "multiple",
@@ -646,6 +657,40 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:trio-start", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const challenge = startTrioChallenge(room, payload || {});
+      const delivered = await dispatchLiveEvent(room, trioStartedLiveEvent(challenge));
+      sendAck(ack, { ok: true, delivered, challenge: serializeTrioChallenge(challenge, "host") });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("host:weapon", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const weapon = createMiniWeapon(room, payload || {});
+      const delivered = await dispatchLiveEvent(room, weaponLiveEvent(room, weapon));
+      sendAck(ack, { ok: true, delivered, weapon: serializeWeapon(weapon, room) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("host:tokens", async (payload, ack) => {
     const room = getHostRoom(socket);
     if (!room) {
@@ -656,6 +701,23 @@ io.on("connection", (socket) => {
     try {
       const player = adjustPlayerTokens(room, payload || {});
       sendAck(ack, { ok: true, player: serializePlayer(player, room) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("player:trio-choice", async (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+
+    try {
+      const result = chooseTrioSymbol(room, player, payload || {});
+      sendAck(ack, { ok: true, ...result });
       await emitRoom(room);
     } catch (error) {
       sendAck(ack, { ok: false, error: error.message });
@@ -749,6 +811,9 @@ io.on("connection", (socket) => {
     player.avatarUrl = avatarUrl;
     if (room.fifty && room.fifty.active && room.fifty.active.participants[player.id]) {
       room.fifty.active.participants[player.id].avatarUrl = avatarUrl;
+    }
+    if (room.trio && room.trio.active && room.trio.active.participants[player.id]) {
+      room.trio.active.participants[player.id].avatarUrl = avatarUrl;
     }
     sendAck(ack, { ok: true, player: serializePlayer(player, room) });
     emitRoom(room);
@@ -866,6 +931,7 @@ io.on("connection", (socket) => {
       if (player) {
         player.connected = false;
         markFiftyPlayerDisconnected(room, player.id);
+        markTrioPlayerDisconnected(room, player.id);
       }
     }
     emitRoom(room);
@@ -904,6 +970,8 @@ function createRoom(quiz, hostSocketId) {
     answers: new Map(),
     wagers: createWagerState(),
     fifty: createFiftyState(),
+    trio: createTrioState(),
+    weapons: createWeaponState(),
     timer: null,
     resultId: null,
     createdAt: Date.now()
@@ -944,6 +1012,7 @@ function startQuestion(room, index) {
   clearRoomTimer(room);
   removeInactivePlayers(room, "Invito scaduto");
   expireWagerOffersForQuestion(room, index);
+  archivePastWeapons(room, index);
   const question = room.quiz.questions[index];
   room.status = "question";
   room.currentIndex = index;
@@ -990,6 +1059,9 @@ async function resetRoom(room) {
   room.wagers = createWagerState();
   clearFiftyChallenge(room);
   room.fifty = createFiftyState();
+  clearTrioChallenge(room);
+  room.trio = createTrioState();
+  room.weapons = createWeaponState();
 
   if (invitePreviousPlayers) {
     inviteRematchPlayers(room);
@@ -1017,6 +1089,9 @@ async function updateRoomQuiz(room, quiz) {
   room.wagers = createWagerState();
   clearFiftyChallenge(room);
   room.fifty = createFiftyState();
+  clearTrioChallenge(room);
+  room.trio = createTrioState();
+  room.weapons = createWeaponState();
 
   if (invitePreviousPlayers) {
     inviteRematchPlayers(room);
@@ -1079,6 +1154,8 @@ function reattachPlayerSocket(room, player, socket, nickname) {
     }
     updateWagerPlayerId(room, previousId, socket.id);
     updateFiftyPlayerId(room, previousId, socket.id);
+    updateTrioPlayerId(room, previousId, socket.id);
+    updateWeaponPlayerId(room, previousId, socket.id);
   }
 
   player.id = socket.id;
@@ -1109,6 +1186,8 @@ function removeInactivePlayers(room, message) {
 function removePlayer(room, playerId, message) {
   cancelWagersForPlayer(room, playerId);
   cancelFiftyForPlayer(room, playerId);
+  cancelTrioForPlayer(room, playerId);
+  cancelWeaponsForPlayer(room, playerId);
   room.players.delete(playerId);
   const target = io.sockets.sockets.get(playerId);
   if (!target) return;
@@ -1183,13 +1262,16 @@ function submitAnswer(room, player, payload) {
     return { ok: false, error: "Questa slide non richiede risposta" };
   }
 
-  const answerIndexes = selectedAnswerIndexes(payload, question);
+  const answerIndexes = selectedAnswerIndexes(payload, question, room, player);
   const requiredSelections = selectionCount(question);
   if (answerIndexes.length !== requiredSelections) {
     return { ok: false, error: `Seleziona ${requiredSelections} risposte` };
   }
   if (answerIndexes.some((answerIndex) => answerIndex < 0 || answerIndex >= question.answers.length)) {
     return { ok: false, error: "Risposta non valida" };
+  }
+  if (answerIndexes.some((answerIndex) => isAnswerHiddenForPlayer(room, player.id, room.currentIndex, answerIndex))) {
+    return { ok: false, error: "Questa risposta e oscurata" };
   }
   if (Date.now() > room.questionEndsAt) {
     return { ok: false, error: "Tempo scaduto" };
@@ -1247,6 +1329,20 @@ function createWagerState() {
 function createFiftyState() {
   return {
     active: null,
+    history: []
+  };
+}
+
+function createTrioState() {
+  return {
+    active: null,
+    history: []
+  };
+}
+
+function createWeaponState() {
+  return {
+    active: [],
     history: []
   };
 }
@@ -1767,6 +1863,344 @@ function adjustPlayerTokens(room, payload) {
   return player;
 }
 
+function startTrioChallenge(room, payload) {
+  if (room.trio && room.trio.active) {
+    throw new Error("C'e gia una sfida a tre in corso");
+  }
+  const eligible = activePlayers(room).filter((player) => player.connected);
+  if (eligible.length < 3) {
+    throw new Error("Servono almeno tre giocatori collegati");
+  }
+  const selected = pickRandomPlayers(eligible, 3);
+  const now = Date.now();
+  const pot = normalizeTrioPot(payload.pot);
+  const durationMs = normalizeTrioDuration(payload.durationMs);
+  const participants = Object.fromEntries(selected.map((player) => [player.id, {
+    playerId: player.id,
+    nickname: player.nickname,
+    avatarUrl: player.avatarUrl || "",
+    choice: "",
+    chosenAt: null,
+    leftAt: null
+  }]));
+  const challenge = {
+    id: createArchiveId("trio"),
+    status: "choosing",
+    variant: "wolf_sheep_cabbage",
+    pot,
+    playerIds: selected.map((player) => player.id),
+    participants,
+    createdAt: now,
+    endsAt: now + durationMs,
+    timer: null
+  };
+  challenge.timer = setTimeout(() => {
+    finishTrioChallenge(room, "timeout");
+  }, durationMs + 80);
+  room.trio.active = challenge;
+  return challenge;
+}
+
+function chooseTrioSymbol(room, player, payload) {
+  const challenge = room.trio && room.trio.active;
+  const challengeId = normalizeShortText(payload.challengeId, 120);
+  if (!challenge || challenge.id !== challengeId) {
+    throw new Error("Sfida a tre non attiva");
+  }
+  if (challenge.status !== "choosing") {
+    return { challenge: serializePlayerTrioChallenge(room, player.id) };
+  }
+  const participant = challenge.participants[player.id];
+  if (!participant) {
+    throw new Error("Non sei in questa sfida");
+  }
+  const choice = normalizeTrioChoice(payload.choice);
+  participant.choice = choice;
+  participant.chosenAt = Date.now();
+  participant.leftAt = null;
+  if (challenge.playerIds.every((playerId) => Boolean(challenge.participants[playerId].choice))) {
+    finishTrioChallenge(room, "complete");
+  }
+  return { challenge: serializePlayerTrioChallenge(room, player.id) };
+}
+
+function finishTrioChallenge(room, reason) {
+  const result = resolveTrioChallenge(room, reason);
+  if (!result) return null;
+  dispatchLiveEvent(room, trioResultLiveEvent(result))
+    .catch((error) => console.error("Could not announce trio result:", error.message));
+  emitRoom(room)
+    .catch((error) => console.error("Could not emit trio result:", error.message));
+  return result;
+}
+
+function resolveTrioChallenge(room, reason) {
+  const challenge = room.trio && room.trio.active;
+  if (!challenge) return null;
+  clearTimeout(challenge.timer);
+  challenge.timer = null;
+
+  const choices = challenge.playerIds
+    .map((playerId) => ({ playerId, choice: challenge.participants[playerId].choice }))
+    .filter((item) => item.choice);
+  const uniqueChoices = Array.from(new Set(choices.map((item) => item.choice)));
+  let winnerIds = [];
+  let outcome = "no_choice";
+
+  if (!uniqueChoices.length) {
+    winnerIds = [];
+  } else if (uniqueChoices.length === 1 || uniqueChoices.length === 3) {
+    winnerIds = choices.map((item) => item.playerId);
+    outcome = uniqueChoices.length === 3 ? "all_split" : "draw_split";
+  } else {
+    const [first, second] = uniqueChoices;
+    const winningChoice = TRIO_BEATS[first] === second ? first : second;
+    winnerIds = choices.filter((item) => item.choice === winningChoice).map((item) => item.playerId);
+    outcome = winnerIds.length > 1 ? "team_win" : "single_win";
+  }
+
+  const prize = winnerIds.length ? Math.floor(challenge.pot / winnerIds.length) : 0;
+  const players = challenge.playerIds.map((playerId) => {
+    const participant = challenge.participants[playerId];
+    const won = winnerIds.includes(playerId);
+    const delta = won ? prize : 0;
+    if (delta) addMiniGameScore(room, playerId, delta);
+    return {
+      id: playerId,
+      nickname: participant.nickname,
+      avatarUrl: participant.avatarUrl || "",
+      choice: participant.choice || "",
+      choiceLabel: participant.choice ? TRIO_CHOICES[participant.choice] : "Nessuna scelta",
+      won,
+      left: Boolean(participant.leftAt),
+      delta,
+      score: room.players.get(playerId) ? room.players.get(playerId).score : 0
+    };
+  });
+
+  const result = {
+    id: challenge.id,
+    status: "resolved",
+    outcome,
+    reason,
+    variant: challenge.variant,
+    pot: challenge.pot,
+    winners: players.filter((player) => player.won),
+    players,
+    startedAt: challenge.createdAt,
+    resolvedAt: Date.now()
+  };
+  room.trio.active = null;
+  room.trio.history.push(result);
+  room.trio.history = room.trio.history.slice(-8);
+  return result;
+}
+
+function clearTrioChallenge(room) {
+  if (!room.trio || !room.trio.active) return;
+  clearTimeout(room.trio.active.timer);
+  room.trio.active = null;
+}
+
+function updateTrioPlayerId(room, previousId, nextId) {
+  const challenge = room.trio && room.trio.active;
+  if (!challenge || !challenge.participants[previousId]) return;
+  challenge.participants[nextId] = {
+    ...challenge.participants[previousId],
+    playerId: nextId,
+    leftAt: null
+  };
+  delete challenge.participants[previousId];
+  challenge.playerIds = challenge.playerIds.map((playerId) => playerId === previousId ? nextId : playerId);
+}
+
+function markTrioPlayerDisconnected(room, playerId) {
+  const challenge = room.trio && room.trio.active;
+  if (!challenge || !challenge.participants[playerId]) return false;
+  challenge.participants[playerId].leftAt = challenge.participants[playerId].leftAt || Date.now();
+  return true;
+}
+
+function cancelTrioForPlayer(room, playerId) {
+  const challenge = room.trio && room.trio.active;
+  if (!challenge || !challenge.participants[playerId]) return;
+  challenge.participants[playerId].leftAt = challenge.participants[playerId].leftAt || Date.now();
+  if (challenge.playerIds.filter((item) => !challenge.participants[item].leftAt).length < 2) {
+    finishTrioChallenge(room, "left");
+  }
+}
+
+function createMiniWeapon(room, payload) {
+  const type = normalizeShortText(payload.type, 40);
+  if (!WEAPON_TYPES.has(type)) {
+    throw new Error("Arma non valida");
+  }
+  const ownerId = normalizeShortText(payload.ownerId, 120);
+  const owner = ownerId ? room.players.get(ownerId) : null;
+  if (!owner || !owner.active || !owner.connected) {
+    throw new Error("Giocatore arma non disponibile");
+  }
+  const targetIds = normalizeWeaponTargets(room, payload);
+  if (!targetIds.length) {
+    throw new Error("Scegli almeno un bersaglio");
+  }
+  const cost = normalizeWeaponCost(payload.cost);
+  if (Number(owner.tokens || 0) < cost) {
+    throw new Error(`Servono ${cost} token`);
+  }
+  const questionIndex = weaponQuestionIndex(room, type);
+  if (questionIndex < 0) {
+    throw new Error(type === "invert_true_false" ? "Non c'e una domanda vero/falso disponibile" : "Non c'e una domanda disponibile");
+  }
+  const question = room.quiz.questions[questionIndex];
+  const answerIndex = type === "hide_answer" ? normalizeWeaponAnswerIndex(payload.answerIndex, question) : -1;
+
+  owner.tokens = Math.max(0, Math.round(Number(owner.tokens || 0) - cost));
+  const weapon = {
+    id: createArchiveId("weapon"),
+    type,
+    ownerId: owner.id,
+    ownerNickname: owner.nickname,
+    targetIds,
+    targetNicknames: targetIds.map((playerId) => room.players.get(playerId)).filter(Boolean).map((player) => player.nickname),
+    questionIndex,
+    questionNumber: questionIndex + 1,
+    answerIndex,
+    answerLabel: answerIndex >= 0 ? answerLetters[answerIndex] || String(answerIndex + 1) : "",
+    cost,
+    status: "active",
+    createdAt: Date.now()
+  };
+  room.weapons.active.push(weapon);
+  return weapon;
+}
+
+function normalizeWeaponTargets(room, payload) {
+  const mode = normalizeShortText(payload.targetMode, 20);
+  if (mode === "all") {
+    return activePlayers(room)
+      .filter((player) => player.active && player.connected && player.id !== normalizeShortText(payload.ownerId, 120))
+      .map((player) => player.id);
+  }
+  const targetId = normalizeShortText(payload.targetId, 120);
+  const target = targetId ? room.players.get(targetId) : null;
+  return target && target.active && target.connected ? [target.id] : [];
+}
+
+function weaponQuestionIndex(room, type) {
+  const current = room.status === "question" ? room.currentIndex : -1;
+  const accepts = (question) => question && question.type !== "slide" && (type !== "invert_true_false" || question.type === "true_false");
+  if (current >= 0 && accepts(room.quiz.questions[current])) return current;
+  const start = Math.max(0, room.currentIndex + 1);
+  for (let index = start; index < room.quiz.questions.length; index += 1) {
+    if (accepts(room.quiz.questions[index])) return index;
+  }
+  return -1;
+}
+
+function normalizeWeaponAnswerIndex(value, question) {
+  const answerIndex = Math.floor(Number(value) || 0);
+  if (!question || !Array.isArray(question.answers) || answerIndex < 0 || answerIndex >= question.answers.length) {
+    throw new Error("Risposta da oscurare non valida");
+  }
+  return answerIndex;
+}
+
+function normalizeWeaponCost(value) {
+  const cost = Math.floor(Number(value) || 1);
+  return Math.min(20, Math.max(1, cost));
+}
+
+function archivePastWeapons(room, nextQuestionIndex) {
+  if (!room.weapons || !Array.isArray(room.weapons.active)) return;
+  const stillActive = [];
+  for (const weapon of room.weapons.active) {
+    if (Number(weapon.questionIndex) >= nextQuestionIndex) {
+      stillActive.push(weapon);
+      continue;
+    }
+    room.weapons.history.push({ ...weapon, status: "used", usedAt: Date.now() });
+  }
+  room.weapons.active = stillActive;
+  room.weapons.history = room.weapons.history.slice(-12);
+}
+
+function activeWeaponsForPlayerQuestion(room, playerId, questionIndex) {
+  if (!room.weapons || !Array.isArray(room.weapons.active)) return [];
+  return room.weapons.active.filter((weapon) =>
+    weapon.status === "active" &&
+    Number(weapon.questionIndex) === Number(questionIndex) &&
+    Array.isArray(weapon.targetIds) &&
+    weapon.targetIds.includes(playerId)
+  );
+}
+
+function isAnswerHiddenForPlayer(room, playerId, questionIndex, answerIndex) {
+  return activeWeaponsForPlayerQuestion(room, playerId, questionIndex)
+    .some((weapon) => weapon.type === "hide_answer" && Number(weapon.answerIndex) === Number(answerIndex));
+}
+
+function shouldInvertTrueFalseForPlayer(room, playerId, questionIndex) {
+  const question = room.quiz.questions[questionIndex];
+  if (!question || question.type !== "true_false") return false;
+  return activeWeaponsForPlayerQuestion(room, playerId, questionIndex)
+    .some((weapon) => weapon.type === "invert_true_false");
+}
+
+function remapAnswerIndexForWeapons(room, player, question, displayIndex) {
+  if (!room || !player || room.currentIndex < 0) return displayIndex;
+  if (question.type === "true_false" && shouldInvertTrueFalseForPlayer(room, player.id, room.currentIndex)) {
+    if (Number(displayIndex) === 0) return 1;
+    if (Number(displayIndex) === 1) return 0;
+  }
+  return displayIndex;
+}
+
+function updateWeaponPlayerId(room, previousId, nextId) {
+  if (!room.weapons) return;
+  const update = (weapon) => {
+    if (weapon.ownerId === previousId) weapon.ownerId = nextId;
+    if (Array.isArray(weapon.targetIds)) {
+      weapon.targetIds = weapon.targetIds.map((playerId) => playerId === previousId ? nextId : playerId);
+    }
+  };
+  room.weapons.active.forEach(update);
+  room.weapons.history.forEach(update);
+}
+
+function cancelWeaponsForPlayer(room, playerId) {
+  if (!room.weapons || !Array.isArray(room.weapons.active)) return;
+  room.weapons.active = room.weapons.active.filter((weapon) => {
+    if (weapon.ownerId === playerId) return false;
+    weapon.targetIds = weapon.targetIds.filter((targetId) => targetId !== playerId);
+    return weapon.targetIds.length > 0;
+  });
+}
+
+function normalizeTrioPot(value) {
+  const pot = Math.floor(Number(value) || 600);
+  return Math.min(10000, Math.max(30, pot));
+}
+
+function normalizeTrioDuration(value) {
+  const duration = Math.floor(Number(value) || 45000);
+  return Math.min(120000, Math.max(5000, duration));
+}
+
+function normalizeTrioChoice(value) {
+  const choice = normalizeShortText(value, 20);
+  if (!TRIO_CHOICES[choice]) {
+    throw new Error("Scelta non valida");
+  }
+  return choice;
+}
+
+function addMiniGameScore(room, playerId, delta) {
+  const player = room.players.get(playerId);
+  if (!player || !player.active) return;
+  player.score = Math.max(0, Math.round(Number(player.score || 0) + delta));
+}
+
 function normalizeFiftyStake(value) {
   const stake = Math.floor(Number(value) || 0);
   if (!stake || stake < 1) {
@@ -1958,6 +2392,63 @@ function fiftyCancelledLiveEvent(result) {
   };
 }
 
+function trioStartedLiveEvent(challenge) {
+  const names = challenge.playerIds.map((playerId) => challenge.participants[playerId].nickname);
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "Lupo, agnello, cavolo",
+    message: `${names.join(" vs ")} entrano nella sfida segreta. Posta ${challenge.pot} punti.`,
+    tone: "drum",
+    vibrate: true,
+    vibrationPattern: defaultVibrationPattern("drum"),
+    createdAt: Date.now()
+  };
+}
+
+function trioResultLiveEvent(result) {
+  const winners = result.winners && result.winners.length
+    ? result.winners.map((player) => player.nickname).join(", ")
+    : "Nessun vincitore";
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "Sfida a tre risolta",
+    message: `${winners}: ${trioOutcomeText(result)}.`,
+    tone: result.winners && result.winners.length ? "success" : "alert",
+    vibrate: false,
+    vibrationPattern: defaultVibrationPattern(result.winners && result.winners.length ? "success" : "alert"),
+    createdAt: Date.now()
+  };
+}
+
+function trioOutcomeText(result) {
+  if (result.outcome === "all_split") return "escono tutti e tre i simboli, posta divisa";
+  if (result.outcome === "draw_split") return "pareggio, posta divisa";
+  if (result.outcome === "team_win") return "due giocatori si dividono la posta";
+  if (result.outcome === "single_win") return "un giocatore prende tutta la posta";
+  return "nessuna scelta valida";
+}
+
+function weaponLiveEvent(room, weapon) {
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: weapon.type === "hide_answer" ? "Arma: risposta oscurata" : "Arma: vero/falso invertito",
+    message: `${weapon.ownerNickname} spende ${weapon.cost} token contro ${weapon.targetNicknames.join(", ")} sulla domanda ${weapon.questionNumber}.`,
+    tone: "secret",
+    vibrate: true,
+    vibrationPattern: defaultVibrationPattern("secret"),
+    createdAt: Date.now()
+  };
+}
+
 async function emitRoom(room) {
   const sockets = await io.in(roomChannel(room.code)).fetchSockets();
   for (const target of sockets) {
@@ -2069,6 +2560,17 @@ function serializeRoom(room, socket) {
   const revealMode = room.status === "reveal" || room.status === "ended" || role === "host";
   const answerCountMode = role === "host" || room.status === "reveal" || room.status === "ended";
 
+  const serializedQuestion = question
+    ? serializeQuestionForRole(room, question, {
+      role,
+      playerId,
+      playerAnswer,
+      revealMode,
+      answerCountMode,
+      answerMap
+    })
+    : null;
+
   return {
     code: room.code,
     role,
@@ -2085,36 +2587,7 @@ function serializeRoom(room, socket) {
     currentIndex: room.currentIndex,
     questionEndsAt: room.questionEndsAt,
     player: playerId ? serializePlayer(room.players.get(playerId), room) : null,
-    question: question
-      ? {
-          type: question.type,
-          typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
-          text: question.text,
-          subtitle: question.subtitle,
-          imageUrl: question.imageUrl,
-          imageAlt: question.imageAlt,
-          imageCredit: question.imageCredit,
-          imageCreditUrl: question.imageCreditUrl,
-          imageProvider: question.imageProvider,
-          imagePageUrl: question.imagePageUrl,
-          videoUrl: question.videoUrl,
-          answers: question.answers.map((answer, index) => ({
-            text: answer,
-            imageUrl: answerImageUrl(question, index),
-            imageLayout: answerImageLayout(question, index),
-            index,
-            correct: revealMode ? correctIndexes(question).includes(index) : undefined,
-            count: answerCountMode ? countAnswers(answerMap, index) : undefined
-          })),
-          timeLimit: question.timeLimit,
-          points: question.points || 0,
-          correctIndex: revealMode ? question.correctIndex : undefined,
-          correctIndexes: revealMode ? correctIndexes(question) : undefined,
-          selectionCount: selectionCount(question),
-          answered: Boolean(playerAnswer),
-          playerAnswer: playerAnswer || null
-        }
-      : null,
+    question: serializedQuestion,
     players: role === "host" ? hostPlayers(room, answerMap) : undefined,
     leaderboard: leaderboard(room).slice(0, 10),
     teamLeaderboard: room.quiz.teamMode ? teamLeaderboard(room) : undefined,
@@ -2127,6 +2600,12 @@ function serializeRoom(room, socket) {
     fiftyChallenge: role === "player" ? serializePlayerFiftyChallenge(room, playerId) : undefined,
     activeFifty: serializePublicActiveFifty(room),
     fiftyHistory: serializePublicFiftyHistory(room),
+    trio: role === "host" ? serializeHostTrio(room) : undefined,
+    trioChallenge: role === "player" ? serializePlayerTrioChallenge(room, playerId) : undefined,
+    activeTrio: serializePublicActiveTrio(room),
+    trioHistory: serializePublicTrioHistory(room),
+    weapons: role === "host" ? serializeHostWeapons(room) : undefined,
+    playerWeapons: role === "player" ? serializePlayerWeapons(room, playerId) : undefined,
     answerCount: answerMap.size,
     playerCount: activePlayers(room).length,
     pendingInviteCount: role === "host" ? pendingInviteCount(room) : undefined,
@@ -2137,6 +2616,89 @@ function serializeRoom(room, socket) {
           xlsx: `/api/rooms/${room.code}/export/results.xlsx`
         }
       : undefined
+  };
+}
+
+function serializeQuestionForRole(room, question, options) {
+  const role = options.role;
+  const playerId = options.playerId;
+  const questionIndex = room.currentIndex;
+  const answerMap = options.answerMap || new Map();
+  const revealMode = Boolean(options.revealMode);
+  const answerCountMode = Boolean(options.answerCountMode);
+  const playerAnswer = options.playerAnswer || null;
+  const transforms = role === "player" && playerId
+    ? activeWeaponsForPlayerQuestion(room, playerId, questionIndex)
+    : [];
+  const invert = transforms.some((weapon) => weapon.type === "invert_true_false") && question.type === "true_false";
+  const hiddenIndexes = new Set(transforms
+    .filter((weapon) => weapon.type === "hide_answer")
+    .map((weapon) => Number(weapon.answerIndex)));
+
+  let answers = question.answers.map((answer, originalIndex) => serializeAnswerForQuestion(question, answerMap, originalIndex, originalIndex, {
+    revealMode,
+    answerCountMode,
+    hidden: hiddenIndexes.has(originalIndex)
+  }));
+
+  if (invert && answers.length >= 2) {
+    answers = [answers[1], answers[0]].map((answer, displayIndex) => ({
+      ...answer,
+      index: displayIndex,
+      displayIndex,
+      originalIndex: answer.originalIndex
+    }));
+  }
+  const serializedPlayerAnswer = playerAnswer && invert ? remapPlayerAnswerForInvertedDisplay(playerAnswer) : playerAnswer;
+
+  return {
+    type: question.type,
+    typeLabel: QUESTION_TYPE_LABELS[question.type] || QUESTION_TYPE_LABELS.multiple,
+    text: question.text,
+    subtitle: question.subtitle,
+    imageUrl: question.imageUrl,
+    imageAlt: question.imageAlt,
+    imageCredit: question.imageCredit,
+    imageCreditUrl: question.imageCreditUrl,
+    imageProvider: question.imageProvider,
+    imagePageUrl: question.imagePageUrl,
+    videoUrl: question.videoUrl,
+    answers,
+    timeLimit: question.timeLimit,
+    points: question.points || 0,
+    correctIndex: revealMode ? question.correctIndex : undefined,
+    correctIndexes: revealMode ? correctIndexes(question) : undefined,
+    selectionCount: selectionCount(question),
+    answered: Boolean(serializedPlayerAnswer),
+    playerAnswer: serializedPlayerAnswer || null,
+    weapons: transforms.length ? transforms.map((weapon) => serializeWeapon(weapon, room, true)) : undefined
+  };
+}
+
+function serializeAnswerForQuestion(question, answerMap, originalIndex, displayIndex, options) {
+  const hidden = Boolean(options.hidden);
+  return {
+    text: hidden ? "Risposta oscurata" : question.answers[originalIndex],
+    imageUrl: hidden ? "" : answerImageUrl(question, originalIndex),
+    imageLayout: hidden ? {} : answerImageLayout(question, originalIndex),
+    index: displayIndex,
+    displayIndex,
+    originalIndex,
+    blocked: hidden,
+    correct: options.revealMode ? correctIndexes(question).includes(originalIndex) : undefined,
+    count: options.answerCountMode ? countAnswers(answerMap, originalIndex) : undefined
+  };
+}
+
+function remapPlayerAnswerForInvertedDisplay(playerAnswer) {
+  const remap = (value) => Number(value) === 0 ? 1 : Number(value) === 1 ? 0 : value;
+  const answerIndexes = Array.isArray(playerAnswer.answerIndexes)
+    ? playerAnswer.answerIndexes.map(remap)
+    : [remap(playerAnswer.answerIndex)];
+  return {
+    ...playerAnswer,
+    answerIndex: answerIndexes[0],
+    answerIndexes
   };
 }
 
@@ -2161,6 +2723,24 @@ function serializeHostFifty(room) {
   return {
     active: serializeFiftyChallenge(room.fifty && room.fifty.active),
     history: serializePublicFiftyHistory(room)
+  };
+}
+
+function serializeHostTrio(room) {
+  return {
+    active: serializeTrioChallenge(room.trio && room.trio.active, "host"),
+    history: serializePublicTrioHistory(room)
+  };
+}
+
+function serializeHostWeapons(room) {
+  return {
+    active: room.weapons && Array.isArray(room.weapons.active)
+      ? room.weapons.active.map((weapon) => serializeWeapon(weapon, room))
+      : [],
+    history: room.weapons && Array.isArray(room.weapons.history)
+      ? room.weapons.history.slice(-8).reverse().map((weapon) => serializeWeapon(weapon, room))
+      : []
   };
 }
 
@@ -2305,6 +2885,107 @@ function serializePublicFiftyHistory(room) {
     : [];
 }
 
+function serializeTrioChallenge(challenge, role = "public") {
+  if (!challenge) return null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    variant: challenge.variant,
+    pot: challenge.pot,
+    players: challenge.playerIds.map((playerId) => {
+      const participant = challenge.participants[playerId];
+      return {
+        id: playerId,
+        nickname: participant.nickname,
+        avatarUrl: participant.avatarUrl || "",
+        chosen: Boolean(participant.choice),
+        choice: role === "host" ? participant.choice : "",
+        choiceLabel: role === "host" && participant.choice ? TRIO_CHOICES[participant.choice] : "",
+        left: Boolean(participant.leftAt)
+      };
+    }),
+    createdAt: challenge.createdAt,
+    endsAt: challenge.endsAt
+  };
+}
+
+function serializePlayerTrioChallenge(room, playerId) {
+  if (!playerId || !room.trio || !room.trio.active) return null;
+  const challenge = room.trio.active;
+  const participant = challenge.participants[playerId];
+  if (!participant) return null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    variant: challenge.variant,
+    pot: challenge.pot,
+    choice: participant.choice || "",
+    choiceLabel: participant.choice ? TRIO_CHOICES[participant.choice] : "",
+    opponents: challenge.playerIds
+      .filter((item) => item !== playerId)
+      .map((item) => ({
+        id: item,
+        nickname: challenge.participants[item].nickname,
+        avatarUrl: challenge.participants[item].avatarUrl || "",
+        chosen: Boolean(challenge.participants[item].choice)
+      })),
+    createdAt: challenge.createdAt,
+    endsAt: challenge.endsAt
+  };
+}
+
+function serializeTrioResult(result) {
+  return {
+    id: result.id,
+    status: result.status,
+    outcome: result.outcome,
+    reason: result.reason,
+    variant: result.variant,
+    pot: result.pot,
+    winners: result.winners,
+    players: result.players,
+    resolvedAt: result.resolvedAt
+  };
+}
+
+function serializePublicActiveTrio(room) {
+  return serializeTrioChallenge(room.trio && room.trio.active, "public");
+}
+
+function serializePublicTrioHistory(room) {
+  return room.trio && room.trio.history
+    ? room.trio.history.slice(-5).reverse().map(serializeTrioResult)
+    : [];
+}
+
+function serializeWeapon(weapon, room, privateView = false) {
+  if (!weapon) return null;
+  const typeLabel = weapon.type === "hide_answer" ? "Oscura risposta" : "Vero/Falso invertito";
+  return {
+    id: weapon.id,
+    type: weapon.type,
+    typeLabel,
+    ownerId: weapon.ownerId,
+    ownerNickname: weapon.ownerNickname,
+    targetIds: privateView ? undefined : weapon.targetIds,
+    targetNicknames: weapon.targetNicknames,
+    questionIndex: weapon.questionIndex,
+    questionNumber: weapon.questionNumber,
+    answerIndex: weapon.answerIndex,
+    answerLabel: weapon.answerLabel,
+    cost: weapon.cost,
+    status: weapon.status,
+    createdAt: weapon.createdAt
+  };
+}
+
+function serializePlayerWeapons(room, playerId) {
+  if (!playerId || !room.weapons || !Array.isArray(room.weapons.active)) return [];
+  return room.weapons.active
+    .filter((weapon) => Array.isArray(weapon.targetIds) && weapon.targetIds.includes(playerId))
+    .map((weapon) => serializeWeapon(weapon, room, true));
+}
+
 function serializePlayer(player, room) {
   if (!player) return null;
   const board = leaderboard(room);
@@ -2390,10 +3071,12 @@ function countAnswers(answerMap, answerIndex) {
   return total;
 }
 
-function selectedAnswerIndexes(payload, question) {
+function selectedAnswerIndexes(payload, question, room = null, player = null) {
   const raw = question.type === "multiple_select" ? payload.answerIndexes : [payload.answerIndex];
   const source = Array.isArray(raw) ? raw : [raw];
-  return uniqueAnswerIndexes(source);
+  const displayIndexes = uniqueAnswerIndexes(source);
+  if (!room || !player) return displayIndexes;
+  return uniqueAnswerIndexes(displayIndexes.map((answerIndex) => remapAnswerIndexForWeapons(room, player, question, answerIndex)));
 }
 
 function uniqueAnswerIndexes(values) {

@@ -1807,6 +1807,13 @@ textarea {
   align-items: center;
 }
 
+.mini-weapon-controls {
+  display: grid;
+  grid-template-columns: minmax(9rem, 1.2fr) minmax(8rem, 0.8fr) minmax(9rem, 1fr) 5.5rem;
+  gap: 0.55rem;
+  align-items: center;
+}
+
 .media-dialog {
   width: min(100%, 52rem);
 }
@@ -2390,6 +2397,99 @@ textarea {
   background: linear-gradient(145deg, #44c4a1, #dffbf3);
   transform-origin: left center;
   animation: handshake-right 900ms ease-in-out infinite;
+}
+
+.screen-trio-show {
+  min-height: calc(100vh - 7rem);
+  display: grid;
+  align-content: center;
+  gap: clamp(1rem, 2vw, 1.5rem);
+  overflow: hidden;
+}
+
+.screen-trio-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(0.8rem, 1.8vw, 1.2rem);
+}
+
+.screen-trio-player {
+  min-height: 18rem;
+  display: grid;
+  place-items: center;
+  gap: 0.7rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 139, 45, 0.28);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(255, 139, 45, 0.2), transparent 42%),
+    rgba(255, 255, 255, 0.07);
+  text-align: center;
+}
+
+.screen-trio-player.ready,
+.screen-trio-player.winner {
+  border-color: rgba(52, 168, 135, 0.78);
+  box-shadow: 0 0 0 0.25rem rgba(52, 168, 135, 0.14);
+}
+
+.screen-trio-player strong {
+  font-size: clamp(1.2rem, 2vw, 1.8rem);
+}
+
+.screen-trio-player em {
+  color: var(--gold);
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
+  font-style: normal;
+  font-weight: 950;
+}
+
+.trio-symbol-strip,
+.trio-opponents,
+.trio-choice-grid {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.trio-symbol-strip {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trio-symbol-strip span,
+.trio-opponents > div {
+  min-height: 3rem;
+  display: grid;
+  place-items: center;
+  padding: 0.65rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--stage-ink, #fff);
+  font-weight: 850;
+  text-align: center;
+}
+
+.trio-opponents {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.trio-opponents > div {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  place-items: center stretch;
+  text-align: left;
+}
+
+.trio-choice-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trio-choice {
+  min-height: 7rem;
+  font-size: clamp(1.1rem, 4vw, 1.55rem);
+}
+
+.trio-choice.selected {
+  background: var(--gold);
+  color: var(--ink);
 }
 
 @keyframes puppet-bob {
@@ -3142,6 +3242,13 @@ textarea {
   background: var(--green);
 }
 
+.answer-btn.blocked {
+  cursor: not-allowed;
+  filter: grayscale(0.35);
+  opacity: 0.62;
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.32);
+}
+
 .stat-bar {
   grid-column: 1 / -1;
   height: 0.65rem;
@@ -3867,6 +3974,10 @@ textarea {
     overflow: hidden;
   }
 
+  .shell-player .answers-grid {
+    grid-template-columns: 1fr;
+  }
+
   .shell-player .question-main {
     padding: 0.65rem;
   }
@@ -3974,14 +4085,16 @@ textarea {
   }
 
   .shell-player .live-wager-offer,
-  .shell-player .live-fifty-challenge {
+  .shell-player .live-fifty-challenge,
+  .shell-player .live-trio-challenge {
     height: 100%;
     align-content: stretch;
     overflow: hidden;
   }
 
   .shell-player .live-fifty-challenge .section-title,
-  .shell-player .live-wager-offer .section-title {
+  .shell-player .live-wager-offer .section-title,
+  .shell-player .live-trio-challenge .section-title {
     font-size: clamp(1.2rem, 6vw, 1.6rem);
   }
 
@@ -4002,8 +4115,20 @@ textarea {
 
   .live-event-grid,
   .live-target-row,
-  .live-wager-actions {
+  .live-wager-actions,
+  .mini-weapon-controls,
+  .trio-choice-grid,
+  .trio-symbol-strip,
+  .screen-trio-grid {
     grid-template-columns: 1fr;
+  }
+
+  .trio-opponents {
+    grid-template-columns: 1fr;
+  }
+
+  .trio-choice {
+    min-height: 4.8rem;
   }
 
   .live-event-overlay {
