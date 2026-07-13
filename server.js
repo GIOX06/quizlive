@@ -741,6 +741,23 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:clandestina-start", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const challenge = startClandestina(room, payload || {});
+      const delivered = await dispatchLiveEvent(room, clandestinaStartedLiveEvent(challenge));
+      sendAck(ack, { ok: true, delivered, clandestina: serializeClandestina(room, "host") });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("player:weapon", async (payload, ack) => {
     const room = getPlayerRoom(socket);
     const player = room && room.players.get(socket.data.playerId);
@@ -753,6 +770,23 @@ io.on("connection", (socket) => {
       const weapon = createMiniWeapon(room, { ...(payload || {}), ownerId: player.id });
       const delivered = await dispatchLiveEvent(room, weaponLiveEvent(room, weapon));
       sendAck(ack, { ok: true, delivered, weapon: serializeWeapon(weapon, room, true) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("player:clandestina-bet", async (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+
+    try {
+      const result = placeClandestinaBet(room, player, payload || {});
+      sendAck(ack, { ok: true, bet: result.bet, clandestina: serializeClandestina(room, "player", player.id) });
       await emitRoom(room);
     } catch (error) {
       sendAck(ack, { ok: false, error: error.message });
@@ -1057,6 +1091,7 @@ function createRoom(quiz, hostSocketId) {
     players: new Map(),
     answers: new Map(),
     wagers: createWagerState(),
+    clandestina: createClandestinaState(),
     fifty: createFiftyState(),
     trio: createTrioState(),
     tap: createTapState(),
@@ -1117,6 +1152,7 @@ function revealQuestion(room) {
   if (!room || room.status !== "question") return;
   clearRoomTimer(room);
   resolveUnansweredWagersForQuestion(room, room.currentIndex);
+  resolveClandestinaBetsForQuestion(room, room.currentIndex);
   room.status = "reveal";
   room.questionEndsAt = null;
   emitRoom(room);
@@ -1147,6 +1183,8 @@ async function resetRoom(room) {
   room.resultId = null;
   room.answers.clear();
   room.wagers = createWagerState();
+  clearClandestinaTimer(room);
+  room.clandestina = createClandestinaState();
   clearFiftyChallenge(room);
   room.fifty = createFiftyState();
   clearTrioChallenge(room);
@@ -1181,6 +1219,8 @@ async function updateRoomQuiz(room, quiz) {
   room.resultId = null;
   room.answers.clear();
   room.wagers = createWagerState();
+  clearClandestinaTimer(room);
+  room.clandestina = createClandestinaState();
   clearFiftyChallenge(room);
   room.fifty = createFiftyState();
   clearTrioChallenge(room);
@@ -1251,6 +1291,7 @@ function reattachPlayerSocket(room, player, socket, nickname) {
       answerMap.delete(previousId);
     }
     updateWagerPlayerId(room, previousId, socket.id);
+    updateClandestinaPlayerId(room, previousId, socket.id);
     updateFiftyPlayerId(room, previousId, socket.id);
     updateTrioPlayerId(room, previousId, socket.id);
     updateTapPlayerId(room, previousId, socket.id);
@@ -1290,6 +1331,7 @@ function removeInactivePlayers(room, message) {
 
 function removePlayer(room, playerId, message) {
   cancelWagersForPlayer(room, playerId);
+  cancelClandestinaForPlayer(room, playerId);
   cancelFiftyForPlayer(room, playerId);
   cancelTrioForPlayer(room, playerId);
   markTapPlayerDisconnected(room, playerId);
@@ -1432,6 +1474,18 @@ function createWagerState() {
     offers: new Map(),
     active: new Map(),
     history: []
+  };
+}
+
+function createClandestinaState() {
+  return {
+    active: false,
+    mode: "random",
+    startedAt: null,
+    endsAt: null,
+    bets: [],
+    history: [],
+    timer: null
   };
 }
 
@@ -1598,6 +1652,19 @@ function eligibleWagerTargets(room, bettorId) {
     .sort((a, b) => a.nickname.localeCompare(b.nickname));
 }
 
+function eligibleClandestinaTargets(room, bettorId) {
+  return activePlayers(room)
+    .filter((player) => player.id !== bettorId && player.connected)
+    .map((player) => ({
+      id: player.id,
+      nickname: player.nickname,
+      score: player.score,
+      tokens: Number(player.tokens || 0),
+      avatarUrl: player.avatarUrl || ""
+    }))
+    .sort((a, b) => a.nickname.localeCompare(b.nickname));
+}
+
 function expireWagerOffersForQuestion(room, questionIndex) {
   for (const offer of Array.from(room.wagers.offers.values())) {
     if (offer.questionIndex > questionIndex) continue;
@@ -1657,6 +1724,168 @@ function resolveWager(room, wager, correct, reason) {
   dispatchLiveEvent(room, wagerResultLiveEvent(result))
     .catch((error) => console.error("Could not announce wager result:", error.message));
   return result;
+}
+
+function startClandestina(room, payload) {
+  if (room.clandestina && room.clandestina.active) {
+    throw new Error("C'e gia una Scommessa Clandestina in corso");
+  }
+  const players = activePlayers(room).filter((player) => player.connected);
+  if (players.length < 2) {
+    throw new Error("Servono almeno due giocatori collegati");
+  }
+  if (nextAnswerQuestionIndex(room) < 0) {
+    throw new Error("Non ci sono altre domande su cui scommettere");
+  }
+  const now = Date.now();
+  const durationMs = normalizeTimedMiniGameDuration(payload.durationMs, 15000, 5000, 30000);
+  const state = createClandestinaState();
+  state.active = true;
+  state.mode = payload.mode === "all" ? "all" : "random";
+  state.startedAt = now;
+  state.endsAt = now + durationMs;
+  state.durationMs = durationMs;
+  state.timer = setTimeout(() => finishClandestinaBetting(room, "timer"), durationMs + 80);
+  room.clandestina = state;
+  return state;
+}
+
+function placeClandestinaBet(room, player, payload) {
+  const state = room.clandestina || createClandestinaState();
+  if (!state.active) {
+    throw new Error("Nessuna Scommessa Clandestina attiva");
+  }
+  if (!player.active || !player.connected) {
+    throw new Error("Non sei in questa partita");
+  }
+  if (state.bets.some((bet) => bet.bettorId === player.id)) {
+    throw new Error("Hai gia piazzato una scommessa");
+  }
+  if (Number(player.tokens || 0) <= 0) {
+    throw new Error("Non hai token da scommettere");
+  }
+  const targetId = normalizeShortText(payload.targetId, 120);
+  const target = targetId ? room.players.get(targetId) : null;
+  if (!target || !target.active || !target.connected || target.id === player.id) {
+    throw new Error("Scegli un avversario valido");
+  }
+  const questionIndex = nextAnswerQuestionIndex(room);
+  if (questionIndex < 0) {
+    throw new Error("Non ci sono altre domande su cui scommettere");
+  }
+  const stake = normalizeWagerStake(payload.stake, player.tokens);
+  const bet = {
+    id: createArchiveId("clandestina"),
+    bettorId: player.id,
+    bettorNickname: player.nickname,
+    targetId: target.id,
+    targetNickname: target.nickname,
+    stake,
+    multiplier: 2,
+    questionIndex,
+    questionNumber: questionIndex + 1,
+    mode: "chosen",
+    createdAt: Date.now()
+  };
+  state.bets.push(bet);
+  return { bet };
+}
+
+function finishClandestinaBetting(room, reason) {
+  const state = room.clandestina;
+  if (!state || !state.active) return null;
+  clearClandestinaTimer(room);
+  state.active = false;
+  state.closedAt = Date.now();
+  state.closeReason = reason;
+  if (state.mode === "random") {
+    const players = activePlayers(room).filter((player) => player.connected && Number(player.tokens || 0) > 0);
+    const questionIndex = nextAnswerQuestionIndex(room);
+    if (questionIndex >= 0) {
+      for (const player of players) {
+        if (state.bets.some((bet) => bet.bettorId === player.id)) continue;
+        const targets = players.filter((target) => target.id !== player.id);
+        if (!targets.length) continue;
+        const target = targets[Math.floor(Math.random() * targets.length)];
+        const stake = Math.min(1, Math.max(1, Number(player.tokens || 0)));
+        state.bets.push({
+          id: createArchiveId("clandestina"),
+          bettorId: player.id,
+          bettorNickname: player.nickname,
+          targetId: target.id,
+          targetNickname: target.nickname,
+          stake,
+          multiplier: 3,
+          questionIndex,
+          questionNumber: questionIndex + 1,
+          mode: "random",
+          createdAt: Date.now()
+        });
+      }
+    }
+  }
+  emitRoom(room).catch((error) => console.error("Could not emit clandestina close:", error.message));
+  return state;
+}
+
+function resolveClandestinaBetsForQuestion(room, questionIndex) {
+  const state = room.clandestina;
+  if (!state || !Array.isArray(state.bets) || !state.bets.length) return [];
+  const answerMap = room.answers.get(questionIndex) || new Map();
+  const results = [];
+  const remaining = [];
+  for (const bet of state.bets) {
+    if (bet.questionIndex !== questionIndex) {
+      remaining.push(bet);
+      continue;
+    }
+    const targetAnswer = answerMap.get(bet.targetId);
+    const correct = Boolean(targetAnswer && targetAnswer.correct);
+    const delta = correct ? bet.stake * bet.multiplier : -bet.stake;
+    const bettor = room.players.get(bet.bettorId);
+    if (bettor && bettor.active) {
+      bettor.tokens = Math.min(999, Math.max(0, Math.round(Number(bettor.tokens || 0) + delta)));
+    }
+    results.push({
+      ...bet,
+      status: correct ? "won" : "lost",
+      correct,
+      delta,
+      tokenDelta: delta,
+      resolvedAt: Date.now()
+    });
+  }
+  state.bets = remaining;
+  state.active = false;
+  clearClandestinaTimer(room);
+  if (results.length) {
+    state.history.push(...results);
+    state.history = state.history.slice(-12);
+    dispatchLiveEvent(room, clandestinaResultLiveEvent(results))
+      .catch((error) => console.error("Could not announce clandestina result:", error.message));
+  }
+  return results;
+}
+
+function clearClandestinaTimer(room) {
+  if (!room || !room.clandestina || !room.clandestina.timer) return;
+  clearTimeout(room.clandestina.timer);
+  room.clandestina.timer = null;
+}
+
+function updateClandestinaPlayerId(room, previousId, nextId) {
+  const state = room.clandestina;
+  if (!state) return;
+  for (const bet of [...(state.bets || []), ...(state.history || [])]) {
+    if (bet.bettorId === previousId) bet.bettorId = nextId;
+    if (bet.targetId === previousId) bet.targetId = nextId;
+  }
+}
+
+function cancelClandestinaForPlayer(room, playerId) {
+  const state = room.clandestina;
+  if (!state) return;
+  state.bets = (state.bets || []).filter((bet) => bet.bettorId !== playerId && bet.targetId !== playerId);
 }
 
 function updateWagerPlayerId(room, previousId, nextId) {
@@ -1725,6 +1954,41 @@ function wagerResultLiveEvent(result) {
     tone: won ? "success" : "alert",
     vibrate: false,
     vibrationPattern: defaultVibrationPattern(won ? "success" : "alert"),
+    createdAt: Date.now()
+  };
+}
+
+function clandestinaStartedLiveEvent(state) {
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "players",
+    private: false,
+    title: "Scommessa Clandestina",
+    message: state.mode === "all"
+      ? "Tutti possono puntare token sulla prossima risposta."
+      : "Piazza una puntata o lascia scegliere il caso: premio x3.",
+    tone: "secret",
+    vibrate: true,
+    vibrationPattern: defaultVibrationPattern("secret"),
+    createdAt: Date.now()
+  };
+}
+
+function clandestinaResultLiveEvent(results) {
+  const winners = results.filter((item) => item.status === "won");
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "Scommessa Clandestina risolta",
+    message: winners.length
+      ? winners.map((item) => `${item.bettorNickname} +${item.tokenDelta} token`).join(", ")
+      : "Nessuna puntata clandestina vinta.",
+    tone: winners.length ? "success" : "alert",
+    vibrate: false,
+    vibrationPattern: defaultVibrationPattern(winners.length ? "success" : "alert"),
     createdAt: Date.now()
   };
 }
@@ -3091,6 +3355,7 @@ function serializeRoom(room, socket) {
     wagerOffer: role === "player" ? serializePlayerWagerOffer(room, playerId) : undefined,
     activeWagers: serializePublicActiveWagers(room),
     wagerHistory: serializePublicWagerHistory(room),
+    clandestina: serializeClandestina(room, role, playerId),
     fifty: role === "host" ? serializeHostFifty(room) : undefined,
     fiftyChallenge: role === "player" ? serializePlayerFiftyChallenge(room, playerId) : undefined,
     activeFifty: serializePublicActiveFifty(room),
@@ -3221,6 +3486,62 @@ function serializeHostWagers(room) {
     offers: Array.from(room.wagers.offers.values()).map((offer) => serializeWagerOffer(offer, room)),
     active: Array.from(room.wagers.active.values()).map(serializeActiveWager),
     history: serializePublicWagerHistory(room)
+  };
+}
+
+function serializeClandestina(room, role, playerId = "") {
+  const state = room.clandestina || createClandestinaState();
+  const bets = Array.isArray(state.bets) ? state.bets : [];
+  const history = Array.isArray(state.history) ? state.history : [];
+  const publicState = {
+    active: Boolean(state.active),
+    mode: state.mode || "random",
+    startedAt: state.startedAt,
+    endsAt: state.endsAt,
+    durationMs: state.durationMs || 15000,
+    betCount: bets.length,
+    history: history.slice(-6).reverse().map(serializeClandestinaResult)
+  };
+  if (role === "host") {
+    return {
+      ...publicState,
+      bets: bets.map(serializeClandestinaBet)
+    };
+  }
+  if (role === "player" && playerId) {
+    return {
+      ...publicState,
+      myBet: bets.find((bet) => bet.bettorId === playerId) ? serializeClandestinaBet(bets.find((bet) => bet.bettorId === playerId)) : null,
+      eligibleTargets: eligibleClandestinaTargets(room, playerId)
+    };
+  }
+  return publicState;
+}
+
+function serializeClandestinaBet(bet) {
+  return {
+    id: bet.id,
+    bettorId: bet.bettorId,
+    bettorNickname: bet.bettorNickname,
+    targetId: bet.targetId,
+    targetNickname: bet.targetNickname,
+    stake: bet.stake,
+    multiplier: bet.multiplier,
+    mode: bet.mode,
+    questionIndex: bet.questionIndex,
+    questionNumber: bet.questionNumber || bet.questionIndex + 1,
+    createdAt: bet.createdAt
+  };
+}
+
+function serializeClandestinaResult(result) {
+  return {
+    ...serializeClandestinaBet(result),
+    status: result.status,
+    correct: Boolean(result.correct),
+    delta: result.delta,
+    tokenDelta: result.tokenDelta,
+    resolvedAt: result.resolvedAt
   };
 }
 
@@ -3711,6 +4032,16 @@ function gameTimeline(room) {
       at: wager.resolvedAt
     });
   }
+  for (const item of (room.clandestina && room.clandestina.history) || []) {
+    push({
+      type: "clandestina",
+      title: item.status === "won" ? "Scommessa clandestina vinta" : "Scommessa clandestina persa",
+      text: item.status === "won"
+        ? `${item.bettorNickname} ha puntato su ${item.targetNickname} e vince ${Math.abs(Number(item.tokenDelta || 0))} token.`
+        : `${item.bettorNickname} ha puntato su ${item.targetNickname} e perde ${Math.abs(Number(item.tokenDelta || 0))} token.`,
+      at: item.resolvedAt
+    });
+  }
   for (const item of room.fifty.history || []) {
     push({
       type: "fifty",
@@ -4169,6 +4500,7 @@ function resultFromRoom(room) {
     cleanLeaderboard: cleanLeaderboard(room).map((player, index) => ({ ...player, rank: index + 1 })),
     timeline: gameTimeline(room),
     wagers: serializeHostWagers(room),
+    clandestina: serializeClandestina(room, "host"),
     fifty: serializeHostFifty(room),
     trio: serializeHostTrio(room),
     tap: serializeHostTap(room),

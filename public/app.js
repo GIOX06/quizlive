@@ -8,6 +8,7 @@ const answerLetters = ["A", "B", "C", "D", "E", "F"];
 const answerClasses = ["answer-a", "answer-b", "answer-c", "answer-d", "answer-e", "answer-f"];
 const liveGameAssets = {
   wagers: "/assets/live-games/scommessa-clandestina.png",
+  clandestina: "/assets/live-games/scommessa-clandestina.png",
   fifty: "/assets/live-games/cinquanta-cinquanta.png",
   trio: "/assets/live-games/lupo-agnello-cavolo.png",
   tap: "/assets/live-games/scommessa-clandestina.png",
@@ -82,6 +83,8 @@ let local = {
   miniGameTab: "wagers",
   miniTokenPlayerId: "",
   miniTokenAmount: 1,
+  clandestinaStake: 1,
+  clandestinaTargetId: "",
   playerWeaponOpen: false,
   playerWeaponType: "hide_answer",
   playerWeaponTargetId: "",
@@ -189,7 +192,7 @@ window.addEventListener("hashchange", () => {
 setInterval(() => {
   if (!local.room) return;
   if (local.room.status === "question") updateLiveTimers();
-  if (local.room.fiftyChallenge || local.room.tapChallenge || local.room.balanceChallenge || local.room.activeFifty || local.room.activeTap || local.room.activeBalance || recentFiftyResult(local.room) || recentTrioResult(local.room) || recentTapResult(local.room) || recentBalanceResult(local.room) || document.querySelector(".screen-fifty-result") || document.querySelector(".screen-trio-result")) updateFiftyTimers();
+  if (local.room.fiftyChallenge || local.room.tapChallenge || local.room.balanceChallenge || (local.room.clandestina && local.room.clandestina.active) || local.room.activeFifty || local.room.activeTap || local.room.activeBalance || recentFiftyResult(local.room) || recentTrioResult(local.room) || recentTapResult(local.room) || recentBalanceResult(local.room) || document.querySelector(".screen-fifty-result") || document.querySelector(".screen-trio-result")) updateFiftyTimers();
 }, 250);
 
 window.addEventListener("keydown", handleBuilderKeyboard);
@@ -2047,9 +2050,54 @@ function renderPlayerGame(room) {
 function renderPlayerMiniGame(room) {
   return renderPlayerTapChallenge(room) ||
     renderPlayerBalanceChallenge(room) ||
+    renderPlayerClandestinaBet(room) ||
     renderPlayerFiftyChallenge(room) ||
     renderPlayerTrioChallenge(room) ||
     renderPlayerWagerOffer(room);
+}
+
+function renderPlayerClandestinaBet(room) {
+  const clandestina = room.clandestina;
+  if (!clandestina || !clandestina.active) return "";
+  const playerTokens = Number(room.player && room.player.tokens || 0);
+  const myBet = clandestina.myBet;
+  const targets = Array.isArray(clandestina.eligibleTargets) ? clandestina.eligibleTargets : [];
+  const selectedTarget = local.clandestinaTargetId && targets.some((target) => target.id === local.clandestinaTargetId)
+    ? local.clandestinaTargetId
+    : targets[0] && targets[0].id;
+  if (selectedTarget && selectedTarget !== local.clandestinaTargetId) local.clandestinaTargetId = selectedTarget;
+  const maxStake = Math.max(1, playerTokens);
+  const stake = Math.min(maxStake, Math.max(1, Math.floor(Number(local.clandestinaStake) || 1)));
+  if (myBet) {
+    return `
+      <section class="panel player-mini-game live-clandestina-challenge stack">
+        <div>
+          <p class="screen-kicker">Scommessa Clandestina</p>
+          <h2 class="section-title">Puntata piazzata</h2>
+          <p class="subtle">Hai puntato ${Number(myBet.stake || 0)} token su ${escapeHtml(myBet.targetNickname || "un avversario")}. Guarda il monitor: il risultato arriva al reveal.</p>
+        </div>
+        <div class="tap-countdown" data-mini-countdown data-ends-at="${Number(clandestina.endsAt || 0)}">${miniCountdownLabel(clandestina.endsAt)}</div>
+      </section>
+    `;
+  }
+  return `
+    <section class="panel player-mini-game live-clandestina-challenge stack">
+      <div>
+        <p class="screen-kicker">Scommessa Clandestina</p>
+        <h2 class="section-title">Punta sulla prossima risposta</h2>
+        <p class="subtle">Scegli un avversario: se risponde giusto vinci token, se sbaglia perdi la puntata.</p>
+      </div>
+      <div class="tap-countdown" data-mini-countdown data-ends-at="${Number(clandestina.endsAt || 0)}">${miniCountdownLabel(clandestina.endsAt)}</div>
+      <div class="live-target-row">
+        <select data-clandestina-target aria-label="Bersaglio scommessa clandestina" ${targets.length && playerTokens > 0 ? "" : "disabled"}>
+          ${targets.length ? targets.map((target) => `<option value="${escapeAttr(target.id)}" ${target.id === selectedTarget ? "selected" : ""}>${escapeHtml(target.nickname)}</option>`).join("") : `<option value="">Nessun avversario</option>`}
+        </select>
+        <input data-clandestina-stake type="number" min="1" max="${maxStake}" value="${stake}" aria-label="Token da puntare" ${playerTokens > 0 ? "" : "disabled"} />
+      </div>
+      <button class="btn gold" data-action="place-clandestina-bet" ${selectedTarget && playerTokens > 0 ? "" : "disabled"}>Piazza puntata</button>
+      ${playerTokens > 0 ? "" : `<p class="subtle">Non hai token da puntare.</p>`}
+    </section>
+  `;
 }
 
 function renderPlayerTapChallenge(room) {
@@ -2664,6 +2712,7 @@ function renderHostMiniGamesEntry(room) {
       ${renderHostTrioStatus(room)}
       ${renderHostTapStatus(room)}
       ${renderHostBalanceStatus(room)}
+      ${renderHostClandestinaStatus(room)}
       ${renderHostWeaponsStatus(room)}
     </div>
   `;
@@ -2690,6 +2739,7 @@ function renderMiniGamesDialog(room) {
         </header>
         <div class="mini-game-tabs">
           ${tabButton("wagers", "Scommesse")}
+          ${tabButton("clandestina", "Clandestina")}
           ${tabButton("fifty", "50 e 50")}
           ${tabButton("trio", "Lupo/Agnello/Cavolo")}
           ${tabButton("tap", "Tap West")}
@@ -2706,11 +2756,13 @@ function renderMiniGamesDialog(room) {
                 ? renderTapMiniGamePanel(players, room)
                 : tab === "balance"
                   ? renderBalanceMiniGamePanel(players, room)
-                  : tab === "weapons"
-                    ? renderWeaponsMiniGamePanel(players, room)
-                    : tab === "tokens"
-                      ? renderTokenMiniGamePanel(players)
-                      : renderHostWagerPanel(room, players)}
+                  : tab === "clandestina"
+                    ? renderClandestinaMiniGamePanel(room, players)
+                    : tab === "weapons"
+                      ? renderWeaponsMiniGamePanel(players, room)
+                      : tab === "tokens"
+                        ? renderTokenMiniGamePanel(players)
+                        : renderHostWagerPanel(room, players)}
         </div>
       </article>
     </section>
@@ -2745,6 +2797,31 @@ function renderBalanceMiniGamePanel(players, room) {
       <button class="btn gold" data-action="send-balance-start" ${connectedPlayers.length && !active ? "" : "disabled"}>Avvia In bilico</button>
       ${connectedPlayers.length ? "" : `<p class="subtle">Servono giocatori collegati.</p>`}
       ${renderHostBalanceStatus(room)}
+    </section>
+  `;
+}
+
+function renderClandestinaMiniGamePanel(room, players) {
+  const tokenPlayers = players.filter((player) => Number(player.tokens || 0) > 0 && player.connected);
+  const clandestina = room.clandestina || {};
+  const active = Boolean(clandestina.active);
+  return `
+    <section class="mini-game-card stack">
+      <div>
+        <h3 class="mini-title">Scommessa Clandestina</h3>
+        <p class="subtle">Apre per 15 secondi una schermata sui telefoni: i giocatori puntano token sulla prossima risposta di un avversario.</p>
+      </div>
+      <div class="mini-game-symbol-row">
+        <span>Scelta libera x2</span>
+        <span>Casuale x3</span>
+        <span>Token</span>
+      </div>
+      <div class="toolbar">
+        <button class="btn gold" data-action="send-clandestina-start" data-clandestina-mode="random" ${tokenPlayers.length >= 2 && !active ? "" : "disabled"}>Casuale x3</button>
+        <button class="btn teal" data-action="send-clandestina-start" data-clandestina-mode="all" ${tokenPlayers.length >= 2 && !active ? "" : "disabled"}>Tutti puntano</button>
+      </div>
+      ${tokenPlayers.length < 2 ? `<p class="subtle">Servono almeno due giocatori collegati con token.</p>` : ""}
+      ${renderHostClandestinaStatus(room)}
     </section>
   `;
 }
@@ -3024,6 +3101,29 @@ function renderHostBalanceStatus(room) {
     text: tokenWinnersText(item)
   }));
   return renderMiniStatusRows([...activeItems, ...historyItems]);
+}
+
+function renderHostClandestinaStatus(room) {
+  const clandestina = room.clandestina || {};
+  const bets = Array.isArray(clandestina.bets) ? clandestina.bets : [];
+  const history = Array.isArray(clandestina.history) ? clandestina.history : [];
+  const activeItems = clandestina.active
+    ? [
+      { label: "Aperta", text: `${bets.length} puntate - ${clandestina.mode === "random" ? "casuale x3" : "tutti puntano"}` }
+    ]
+    : [];
+  const betItems = bets.slice(0, 3).map((bet) => ({
+    label: `x${Number(bet.multiplier || 2)}`,
+    text: `${bet.bettorNickname} su ${bet.targetNickname} - ${bet.stake} token`
+  }));
+  const historyItems = history.slice(0, 3).map((item) => {
+    const delta = Number(item.tokenDelta != null ? item.tokenDelta : item.delta || 0);
+    return {
+      label: item.status === "won" ? "Vinta" : "Persa",
+      text: `${item.bettorNickname} ${delta > 0 ? "+" : ""}${delta} token`
+    };
+  });
+  return renderMiniStatusRows([...activeItems, ...betItems, ...historyItems]);
 }
 
 function renderMiniStatusRows(items) {
@@ -3328,6 +3428,16 @@ function bindEvents() {
   document.querySelectorAll("[data-live-trio-pot]").forEach((element) => {
     element.addEventListener("input", () => {
       local.liveTrioPot = Number(element.value) || 600;
+    });
+  });
+  document.querySelectorAll("[data-clandestina-target]").forEach((element) => {
+    element.addEventListener("change", () => {
+      local.clandestinaTargetId = element.value;
+    });
+  });
+  document.querySelectorAll("[data-clandestina-stake]").forEach((element) => {
+    element.addEventListener("input", () => {
+      local.clandestinaStake = Number(element.value) || 1;
     });
   });
   document.querySelectorAll("[data-weapon-owner]").forEach((element) => {
@@ -3689,6 +3799,7 @@ function handleAction(event) {
   if (action === "send-trio-start") sendTrioStart();
   if (action === "send-tap-start") sendTapStart();
   if (action === "send-balance-start") sendBalanceStart();
+  if (action === "send-clandestina-start") sendClandestinaStart(target.dataset.clandestinaMode);
   if (action === "send-hide-answer-weapon") sendMiniWeapon("hide_answer");
   if (action === "send-invert-tf-weapon") sendMiniWeapon("invert_true_false");
   if (action === "open-mini-games") openMiniGames();
@@ -3704,6 +3815,7 @@ function handleAction(event) {
   if (action === "tap-west") tapWest(target.dataset.challengeId);
   if (action === "enable-balance-sensors") enableBalanceSensors(target.dataset.challengeId);
   if (action === "calibrate-balance") sendBalanceUpdate(target.dataset.challengeId, 0, 0);
+  if (action === "place-clandestina-bet") placeClandestinaBet();
   if (action === "ready-fifty") readyFifty(target.dataset.challengeId);
   if (action === "choose-trio") chooseTrio(target.dataset.challengeId, target.dataset.trioChoice);
   if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
@@ -5364,6 +5476,16 @@ function sendBalanceStart() {
   });
 }
 
+function sendClandestinaStart(mode) {
+  socket.emit("host:clandestina-start", { mode: mode === "all" ? "all" : "random", durationMs: 15000 }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Scommessa Clandestina non avviata");
+      return;
+    }
+    showToast("Scommessa Clandestina avviata");
+  });
+}
+
 function sendMiniWeapon(type) {
   const room = local.room;
   const players = room && Array.isArray(room.players) ? room.players.filter((player) => player.connected) : [];
@@ -5410,7 +5532,7 @@ function closeMiniGames() {
 }
 
 function setMiniGameTab(tab) {
-  const allowed = new Set(["wagers", "fifty", "trio", "tap", "balance", "weapons", "tokens"]);
+  const allowed = new Set(["wagers", "clandestina", "fifty", "trio", "tap", "balance", "weapons", "tokens"]);
   local.miniGameTab = allowed.has(tab) ? tab : "wagers";
   render();
 }
@@ -5434,6 +5556,29 @@ function adjustMiniTokens(direction) {
     }
     local.miniTokenPlayerId = player.id;
     showToast(direction > 0 ? "Token assegnati" : "Token tolti");
+  });
+}
+
+function placeClandestinaBet() {
+  const room = local.room;
+  const clandestina = room && room.clandestina;
+  const targets = clandestina && Array.isArray(clandestina.eligibleTargets) ? clandestina.eligibleTargets : [];
+  const selectedTarget = targets.find((target) => target.id === local.clandestinaTargetId) || targets[0] || null;
+  if (!selectedTarget) {
+    showToast("Scegli un avversario");
+    return;
+  }
+  const stake = Math.max(1, Math.floor(Number(local.clandestinaStake) || 1));
+  socket.emit("player:clandestina-bet", {
+    targetId: selectedTarget.id,
+    stake
+  }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Puntata non inviata");
+      return;
+    }
+    local.clandestinaTargetId = selectedTarget.id;
+    showToast("Puntata piazzata");
   });
 }
 

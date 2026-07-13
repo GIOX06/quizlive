@@ -3628,7 +3628,8 @@ textarea {
 .live-fifty-challenge,
 .live-trio-challenge,
 .live-tap-challenge,
-.live-balance-challenge {
+.live-balance-challenge,
+.live-clandestina-challenge {
   display: grid;
   gap: 0.65rem;
 }
@@ -3637,7 +3638,8 @@ textarea {
 .live-fifty-challenge,
 .live-trio-challenge,
 .live-tap-challenge,
-.live-balance-challenge {
+.live-balance-challenge,
+.live-clandestina-challenge {
   position: relative;
   overflow: hidden;
   border: 1px solid rgba(255, 139, 45, 0.42);
@@ -3688,6 +3690,10 @@ textarea {
 }
 
 .live-tap-challenge::before {
+  background-image: url("/assets/live-games/scommessa-clandestina.png");
+}
+
+.live-clandestina-challenge::before {
   background-image: url("/assets/live-games/scommessa-clandestina.png");
 }
 
@@ -4515,7 +4521,8 @@ textarea {
   .shell-player .live-fifty-challenge,
   .shell-player .live-trio-challenge,
   .shell-player .live-tap-challenge,
-  .shell-player .live-balance-challenge {
+  .shell-player .live-balance-challenge,
+  .shell-player .live-clandestina-challenge {
     height: 100%;
     min-height: 100%;
     align-content: center;
@@ -4527,7 +4534,8 @@ textarea {
   .shell-player .live-wager-offer .section-title,
   .shell-player .live-trio-challenge .section-title,
   .shell-player .live-tap-challenge .section-title,
-  .shell-player .live-balance-challenge .section-title {
+  .shell-player .live-balance-challenge .section-title,
+  .shell-player .live-clandestina-challenge .section-title {
     font-size: clamp(1.2rem, 6vw, 1.6rem);
   }
 
