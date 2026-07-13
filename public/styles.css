@@ -1730,7 +1730,7 @@ textarea {
 
 .mini-game-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(7.2rem, 1fr));
   gap: 0.45rem;
 }
 
@@ -1812,6 +1812,41 @@ textarea {
   place-items: stretch;
   align-items: center;
   padding: 0 0.85rem;
+}
+
+.final-boards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.final-board-card,
+.final-timeline {
+  padding: 1rem;
+  border: 1px solid rgba(255, 139, 45, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.final-timeline-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.final-timeline-item {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 139, 45, 0.2);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.final-timeline-item p {
+  margin: 0;
+  color: var(--stage-ink, var(--ink));
+  font-weight: 750;
 }
 
 .mini-token-controls {
@@ -2559,6 +2594,120 @@ textarea {
   font-weight: 950;
 }
 
+.screen-tap-show,
+.screen-balance-show {
+  min-height: calc(100vh - 8rem);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: clamp(1rem, 2vw, 1.5rem);
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(255, 139, 45, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(8, 8, 9, 0.96), rgba(38, 20, 12, 0.92));
+}
+
+.screen-tap-show {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0.88)),
+    url("/assets/live-games/scommessa-clandestina.png") center/cover;
+}
+
+.screen-balance-show {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0.9)),
+    url("/assets/live-games/cinquanta-cinquanta.png") center/cover;
+}
+
+.tap-race-board {
+  display: grid;
+  align-content: start;
+  gap: 0.7rem;
+}
+
+.tap-race-row {
+  display: grid;
+  grid-template-columns: 3.2rem 3.6rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 194, 87, 0.28);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.54);
+  color: #fff;
+}
+
+.tap-race-row.winner {
+  border-color: rgba(68, 196, 161, 0.78);
+  background:
+    linear-gradient(90deg, rgba(68, 196, 161, 0.22), rgba(0, 0, 0, 0.54));
+}
+
+.tap-race-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(1.1rem, 2vw, 1.8rem);
+}
+
+.balance-stage {
+  position: relative;
+  min-height: 26rem;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.balance-log {
+  position: relative;
+  width: min(92%, 58rem);
+  height: clamp(4rem, 8vw, 6.5rem);
+  border: 1px solid rgba(255, 194, 87, 0.56);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(92, 52, 24, 0.95), rgba(186, 105, 42, 0.96), rgba(92, 52, 24, 0.95));
+  box-shadow:
+    inset 0 1rem 1.4rem rgba(255, 255, 255, 0.08),
+    0 2.2rem 4rem rgba(0, 0, 0, 0.45);
+  transform-origin: center;
+  transition: transform 180ms ease;
+}
+
+.balance-log::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.25rem;
+  height: 180%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: rgba(255, 194, 87, 0.75);
+  box-shadow: 0 0 1.4rem rgba(255, 194, 87, 0.55);
+}
+
+.balance-player {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  gap: 0.25rem;
+  transform: translate(-50%, -105%);
+  min-width: 5rem;
+  color: #fff;
+  font-weight: 900;
+  text-align: center;
+}
+
+.balance-player strong {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
 .trio-symbol-strip,
 .trio-opponents,
 .trio-choice-grid {
@@ -2839,6 +2988,18 @@ textarea {
 
 .screen-final-board {
   width: min(100%, 44rem);
+  margin: 0 auto;
+}
+
+.screen-final-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(0.8rem, 1.8vw, 1.2rem);
+  align-items: stretch;
+}
+
+.screen-final .final-timeline {
+  width: min(100%, 72rem);
   margin: 0 auto;
 }
 
@@ -3465,14 +3626,18 @@ textarea {
 .live-wager-offer,
 .live-fifty-panel,
 .live-fifty-challenge,
-.live-trio-challenge {
+.live-trio-challenge,
+.live-tap-challenge,
+.live-balance-challenge {
   display: grid;
   gap: 0.65rem;
 }
 
 .live-wager-offer,
 .live-fifty-challenge,
-.live-trio-challenge {
+.live-trio-challenge,
+.live-tap-challenge,
+.live-balance-challenge {
   position: relative;
   overflow: hidden;
   border: 1px solid rgba(255, 139, 45, 0.42);
@@ -3520,6 +3685,100 @@ textarea {
 
 .live-trio-challenge::before {
   background-image: url("/assets/live-games/lupo-agnello-cavolo.png");
+}
+
+.live-tap-challenge::before {
+  background-image: url("/assets/live-games/scommessa-clandestina.png");
+}
+
+.live-balance-challenge::before {
+  background-image: url("/assets/live-games/cinquanta-cinquanta.png");
+}
+
+.player-mini-game-layout {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: calc(100svh - 5rem);
+}
+
+.player-mini-game-layout .stage,
+.player-mini-game {
+  min-height: calc(100svh - 5rem);
+}
+
+.player-mini-game {
+  align-content: center;
+}
+
+.tap-countdown,
+.tap-stage-clock {
+  min-height: 4.8rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 194, 87, 0.42);
+  border-radius: 8px;
+  background: rgba(255, 194, 87, 0.12);
+  color: #ffc257;
+  font-size: clamp(2.7rem, 12vw, 5rem);
+  font-weight: 1000;
+  line-height: 1;
+}
+
+.tap-west-button {
+  min-height: min(38svh, 16rem);
+  display: grid;
+  place-items: center;
+  gap: 0.3rem;
+  border: 1px solid rgba(255, 194, 87, 0.72);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 194, 87, 0.9), rgba(255, 93, 93, 0.9) 46%, rgba(90, 20, 10, 0.95)),
+    #f65a4f;
+  color: #fff;
+  font: inherit;
+  font-weight: 1000;
+  text-transform: uppercase;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 22px 60px rgba(255, 93, 93, 0.28);
+}
+
+.tap-west-button span {
+  font-size: clamp(2.8rem, 18vw, 6rem);
+  line-height: 0.9;
+}
+
+.tap-west-button strong {
+  font-size: clamp(1.3rem, 7vw, 2.4rem);
+}
+
+.balance-phone-meter {
+  position: relative;
+  width: min(100%, 18rem);
+  aspect-ratio: 1;
+  justify-self: center;
+  border: 1px solid rgba(255, 194, 87, 0.52);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(68, 196, 161, 0.26) 0 12%, transparent 13%),
+    radial-gradient(circle, transparent 0 44%, rgba(255, 194, 87, 0.14) 45% 46%, transparent 47%),
+    rgba(0, 0, 0, 0.36);
+}
+
+.balance-phone-meter span {
+  position: absolute;
+  left: calc(50% - 1rem);
+  top: calc(50% - 1rem);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: #ffc257;
+  box-shadow: 0 0 0 0.55rem rgba(255, 194, 87, 0.18);
+}
+
+.balance-score {
+  justify-self: center;
+  color: #ffc257;
+  font-size: clamp(1.6rem, 8vw, 2.8rem);
 }
 
 .live-fifty-challenge {
@@ -3899,19 +4158,16 @@ textarea {
 }
 
 .podium-place:nth-child(1) {
-  order: 2;
   min-height: 10rem;
   background: var(--gold);
   color: var(--ink);
 }
 
 .podium-place:nth-child(2) {
-  order: 1;
   background: var(--teal);
 }
 
 .podium-place:nth-child(3) {
-  order: 3;
   min-height: 7rem;
   background: var(--red);
 }
@@ -3992,7 +4248,9 @@ textarea {
 
   .screen-lobby-grid,
   .screen-strip,
-  .screen-live-layout {
+  .screen-live-layout,
+  .screen-final-grid,
+  .final-boards {
     grid-template-columns: 1fr;
   }
 
@@ -4003,6 +4261,7 @@ textarea {
   }
 
   .screen-fifty-match,
+  .screen-fifty-result-board,
   .fifty-arena {
     grid-template-columns: 1fr;
   }
@@ -4027,6 +4286,14 @@ textarea {
 
   .screen-title {
     font-size: 3rem;
+  }
+
+  .tap-race-row {
+    grid-template-columns: 2.5rem 3rem minmax(0, 1fr);
+  }
+
+  .tap-race-row > span:last-child {
+    grid-column: 3;
   }
 
   .topbar {
@@ -4246,7 +4513,9 @@ textarea {
 
   .shell-player .live-wager-offer,
   .shell-player .live-fifty-challenge,
-  .shell-player .live-trio-challenge {
+  .shell-player .live-trio-challenge,
+  .shell-player .live-tap-challenge,
+  .shell-player .live-balance-challenge {
     height: 100%;
     min-height: 100%;
     align-content: center;
@@ -4256,7 +4525,9 @@ textarea {
 
   .shell-player .live-fifty-challenge .section-title,
   .shell-player .live-wager-offer .section-title,
-  .shell-player .live-trio-challenge .section-title {
+  .shell-player .live-trio-challenge .section-title,
+  .shell-player .live-tap-challenge .section-title,
+  .shell-player .live-balance-challenge .section-title {
     font-size: clamp(1.2rem, 6vw, 1.6rem);
   }
 

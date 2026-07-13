@@ -442,10 +442,10 @@ async function main() {
     const wagerOfferEvent = waitForSocketEvent(player, "live:event");
     const wagerOffer = await emitAck(host, "host:wager-offer", {
       playerId: rejoined.playerId,
-      stake: 100
+      stake: 1
     });
     assert.equal(wagerOffer.ok, true);
-    assert.equal(wagerOffer.wager.stake, 100);
+    assert.equal(wagerOffer.wager.stake, 1);
     assert.equal(wagerOffer.wager.questionNumber, 3);
     const receivedWagerOffer = await wagerOfferEvent;
     assert.equal(receivedWagerOffer.title, "Scommessa live");
@@ -537,7 +537,7 @@ async function main() {
       state.wagers.history &&
       state.wagers.history.some((item) =>
         item.bettorNickname === "Smoke Player" &&
-        item.delta === -100 &&
+        item.tokenDelta === -1 &&
         item.questionIndex === 2
       )
     );
@@ -547,7 +547,7 @@ async function main() {
       state.wagerHistory.some((item) =>
         item.bettorNickname === "Smoke Player" &&
         item.targetNickname === "Smoke Decliner" &&
-        item.delta === -100 &&
+        item.tokenDelta === -1 &&
         item.questionIndex === 2
       )
     );
@@ -711,6 +711,53 @@ async function main() {
         item.id === trioStarted.challenge.id &&
         item.outcome === "all_split" &&
         item.winners.length === 3
+      )
+    );
+
+    const tapStartedEvent = waitForSocketEvent(screen, "live:event");
+    const tapStarted = await emitAck(host, "host:tap-start", { durationMs: 3000 });
+    assert.equal(tapStarted.ok, true);
+    assert.equal(tapStarted.challenge.players.length, 3);
+    assert.equal((await tapStartedEvent).title, "Il tap piu veloce del West");
+    await waitForState(player, (state) =>
+      state.tapChallenge &&
+      state.tapChallenge.id === tapStarted.challenge.id
+    );
+    const tapResultEvent = waitForSocketEvent(screen, "live:event", 6000);
+    assert.equal((await emitAck(player, "player:tap-west", { challengeId: tapStarted.challenge.id, count: 8 })).ok, true);
+    assert.equal((await emitAck(decliningPlayer, "player:tap-west", { challengeId: tapStarted.challenge.id, count: 4 })).ok, true);
+    assert.equal((await tapResultEvent).title, "Tap West risolto");
+    await waitForState(host, (state) =>
+      state.tap &&
+      state.tap.history &&
+      state.tap.history.some((item) =>
+        item.id === tapStarted.challenge.id &&
+        item.winners.length === 2 &&
+        item.winners[0].nickname === "Smoke Player"
+      )
+    );
+
+    const balanceStartedEvent = waitForSocketEvent(screen, "live:event");
+    const balanceStarted = await emitAck(host, "host:balance-start", { durationMs: 5000 });
+    assert.equal(balanceStarted.ok, true);
+    assert.equal(balanceStarted.challenge.players.length, 3);
+    assert.equal((await balanceStartedEvent).title, "In bilico");
+    await waitForState(player, (state) =>
+      state.balanceChallenge &&
+      state.balanceChallenge.id === balanceStarted.challenge.id
+    );
+    const balanceResultEvent = waitForSocketEvent(screen, "live:event", 8000);
+    assert.equal((await emitAck(player, "player:balance-update", { challengeId: balanceStarted.challenge.id, x: 0, y: 0 })).ok, true);
+    assert.equal((await emitAck(decliningPlayer, "player:balance-update", { challengeId: balanceStarted.challenge.id, x: 0.8, y: 0.2 })).ok, true);
+    assert.equal((await emitAck(trioPlayer, "player:balance-update", { challengeId: balanceStarted.challenge.id, x: 0.4, y: 0.4 })).ok, true);
+    assert.equal((await balanceResultEvent).title, "In bilico risolto");
+    await waitForState(host, (state) =>
+      state.balance &&
+      state.balance.history &&
+      state.balance.history.some((item) =>
+        item.id === balanceStarted.challenge.id &&
+        item.winners.length === 1 &&
+        item.winners[0].nickname === "Smoke Player"
       )
     );
 

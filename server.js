@@ -674,6 +674,40 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("host:tap-start", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const challenge = startTapChallenge(room, payload || {});
+      const delivered = await dispatchLiveEvent(room, tapStartedLiveEvent(challenge));
+      sendAck(ack, { ok: true, delivered, challenge: serializeTapChallenge(challenge) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("host:balance-start", async (payload, ack) => {
+    const room = getHostRoom(socket);
+    if (!room) {
+      sendAck(ack, { ok: false, error: "Host room not found" });
+      return;
+    }
+
+    try {
+      const challenge = startBalanceChallenge(room, payload || {});
+      const delivered = await dispatchLiveEvent(room, balanceStartedLiveEvent(challenge));
+      sendAck(ack, { ok: true, delivered, challenge: serializeBalanceChallenge(challenge) });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("host:weapon", async (payload, ack) => {
     const room = getHostRoom(socket);
     if (!room) {
@@ -735,6 +769,40 @@ io.on("connection", (socket) => {
 
     try {
       const result = chooseTrioSymbol(room, player, payload || {});
+      sendAck(ack, { ok: true, ...result });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("player:tap-west", async (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+
+    try {
+      const result = recordTapWest(room, player, payload || {});
+      sendAck(ack, { ok: true, ...result });
+      await emitRoom(room);
+    } catch (error) {
+      sendAck(ack, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("player:balance-update", async (payload, ack) => {
+    const room = getPlayerRoom(socket);
+    const player = room && room.players.get(socket.data.playerId);
+    if (!room || !player) {
+      sendAck(ack, { ok: false, error: "Giocatore non trovato" });
+      return;
+    }
+
+    try {
+      const result = recordBalanceUpdate(room, player, payload || {});
       sendAck(ack, { ok: true, ...result });
       await emitRoom(room);
     } catch (error) {
@@ -950,6 +1018,8 @@ io.on("connection", (socket) => {
         player.connected = false;
         markFiftyPlayerDisconnected(room, player.id);
         markTrioPlayerDisconnected(room, player.id);
+        markTapPlayerDisconnected(room, player.id);
+        markBalancePlayerDisconnected(room, player.id);
       }
     }
     emitRoom(room);
@@ -989,6 +1059,8 @@ function createRoom(quiz, hostSocketId) {
     wagers: createWagerState(),
     fifty: createFiftyState(),
     trio: createTrioState(),
+    tap: createTapState(),
+    balance: createBalanceState(),
     weapons: createWeaponState(),
     timer: null,
     resultId: null,
@@ -1079,6 +1151,10 @@ async function resetRoom(room) {
   room.fifty = createFiftyState();
   clearTrioChallenge(room);
   room.trio = createTrioState();
+  clearTapChallenge(room);
+  room.tap = createTapState();
+  clearBalanceChallenge(room);
+  room.balance = createBalanceState();
   room.weapons = createWeaponState();
 
   if (invitePreviousPlayers) {
@@ -1109,6 +1185,10 @@ async function updateRoomQuiz(room, quiz) {
   room.fifty = createFiftyState();
   clearTrioChallenge(room);
   room.trio = createTrioState();
+  clearTapChallenge(room);
+  room.tap = createTapState();
+  clearBalanceChallenge(room);
+  room.balance = createBalanceState();
   room.weapons = createWeaponState();
 
   if (invitePreviousPlayers) {
@@ -1173,6 +1253,8 @@ function reattachPlayerSocket(room, player, socket, nickname) {
     updateWagerPlayerId(room, previousId, socket.id);
     updateFiftyPlayerId(room, previousId, socket.id);
     updateTrioPlayerId(room, previousId, socket.id);
+    updateTapPlayerId(room, previousId, socket.id);
+    updateBalancePlayerId(room, previousId, socket.id);
     updateWeaponPlayerId(room, previousId, socket.id);
   }
 
@@ -1210,6 +1292,8 @@ function removePlayer(room, playerId, message) {
   cancelWagersForPlayer(room, playerId);
   cancelFiftyForPlayer(room, playerId);
   cancelTrioForPlayer(room, playerId);
+  markTapPlayerDisconnected(room, playerId);
+  markBalancePlayerDisconnected(room, playerId);
   cancelWeaponsForPlayer(room, playerId);
   room.players.delete(playerId);
   const target = io.sockets.sockets.get(playerId);
@@ -1365,6 +1449,20 @@ function createTrioState() {
   };
 }
 
+function createTapState() {
+  return {
+    active: null,
+    history: []
+  };
+}
+
+function createBalanceState() {
+  return {
+    active: null,
+    history: []
+  };
+}
+
 function createWeaponState() {
   return {
     active: [],
@@ -1378,8 +1476,8 @@ function createWagerOffer(room, payload) {
   if (!player || !player.active || !player.connected) {
     throw new Error("Giocatore non disponibile per la scommessa");
   }
-  if (Number(player.score || 0) <= 0) {
-    throw new Error("Il giocatore non ha punti da scommettere");
+  if (Number(player.tokens || 0) <= 0) {
+    throw new Error("Il giocatore non ha token da scommettere");
   }
   if (hasOpenWagerForPlayer(room, player.id)) {
     throw new Error("Questo giocatore ha gia una scommessa aperta");
@@ -1394,7 +1492,7 @@ function createWagerOffer(room, payload) {
     throw new Error("Serve almeno un altro giocatore collegato");
   }
 
-  const stake = normalizeWagerStake(payload.stake, player.score);
+  const stake = normalizeWagerStake(payload.stake, player.tokens);
   const offer = {
     id: createArchiveId("wager"),
     bettorId: player.id,
@@ -1425,9 +1523,9 @@ function acceptOrDeclineWager(room, player, payload) {
     room.wagers.offers.delete(offer.id);
     throw new Error("Scommessa scaduta");
   }
-  if (Number(player.score || 0) < offer.stake) {
+  if (Number(player.tokens || 0) < offer.stake) {
     room.wagers.offers.delete(offer.id);
-    throw new Error("Punti insufficienti per questa scommessa");
+    throw new Error("Token insufficienti per questa scommessa");
   }
 
   const targets = eligibleWagerTargets(room, player.id);
@@ -1483,7 +1581,7 @@ function normalizeWagerStake(value, maxScore) {
     throw new Error("Inserisci una puntata valida");
   }
   if (stake > max) {
-    throw new Error(`Puntata massima: ${max} punti`);
+    throw new Error(`Puntata massima: ${max} token`);
   }
   return stake;
 }
@@ -1494,7 +1592,8 @@ function eligibleWagerTargets(room, bettorId) {
     .map((player) => ({
       id: player.id,
       nickname: player.nickname,
-      score: player.score
+      score: player.score,
+      tokens: Number(player.tokens || 0)
     }))
     .sort((a, b) => a.nickname.localeCompare(b.nickname));
 }
@@ -1541,7 +1640,7 @@ function resolveWager(room, wager, correct, reason) {
   const bettor = room.players.get(wager.bettorId);
   const delta = correct ? wager.stake * wager.multiplier : -wager.stake;
   if (bettor && bettor.active) {
-    bettor.score = Math.max(0, Math.round(Number(bettor.score || 0) + delta));
+    bettor.tokens = Math.min(999, Math.max(0, Math.round(Number(bettor.tokens || 0) + delta)));
   }
   room.wagers.active.delete(wager.id);
   const result = {
@@ -1550,6 +1649,7 @@ function resolveWager(room, wager, correct, reason) {
     correct,
     reason,
     delta,
+    tokenDelta: delta,
     resolvedAt: Date.now()
   };
   room.wagers.history.push(result);
@@ -1588,7 +1688,7 @@ function wagerOfferLiveEvent(room, offer) {
     playerId: offer.bettorId,
     private: true,
     title: "Scommessa live",
-    message: `Punta ${offer.stake} punti sulla prossima risposta. Casuale x3, scelto x2.`,
+    message: `Punta ${offer.stake} token sulla prossima risposta. Casuale x3, scelto x2.`,
     tone: "secret",
     vibrate: true,
     vibrationPattern: defaultVibrationPattern("secret"),
@@ -1603,7 +1703,7 @@ function wagerAcceptedLiveEvent(room, wager) {
     target: "all",
     private: false,
     title: "Scommessa accettata",
-    message: `${wager.bettorNickname} punta ${wager.stake} punti su ${wager.targetNickname}: premio x${wager.multiplier}.`,
+    message: `${wager.bettorNickname} punta ${wager.stake} token su ${wager.targetNickname}: premio x${wager.multiplier}.`,
     tone: "drum",
     vibrate: false,
     vibrationPattern: defaultVibrationPattern("drum"),
@@ -1620,8 +1720,8 @@ function wagerResultLiveEvent(result) {
     private: false,
     title: won ? "Scommessa vinta" : "Scommessa persa",
     message: won
-      ? `${result.bettorNickname} vince ${result.delta} punti: ${result.targetNickname} ha risposto giusto.`
-      : `${result.bettorNickname} perde ${result.stake} punti: ${result.targetNickname} non ha centrato la risposta.`,
+      ? `${result.bettorNickname} vince ${result.delta} token: ${result.targetNickname} ha risposto giusto.`
+      : `${result.bettorNickname} perde ${result.stake} token: ${result.targetNickname} non ha centrato la risposta.`,
     tone: won ? "success" : "alert",
     vibrate: false,
     vibrationPattern: defaultVibrationPattern(won ? "success" : "alert"),
@@ -2055,6 +2155,300 @@ function cancelTrioForPlayer(room, playerId) {
   }
 }
 
+function startTapChallenge(room, payload) {
+  if (room.tap && room.tap.active) {
+    throw new Error("C'e gia un Tap West in corso");
+  }
+  const players = activePlayers(room).filter((player) => player.connected);
+  if (!players.length) {
+    throw new Error("Servono giocatori collegati");
+  }
+  const now = Date.now();
+  const durationMs = normalizeTimedMiniGameDuration(payload.durationMs, 10000, 3000, 30000);
+  const challenge = {
+    id: createArchiveId("tap"),
+    status: "active",
+    durationMs,
+    playerIds: players.map((player) => player.id),
+    participants: Object.fromEntries(players.map((player) => [player.id, {
+      playerId: player.id,
+      nickname: player.nickname,
+      avatarUrl: player.avatarUrl || "",
+      taps: 0,
+      lastTapAt: null,
+      leftAt: null
+    }])),
+    createdAt: now,
+    endsAt: now + durationMs,
+    timer: null
+  };
+  challenge.timer = setTimeout(() => finishTapChallenge(room, "timer"), durationMs + 80);
+  room.tap.active = challenge;
+  return challenge;
+}
+
+function recordTapWest(room, player, payload) {
+  const challenge = room.tap && room.tap.active;
+  const challengeId = normalizeShortText(payload.challengeId, 120);
+  if (!challenge || challenge.id !== challengeId) {
+    throw new Error("Tap West non attivo");
+  }
+  const participant = challenge.participants[player.id];
+  if (!participant) {
+    throw new Error("Non sei in questo mini-gioco");
+  }
+  const now = Date.now();
+  if (now > challenge.endsAt) {
+    const result = finishTapChallenge(room, "timer");
+    return { resolved: true, result: serializeTapResult(result) };
+  }
+  const count = Math.min(8, Math.max(1, Math.floor(Number(payload.count) || 1)));
+  participant.taps = Math.max(0, Number(participant.taps || 0) + count);
+  participant.lastTapAt = now;
+  participant.leftAt = null;
+  return { challenge: serializePlayerTapChallenge(room, player.id) };
+}
+
+function finishTapChallenge(room, reason) {
+  const result = resolveTapChallenge(room, reason);
+  if (!result) return null;
+  dispatchLiveEvent(room, tapResultLiveEvent(result))
+    .catch((error) => console.error("Could not announce Tap West result:", error.message));
+  emitRoom(room)
+    .catch((error) => console.error("Could not emit Tap West result:", error.message));
+  return result;
+}
+
+function resolveTapChallenge(room, reason) {
+  const challenge = room.tap && room.tap.active;
+  if (!challenge) return null;
+  clearTimeout(challenge.timer);
+  challenge.timer = null;
+  const ranked = challenge.playerIds
+    .map((playerId) => challenge.participants[playerId])
+    .filter(Boolean)
+    .sort((a, b) => Number(b.taps || 0) - Number(a.taps || 0) || a.nickname.localeCompare(b.nickname));
+  const prizes = new Map();
+  if (ranked[0] && Number(ranked[0].taps || 0) > 0) prizes.set(ranked[0].playerId, 2);
+  if (ranked[1] && Number(ranked[1].taps || 0) > 0) prizes.set(ranked[1].playerId, 1);
+  const players = ranked.map((participant, index) => {
+    const deltaTokens = prizes.get(participant.playerId) || 0;
+    if (deltaTokens) addMiniGameTokens(room, participant.playerId, deltaTokens);
+    const player = room.players.get(participant.playerId);
+    return {
+      id: participant.playerId,
+      nickname: participant.nickname,
+      avatarUrl: participant.avatarUrl || "",
+      taps: Number(participant.taps || 0),
+      rank: index + 1,
+      deltaTokens,
+      tokens: player ? Number(player.tokens || 0) : 0,
+      left: Boolean(participant.leftAt)
+    };
+  });
+  const result = {
+    id: challenge.id,
+    status: "resolved",
+    type: "tap_west",
+    title: "Il tap piu veloce del West",
+    reason,
+    durationMs: challenge.durationMs,
+    winners: players.filter((player) => player.deltaTokens > 0),
+    players,
+    startedAt: challenge.createdAt,
+    resolvedAt: Date.now()
+  };
+  room.tap.active = null;
+  room.tap.history.push(result);
+  room.tap.history = room.tap.history.slice(-8);
+  return result;
+}
+
+function clearTapChallenge(room) {
+  if (!room.tap || !room.tap.active) return;
+  clearTimeout(room.tap.active.timer);
+  room.tap.active = null;
+}
+
+function markTapPlayerDisconnected(room, playerId) {
+  const challenge = room.tap && room.tap.active;
+  if (!challenge || !challenge.participants[playerId]) return false;
+  challenge.participants[playerId].leftAt = challenge.participants[playerId].leftAt || Date.now();
+  return true;
+}
+
+function updateTapPlayerId(room, previousId, nextId) {
+  const challenge = room.tap && room.tap.active;
+  if (!challenge || !challenge.participants[previousId]) return;
+  challenge.participants[nextId] = {
+    ...challenge.participants[previousId],
+    playerId: nextId,
+    leftAt: null
+  };
+  delete challenge.participants[previousId];
+  challenge.playerIds = challenge.playerIds.map((playerId) => playerId === previousId ? nextId : playerId);
+}
+
+function startBalanceChallenge(room, payload) {
+  if (room.balance && room.balance.active) {
+    throw new Error("C'e gia un In bilico in corso");
+  }
+  const players = activePlayers(room).filter((player) => player.connected);
+  if (!players.length) {
+    throw new Error("Servono giocatori collegati");
+  }
+  const now = Date.now();
+  const durationMs = normalizeTimedMiniGameDuration(payload.durationMs, 15000, 5000, 45000);
+  const challenge = {
+    id: createArchiveId("balance"),
+    status: "active",
+    durationMs,
+    playerIds: players.map((player) => player.id),
+    participants: Object.fromEntries(players.map((player) => [player.id, {
+      playerId: player.id,
+      nickname: player.nickname,
+      avatarUrl: player.avatarUrl || "",
+      x: 0,
+      y: 0,
+      distance: 1,
+      samples: 0,
+      lastUpdateAt: null,
+      leftAt: null
+    }])),
+    createdAt: now,
+    endsAt: now + durationMs,
+    timer: null
+  };
+  challenge.timer = setTimeout(() => finishBalanceChallenge(room, "timer"), durationMs + 80);
+  room.balance.active = challenge;
+  return challenge;
+}
+
+function recordBalanceUpdate(room, player, payload) {
+  const challenge = room.balance && room.balance.active;
+  const challengeId = normalizeShortText(payload.challengeId, 120);
+  if (!challenge || challenge.id !== challengeId) {
+    throw new Error("In bilico non attivo");
+  }
+  const participant = challenge.participants[player.id];
+  if (!participant) {
+    throw new Error("Non sei in questo mini-gioco");
+  }
+  const now = Date.now();
+  if (now > challenge.endsAt) {
+    const result = finishBalanceChallenge(room, "timer");
+    return { resolved: true, result: serializeBalanceResult(result) };
+  }
+  const x = clampNumber(payload.x, -1, 1, 0);
+  const y = clampNumber(payload.y, -1, 1, 0);
+  participant.x = x;
+  participant.y = y;
+  participant.distance = Math.min(1, Math.sqrt((x * x) + (y * y)));
+  participant.samples = Number(participant.samples || 0) + 1;
+  participant.lastUpdateAt = now;
+  participant.leftAt = null;
+  return { challenge: serializePlayerBalanceChallenge(room, player.id) };
+}
+
+function finishBalanceChallenge(room, reason) {
+  const result = resolveBalanceChallenge(room, reason);
+  if (!result) return null;
+  dispatchLiveEvent(room, balanceResultLiveEvent(result))
+    .catch((error) => console.error("Could not announce In bilico result:", error.message));
+  emitRoom(room)
+    .catch((error) => console.error("Could not emit In bilico result:", error.message));
+  return result;
+}
+
+function resolveBalanceChallenge(room, reason) {
+  const challenge = room.balance && room.balance.active;
+  if (!challenge) return null;
+  clearTimeout(challenge.timer);
+  challenge.timer = null;
+  const ranked = challenge.playerIds
+    .map((playerId) => challenge.participants[playerId])
+    .filter(Boolean)
+    .sort((a, b) => Number(a.distance || 1) - Number(b.distance || 1) || a.nickname.localeCompare(b.nickname));
+  const winner = ranked[0] || null;
+  const players = ranked.map((participant, index) => {
+    const deltaTokens = winner && participant.playerId === winner.playerId ? 2 : 0;
+    if (deltaTokens) addMiniGameTokens(room, participant.playerId, deltaTokens);
+    const player = room.players.get(participant.playerId);
+    return {
+      id: participant.playerId,
+      nickname: participant.nickname,
+      avatarUrl: participant.avatarUrl || "",
+      x: Number(participant.x || 0),
+      y: Number(participant.y || 0),
+      distance: Number(participant.distance || 1),
+      samples: Number(participant.samples || 0),
+      rank: index + 1,
+      deltaTokens,
+      tokens: player ? Number(player.tokens || 0) : 0,
+      left: Boolean(participant.leftAt)
+    };
+  });
+  const result = {
+    id: challenge.id,
+    status: "resolved",
+    type: "balance",
+    title: "In bilico",
+    reason,
+    durationMs: challenge.durationMs,
+    winners: players.filter((player) => player.deltaTokens > 0),
+    players,
+    startedAt: challenge.createdAt,
+    resolvedAt: Date.now()
+  };
+  room.balance.active = null;
+  room.balance.history.push(result);
+  room.balance.history = room.balance.history.slice(-8);
+  return result;
+}
+
+function clearBalanceChallenge(room) {
+  if (!room.balance || !room.balance.active) return;
+  clearTimeout(room.balance.active.timer);
+  room.balance.active = null;
+}
+
+function markBalancePlayerDisconnected(room, playerId) {
+  const challenge = room.balance && room.balance.active;
+  if (!challenge || !challenge.participants[playerId]) return false;
+  challenge.participants[playerId].leftAt = challenge.participants[playerId].leftAt || Date.now();
+  challenge.participants[playerId].distance = 1;
+  return true;
+}
+
+function updateBalancePlayerId(room, previousId, nextId) {
+  const challenge = room.balance && room.balance.active;
+  if (!challenge || !challenge.participants[previousId]) return;
+  challenge.participants[nextId] = {
+    ...challenge.participants[previousId],
+    playerId: nextId,
+    leftAt: null
+  };
+  delete challenge.participants[previousId];
+  challenge.playerIds = challenge.playerIds.map((playerId) => playerId === previousId ? nextId : playerId);
+}
+
+function addMiniGameTokens(room, playerId, delta) {
+  const player = room.players.get(playerId);
+  if (!player || !player.active) return;
+  player.tokens = Math.min(999, Math.max(0, Math.round(Number(player.tokens || 0) + delta)));
+}
+
+function normalizeTimedMiniGameDuration(value, fallback, min, max) {
+  const duration = Math.floor(Number(value) || fallback);
+  return Math.min(max, Math.max(min, duration));
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
 function createMiniWeapon(room, payload) {
   const type = normalizeShortText(payload.type, 40);
   if (!WEAPON_TYPES.has(type)) {
@@ -2471,6 +2865,70 @@ function trioOutcomeText(result) {
   return "nessuna scelta valida";
 }
 
+function tapStartedLiveEvent(challenge) {
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "Il tap piu veloce del West",
+    message: `${challenge.playerIds.length} giocatori: 10 secondi di tap. Primo +2 token, secondo +1 token.`,
+    tone: "drum",
+    vibrate: true,
+    vibrationPattern: defaultVibrationPattern("drum"),
+    createdAt: Date.now()
+  };
+}
+
+function tapResultLiveEvent(result) {
+  const winners = result.winners && result.winners.length
+    ? result.winners.map((player) => `${player.nickname} +${player.deltaTokens}`).join(", ")
+    : "Nessun vincitore";
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "Tap West risolto",
+    message: `${winners} token.`,
+    tone: result.winners && result.winners.length ? "success" : "alert",
+    vibrate: false,
+    vibrationPattern: defaultVibrationPattern(result.winners && result.winners.length ? "success" : "alert"),
+    createdAt: Date.now()
+  };
+}
+
+function balanceStartedLiveEvent(challenge) {
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "In bilico",
+    message: `${challenge.playerIds.length} giocatori sul tronco: resta al centro per 15 secondi. Premio: 2 token.`,
+    tone: "drum",
+    vibrate: true,
+    vibrationPattern: defaultVibrationPattern("drum"),
+    createdAt: Date.now()
+  };
+}
+
+function balanceResultLiveEvent(result) {
+  const winner = result.winners && result.winners[0];
+  return {
+    id: createArchiveId("live"),
+    type: "message",
+    target: "all",
+    private: false,
+    title: "In bilico risolto",
+    message: winner ? `${winner.nickname} resta piu al centro e prende 2 token.` : "Nessun vincitore.",
+    tone: winner ? "success" : "alert",
+    vibrate: false,
+    vibrationPattern: defaultVibrationPattern(winner ? "success" : "alert"),
+    createdAt: Date.now()
+  };
+}
+
 function weaponLiveEvent(room, weapon) {
   return {
     id: createArchiveId("live"),
@@ -2641,8 +3099,18 @@ function serializeRoom(room, socket) {
     trioChallenge: role === "player" ? serializePlayerTrioChallenge(room, playerId) : undefined,
     activeTrio: serializePublicActiveTrio(room),
     trioHistory: serializePublicTrioHistory(room),
+    tap: role === "host" ? serializeHostTap(room) : undefined,
+    tapChallenge: role === "player" ? serializePlayerTapChallenge(room, playerId) : undefined,
+    activeTap: serializePublicActiveTap(room),
+    tapHistory: serializePublicTapHistory(room),
+    balance: role === "host" ? serializeHostBalance(room) : undefined,
+    balanceChallenge: role === "player" ? serializePlayerBalanceChallenge(room, playerId) : undefined,
+    activeBalance: serializePublicActiveBalance(room),
+    balanceHistory: serializePublicBalanceHistory(room),
     weapons: role === "host" ? serializeHostWeapons(room) : undefined,
     playerWeapons: role === "player" ? serializePlayerWeapons(room, playerId) : undefined,
+    cleanLeaderboard: cleanLeaderboard(room),
+    timeline: room.status === "ended" || role === "host" ? gameTimeline(room) : undefined,
     answerCount: answerMap.size,
     playerCount: activePlayers(room).length,
     pendingInviteCount: role === "host" ? pendingInviteCount(room) : undefined,
@@ -2830,6 +3298,7 @@ function serializeWagerResult(result) {
     status: result.status,
     correct: result.correct,
     delta: result.delta,
+    tokenDelta: result.tokenDelta != null ? result.tokenDelta : result.delta,
     reason: result.reason,
     resolvedAt: result.resolvedAt
   };
@@ -2995,6 +3464,152 @@ function serializePublicTrioHistory(room) {
     : [];
 }
 
+function serializeHostTap(room) {
+  return {
+    active: serializeTapChallenge(room.tap && room.tap.active),
+    history: serializePublicTapHistory(room)
+  };
+}
+
+function serializeTapChallenge(challenge) {
+  if (!challenge) return null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    durationMs: challenge.durationMs,
+    createdAt: challenge.createdAt,
+    endsAt: challenge.endsAt,
+    players: challenge.playerIds.map((playerId) => {
+      const participant = challenge.participants[playerId];
+      return {
+        id: playerId,
+        nickname: participant.nickname,
+        avatarUrl: participant.avatarUrl || "",
+        taps: Number(participant.taps || 0),
+        left: Boolean(participant.leftAt)
+      };
+    })
+  };
+}
+
+function serializePlayerTapChallenge(room, playerId) {
+  if (!playerId || !room.tap || !room.tap.active) return null;
+  const challenge = room.tap.active;
+  const participant = challenge.participants[playerId];
+  if (!participant) return null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    durationMs: challenge.durationMs,
+    createdAt: challenge.createdAt,
+    endsAt: challenge.endsAt,
+    taps: Number(participant.taps || 0),
+    players: challenge.playerIds.length
+  };
+}
+
+function serializeTapResult(result) {
+  if (!result) return null;
+  return {
+    id: result.id,
+    status: result.status,
+    type: result.type,
+    title: result.title,
+    reason: result.reason,
+    durationMs: result.durationMs,
+    winners: result.winners,
+    players: result.players,
+    startedAt: result.startedAt,
+    resolvedAt: result.resolvedAt
+  };
+}
+
+function serializePublicActiveTap(room) {
+  return serializeTapChallenge(room.tap && room.tap.active);
+}
+
+function serializePublicTapHistory(room) {
+  return room.tap && room.tap.history
+    ? room.tap.history.slice(-5).reverse().map(serializeTapResult)
+    : [];
+}
+
+function serializeHostBalance(room) {
+  return {
+    active: serializeBalanceChallenge(room.balance && room.balance.active),
+    history: serializePublicBalanceHistory(room)
+  };
+}
+
+function serializeBalanceChallenge(challenge) {
+  if (!challenge) return null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    durationMs: challenge.durationMs,
+    createdAt: challenge.createdAt,
+    endsAt: challenge.endsAt,
+    players: challenge.playerIds.map((playerId) => {
+      const participant = challenge.participants[playerId];
+      return {
+        id: playerId,
+        nickname: participant.nickname,
+        avatarUrl: participant.avatarUrl || "",
+        x: Number(participant.x || 0),
+        y: Number(participant.y || 0),
+        distance: Number(participant.distance || 1),
+        samples: Number(participant.samples || 0),
+        left: Boolean(participant.leftAt)
+      };
+    })
+  };
+}
+
+function serializePlayerBalanceChallenge(room, playerId) {
+  if (!playerId || !room.balance || !room.balance.active) return null;
+  const challenge = room.balance.active;
+  const participant = challenge.participants[playerId];
+  if (!participant) return null;
+  return {
+    id: challenge.id,
+    status: challenge.status,
+    durationMs: challenge.durationMs,
+    createdAt: challenge.createdAt,
+    endsAt: challenge.endsAt,
+    x: Number(participant.x || 0),
+    y: Number(participant.y || 0),
+    distance: Number(participant.distance || 1),
+    samples: Number(participant.samples || 0),
+    players: challenge.playerIds.length
+  };
+}
+
+function serializeBalanceResult(result) {
+  if (!result) return null;
+  return {
+    id: result.id,
+    status: result.status,
+    type: result.type,
+    title: result.title,
+    reason: result.reason,
+    durationMs: result.durationMs,
+    winners: result.winners,
+    players: result.players,
+    startedAt: result.startedAt,
+    resolvedAt: result.resolvedAt
+  };
+}
+
+function serializePublicActiveBalance(room) {
+  return serializeBalanceChallenge(room.balance && room.balance.active);
+}
+
+function serializePublicBalanceHistory(room) {
+  return room.balance && room.balance.history
+    ? room.balance.history.slice(-5).reverse().map(serializeBalanceResult)
+    : [];
+}
+
 function serializeWeapon(weapon, room, privateView = false) {
   if (!weapon) return null;
   const typeLabel = weapon.type === "hide_answer" ? "Oscura risposta" : "Vero/Falso invertito";
@@ -3049,11 +3664,120 @@ function leaderboard(room) {
       avatarUrl: player.avatarUrl || "",
       team: player.team || "",
       score: player.score,
+      tokens: Number(player.tokens || 0),
       streak: player.streak,
       connected: player.connected,
       active: player.active
     }))
     .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+}
+
+function cleanLeaderboard(room) {
+  return activePlayers(room)
+    .map((player) => {
+      let score = 0;
+      for (const answerMap of room.answers.values()) {
+        const answer = answerMap.get(player.id);
+        if (answer) score += Number(answer.points || 0);
+      }
+      return {
+        id: player.id,
+        nickname: player.nickname,
+        avatarUrl: player.avatarUrl || "",
+        team: player.team || "",
+        score,
+        tokens: Number(player.tokens || 0),
+        streak: player.streak,
+        connected: player.connected,
+        active: player.active
+      };
+    })
+    .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+}
+
+function gameTimeline(room) {
+  const items = [];
+  const push = (item) => {
+    if (!item || !item.at) return;
+    items.push(item);
+  };
+  for (const wager of room.wagers.history || []) {
+    push({
+      type: "wager",
+      title: wager.status === "won" ? "Scommessa vinta" : "Scommessa persa",
+      text: wager.status === "won"
+        ? `${wager.bettorNickname} ha scommesso su ${wager.targetNickname} e vince ${Math.abs(Number(wager.tokenDelta != null ? wager.tokenDelta : wager.delta) || 0)} token.`
+        : `${wager.bettorNickname} ha scommesso su ${wager.targetNickname} e perde ${Math.abs(Number(wager.tokenDelta != null ? wager.tokenDelta : wager.delta) || 0)} token.`,
+      at: wager.resolvedAt
+    });
+  }
+  for (const item of room.fifty.history || []) {
+    push({
+      type: "fifty",
+      title: "50 e 50",
+      text: fiftyTimelineText(item),
+      at: item.resolvedAt
+    });
+  }
+  for (const item of room.trio.history || []) {
+    push({
+      type: "trio",
+      title: "Lupo/Agnello/Cavolo",
+      text: trioTimelineText(item),
+      at: item.resolvedAt
+    });
+  }
+  for (const item of room.tap.history || []) {
+    push({
+      type: "tap",
+      title: "Tap West",
+      text: tokenWinnersTimelineText(item, "tap"),
+      at: item.resolvedAt
+    });
+  }
+  for (const item of room.balance.history || []) {
+    push({
+      type: "balance",
+      title: "In bilico",
+      text: tokenWinnersTimelineText(item, "balance"),
+      at: item.resolvedAt
+    });
+  }
+  const weaponEvents = [
+    ...((room.weapons && room.weapons.history) || []),
+    ...((room.weapons && room.weapons.active) || [])
+  ];
+  for (const weapon of weaponEvents) {
+    push({
+      type: "weapon",
+      title: weapon.type === "hide_answer" ? "Malus: risposta oscurata" : "Malus: vero/falso invertito",
+      text: `${weapon.ownerNickname} contro ${(weapon.targetNicknames || []).join(", ")} alla domanda ${weapon.questionNumber}.`,
+      at: weapon.usedAt || weapon.createdAt
+    });
+  }
+  return items
+    .sort((a, b) => Number(a.at || 0) - Number(b.at || 0))
+    .map((item, index) => ({ ...item, index: index + 1 }));
+}
+
+function tokenWinnersTimelineText(result, type) {
+  const winners = Array.isArray(result.winners) ? result.winners : [];
+  if (!winners.length) return type === "balance" ? "Nessuno resta abbastanza centrale." : "Nessun token assegnato.";
+  return winners.map((player) => `${player.nickname} +${player.deltaTokens} token`).join(", ");
+}
+
+function fiftyTimelineText(result) {
+  if (result.outcome === "split") return "Entrambi salvano: posta divisa.";
+  if (result.outcome === "drop_win") return `${result.winnerNickname} lascia cadere ${result.loserNickname} e prende il piatto.`;
+  if (result.outcome === "forfeit") return `${result.loserNickname} esce: ${result.winnerNickname} vince.`;
+  if (result.outcome === "cancelled") return "Sfida annullata.";
+  return "Doppia caduta: entrambi perdono la posta.";
+}
+
+function trioTimelineText(result) {
+  const winners = Array.isArray(result.winners) ? result.winners : [];
+  if (!winners.length) return "Nessun punto assegnato.";
+  return `${winners.map((player) => player.nickname).join(", ")}: ${trioOutcomeText(result)}.`;
 }
 
 function assignTeam(room) {
@@ -3442,6 +4166,14 @@ function resultFromRoom(room) {
       };
     }),
     leaderboard: board,
+    cleanLeaderboard: cleanLeaderboard(room).map((player, index) => ({ ...player, rank: index + 1 })),
+    timeline: gameTimeline(room),
+    wagers: serializeHostWagers(room),
+    fifty: serializeHostFifty(room),
+    trio: serializeHostTrio(room),
+    tap: serializeHostTap(room),
+    balance: serializeHostBalance(room),
+    weapons: serializeHostWeapons(room),
     teamLeaderboard: room.quiz.teamMode ? teamLeaderboard(room) : []
   };
 }

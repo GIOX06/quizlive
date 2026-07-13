@@ -10,6 +10,8 @@ const liveGameAssets = {
   wagers: "/assets/live-games/scommessa-clandestina.png",
   fifty: "/assets/live-games/cinquanta-cinquanta.png",
   trio: "/assets/live-games/lupo-agnello-cavolo.png",
+  tap: "/assets/live-games/scommessa-clandestina.png",
+  balance: "/assets/live-games/cinquanta-cinquanta.png",
   weapons: "/assets/live-games/inverti-risposta.png",
   tokens: "/assets/live-games/scommessa-clandestina.png"
 };
@@ -84,6 +86,8 @@ let local = {
   playerWeaponType: "hide_answer",
   playerWeaponTargetId: "",
   playerWeaponTargetMode: "player",
+  balanceSensorEnabled: false,
+  balanceSensorError: "",
   hostResumeCode: initialHostResumeCode(),
   hostResumeBusy: false,
   hostResumeAttemptedCode: "",
@@ -103,6 +107,8 @@ let liveEventTimer = null;
 let liveAudioContext = null;
 let selfieStream = null;
 let selfieStarting = false;
+let balanceMotionListening = false;
+let balanceLastSentAt = 0;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -183,7 +189,7 @@ window.addEventListener("hashchange", () => {
 setInterval(() => {
   if (!local.room) return;
   if (local.room.status === "question") updateLiveTimers();
-  if (local.room.fiftyChallenge || local.room.activeFifty || recentFiftyResult(local.room) || recentTrioResult(local.room) || document.querySelector(".screen-fifty-result") || document.querySelector(".screen-trio-result")) updateFiftyTimers();
+  if (local.room.fiftyChallenge || local.room.tapChallenge || local.room.balanceChallenge || local.room.activeFifty || local.room.activeTap || local.room.activeBalance || recentFiftyResult(local.room) || recentTrioResult(local.room) || recentTapResult(local.room) || recentBalanceResult(local.room) || document.querySelector(".screen-fifty-result") || document.querySelector(".screen-trio-result")) updateFiftyTimers();
 }, 250);
 
 window.addEventListener("keydown", handleBuilderKeyboard);
@@ -1272,11 +1278,13 @@ function renderScreenGame(room) {
   const question = room.question;
   const fiftyResult = recentFiftyResult(room);
   const trioResult = recentTrioResult(room);
+  const tapResult = recentTapResult(room);
+  const balanceResult = recentBalanceResult(room);
   return `
     <section class="screen-live-layout">
       ${renderScreenLeaderboardPanel(room)}
       <div class="screen-live-stage">
-        ${room.activeTrio ? renderScreenTrioChallenge(room.activeTrio) : trioResult ? renderScreenTrioResult(trioResult) : room.activeFifty ? renderScreenFiftyChallenge(room.activeFifty) : fiftyResult ? renderScreenFiftyResult(fiftyResult) : `
+        ${room.activeTap ? renderScreenTapChallenge(room.activeTap) : tapResult ? renderScreenTapResult(tapResult) : room.activeBalance ? renderScreenBalanceChallenge(room.activeBalance) : balanceResult ? renderScreenBalanceResult(balanceResult) : room.activeTrio ? renderScreenTrioChallenge(room.activeTrio) : trioResult ? renderScreenTrioResult(trioResult) : room.activeFifty ? renderScreenFiftyChallenge(room.activeFifty) : fiftyResult ? renderScreenFiftyResult(fiftyResult) : `
           ${room.status === "lobby" ? renderScreenLobby(room) : ""}
           ${room.status === "question" && question ? renderScreenQuestion(room) : ""}
           ${room.status === "reveal" && question ? renderScreenReveal(room) : ""}
@@ -1417,6 +1425,103 @@ function renderScreenTrioResult(result) {
   `;
 }
 
+function renderScreenTapChallenge(challenge) {
+  const players = Array.isArray(challenge.players)
+    ? challenge.players.slice().sort((a, b) => Number(b.taps || 0) - Number(a.taps || 0))
+    : [];
+  return `
+    <article class="screen-tap-show panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Mini gioco live</p>
+        <h1 class="screen-title">Il tap piu veloce del West</h1>
+        <p class="screen-subtitle">Tutti partecipano. Primo +2 token, secondo +1 token.</p>
+      </div>
+      <div class="tap-stage-clock" data-mini-countdown data-ends-at="${Number(challenge.endsAt || 0)}">${miniCountdownLabel(challenge.endsAt)}</div>
+      <div class="tap-race-board">
+        ${players.map((player, index) => `
+          <div class="tap-race-row">
+            <span class="rank">${index + 1}</span>
+            ${renderPlayerAvatar(player, "avatar-screen")}
+            <strong>${escapeHtml(player.nickname)}</strong>
+            <span>${Number(player.taps || 0)} tap</span>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderScreenTapResult(result) {
+  const players = Array.isArray(result.players) ? result.players.slice(0, 6) : [];
+  return `
+    <article class="screen-tap-show screen-tap-result panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Risultato mini-gioco</p>
+        <h1 class="screen-title">Tap West</h1>
+        <p class="screen-subtitle">${escapeHtml(tokenWinnersText(result))}</p>
+      </div>
+      <div class="tap-race-board">
+        ${players.map((player) => `
+          <div class="tap-race-row ${player.deltaTokens > 0 ? "winner" : ""}">
+            <span class="rank">${player.rank}</span>
+            ${renderPlayerAvatar(player, "avatar-screen")}
+            <strong>${escapeHtml(player.nickname)}</strong>
+            <span>${Number(player.taps || 0)} tap ${player.deltaTokens ? `+${player.deltaTokens} token` : ""}</span>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderScreenBalanceChallenge(challenge) {
+  const players = Array.isArray(challenge.players) ? challenge.players : [];
+  const averageX = players.length ? players.reduce((sum, player) => sum + Number(player.x || 0), 0) / players.length : 0;
+  return `
+    <article class="screen-balance-show panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Mini gioco live</p>
+        <h1 class="screen-title">In bilico</h1>
+        <p class="screen-subtitle">Resta sul tronco: chi finisce piu vicino al centro prende 2 token.</p>
+      </div>
+      <div class="tap-stage-clock" data-mini-countdown data-ends-at="${Number(challenge.endsAt || 0)}">${miniCountdownLabel(challenge.endsAt)}</div>
+      <div class="balance-stage">
+        <div class="balance-log" style="transform:rotate(${Math.round(averageX * 10)}deg)">
+          ${players.map((player) => `
+            <span class="balance-player" style="left:${Math.round(50 + Number(player.x || 0) * 42)}%; top:${Math.round(48 + Number(player.y || 0) * 26)}%">
+              ${renderPlayerAvatar(player, "player-avatar")}
+              <strong>${escapeHtml(player.nickname)}</strong>
+            </span>
+          `).join("")}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderScreenBalanceResult(result) {
+  const players = Array.isArray(result.players) ? result.players.slice(0, 6) : [];
+  return `
+    <article class="screen-balance-show screen-balance-result panel">
+      <div class="screen-fifty-header">
+        <p class="screen-kicker">Risultato mini-gioco</p>
+        <h1 class="screen-title">In bilico</h1>
+        <p class="screen-subtitle">${escapeHtml(tokenWinnersText(result))}</p>
+      </div>
+      <div class="tap-race-board">
+        ${players.map((player) => `
+          <div class="tap-race-row ${player.deltaTokens > 0 ? "winner" : ""}">
+            <span class="rank">${player.rank}</span>
+            ${renderPlayerAvatar(player, "avatar-screen")}
+            <strong>${escapeHtml(player.nickname)}</strong>
+            <span>${Math.round((1 - Number(player.distance || 1)) * 100)}% centro ${player.deltaTokens ? `+${player.deltaTokens} token` : ""}</span>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
 function trioResultHeadline(result) {
   if (result.outcome === "single_win") return "Un solo vincitore";
   if (result.outcome === "team_win") return "Posta divisa in due";
@@ -1445,6 +1550,20 @@ function recentFiftyResult(room) {
 
 function recentTrioResult(room) {
   const history = room && Array.isArray(room.trioHistory) ? room.trioHistory : [];
+  const result = history[0];
+  if (!result || !result.resolvedAt) return null;
+  return Date.now() - Number(result.resolvedAt) < 22000 ? result : null;
+}
+
+function recentTapResult(room) {
+  const history = room && Array.isArray(room.tapHistory) ? room.tapHistory : [];
+  const result = history[0];
+  if (!result || !result.resolvedAt) return null;
+  return Date.now() - Number(result.resolvedAt) < 22000 ? result : null;
+}
+
+function recentBalanceResult(room) {
+  const history = room && Array.isArray(room.balanceHistory) ? room.balanceHistory : [];
   const result = history[0];
   if (!result || !result.resolvedAt) return null;
   return Date.now() - Number(result.resolvedAt) < 22000 ? result : null;
@@ -1674,11 +1793,11 @@ function screenWagerResultsForQuestion(room) {
 
 function renderScreenWagerResultCard(item) {
   const won = item.status === "won";
-  const delta = Number(item.delta || 0);
+  const delta = Number(item.tokenDelta != null ? item.tokenDelta : item.delta || 0);
   const amount = Math.abs(delta) || Number(item.stake || 0);
   return `
     <article class="screen-wager-card ${won ? "won" : "lost"}">
-      <span class="status-pill compact">${won ? `+${amount} pt` : `-${amount} pt`}</span>
+      <span class="status-pill compact">${won ? `+${amount}` : `-${amount}`} token</span>
       <strong>${escapeHtml(item.bettorNickname || "Giocatore")}</strong>
       <p>${escapeHtml(wagerResultScreenText(item, won, amount))}</p>
     </article>
@@ -1688,24 +1807,30 @@ function renderScreenWagerResultCard(item) {
 function wagerResultScreenText(item, won, amount) {
   const bettor = item.bettorNickname || "Un giocatore";
   const target = item.targetNickname || "un avversario";
-  if (won) return `${bettor} ha scommesso su ${target} e vince ${amount} punti.`;
-  if (item.reason === "no_answer") return `${bettor} ha scommesso su ${target}, ma non arriva risposta: perde ${amount} punti.`;
-  return `${bettor} ha scommesso su ${target} e perde ${amount} punti.`;
+  if (won) return `${bettor} ha scommesso su ${target} e vince ${amount} token.`;
+  if (item.reason === "no_answer") return `${bettor} ha scommesso su ${target}, ma non arriva risposta: perde ${amount} token.`;
+  return `${bettor} ha scommesso su ${target} e perde ${amount} token.`;
 }
 
 function renderScreenEnded(room) {
+  const cleanBoard = Array.isArray(room.cleanLeaderboard) ? room.cleanLeaderboard : [];
   return `
     <div class="panel screen-panel screen-final stack">
       <div>
         <p class="screen-kicker">${escapeHtml(room.title)}</p>
         <h1 class="screen-title">Classifica finale</h1>
       </div>
-      <div class="screen-podium-wrap">
-        ${renderPodium(room)}
+      <div class="screen-final-grid">
+        <section class="screen-podium-wrap">
+          <p class="screen-kicker">Con bonus, malus e mini-giochi</p>
+          ${renderPodiumFromBoard(room.leaderboard || [])}
+        </section>
+        <section class="screen-podium-wrap">
+          <p class="screen-kicker">Senza bonus/malus</p>
+          ${renderPodiumFromBoard(cleanBoard)}
+        </section>
       </div>
-      <div class="screen-final-board">
-        <p class="subtle">La classifica completa resta visibile a sinistra.</p>
-      </div>
+      ${renderFinalTimeline(room, true)}
     </div>
   `;
 }
@@ -1888,16 +2013,23 @@ function renderPlayerGame(room) {
   if (room.player && room.player.rematch === "pending") return renderPlayerRematch(room);
   if (room.player && room.player.active === false) return renderPlayerExcluded(room);
   const miniGame = renderPlayerMiniGame(room);
+  if (miniGame) {
+    return `
+      <section class="game-layout player-game-layout player-mini-game-layout">
+        <div class="stage">
+          ${miniGame}
+        </div>
+      </section>
+    `;
+  }
   return `
     <section class="game-layout player-game-layout">
       <div class="stage">
-        ${miniGame || `
-          ${room.status === "lobby" ? renderPlayerWaiting(room) : ""}
-          ${room.status === "question" && question ? renderPlayerQuestion(room) : ""}
-          ${room.status === "reveal" && question ? renderReveal(room, false) : ""}
-          ${room.status === "ended" ? renderEnded(room, false) : ""}
-          ${renderPlayerWeaponLauncher(room)}
-        `}
+        ${room.status === "lobby" ? renderPlayerWaiting(room) : ""}
+        ${room.status === "question" && question ? renderPlayerQuestion(room) : ""}
+        ${room.status === "reveal" && question ? renderReveal(room, false) : ""}
+        ${room.status === "ended" ? renderEnded(room, false) : ""}
+        ${renderPlayerWeaponLauncher(room)}
         ${renderPlayerWeaponDialog(room)}
       </div>
       <aside class="panel stack">
@@ -1913,7 +2045,62 @@ function renderPlayerGame(room) {
 }
 
 function renderPlayerMiniGame(room) {
-  return renderPlayerFiftyChallenge(room) || renderPlayerTrioChallenge(room) || renderPlayerWagerOffer(room);
+  return renderPlayerTapChallenge(room) ||
+    renderPlayerBalanceChallenge(room) ||
+    renderPlayerFiftyChallenge(room) ||
+    renderPlayerTrioChallenge(room) ||
+    renderPlayerWagerOffer(room);
+}
+
+function renderPlayerTapChallenge(room) {
+  const challenge = room.tapChallenge;
+  if (!challenge) return "";
+  return `
+    <section class="panel player-mini-game live-tap-challenge stack">
+      <div>
+        <p class="screen-kicker">Mini gioco live</p>
+        <h2 class="section-title">Il tap piu veloce del West</h2>
+        <p class="subtle">Hai 10 secondi. Tocca il pulsante piu volte possibile: primo +2 token, secondo +1.</p>
+      </div>
+      <div class="tap-countdown" data-mini-countdown data-ends-at="${Number(challenge.endsAt || 0)}">${miniCountdownLabel(challenge.endsAt)}</div>
+      <button class="tap-west-button" data-action="tap-west" data-challenge-id="${escapeAttr(challenge.id)}">
+        <span>${Number(challenge.taps || 0)}</span>
+        <strong>TAP!</strong>
+      </button>
+      <p class="subtle">${Number(challenge.players || 0)} giocatori in gara</p>
+    </section>
+  `;
+}
+
+function renderPlayerBalanceChallenge(room) {
+  const challenge = room.balanceChallenge;
+  if (!challenge) return "";
+  const distance = Number(challenge.distance || 1);
+  const centered = Math.max(0, Math.round((1 - distance) * 100));
+  return `
+    <section class="panel player-mini-game live-balance-challenge stack">
+      <div>
+        <p class="screen-kicker">Mini gioco live</p>
+        <h2 class="section-title">In bilico</h2>
+        <p class="subtle">Tieni il telefono stabile. Dopo 15 secondi vince chi e piu vicino al centro.</p>
+      </div>
+      <div class="tap-countdown" data-mini-countdown data-ends-at="${Number(challenge.endsAt || 0)}">${miniCountdownLabel(challenge.endsAt)}</div>
+      <div class="balance-phone-meter">
+        <span style="transform:translate(${Math.round(Number(challenge.x || 0) * 44)}%, ${Math.round(Number(challenge.y || 0) * 44)}%)"></span>
+      </div>
+      <strong class="balance-score">${centered}% centro</strong>
+      <div class="toolbar">
+        <button class="btn gold" data-action="enable-balance-sensors" data-challenge-id="${escapeAttr(challenge.id)}">${local.balanceSensorEnabled ? "Sensori attivi" : "Attiva sensori"}</button>
+        <button class="btn ghost" data-action="calibrate-balance" data-challenge-id="${escapeAttr(challenge.id)}">Calibra centro</button>
+      </div>
+      ${local.balanceSensorError ? `<p class="subtle">${escapeHtml(local.balanceSensorError)}</p>` : ""}
+    </section>
+  `;
+}
+
+function miniCountdownLabel(endsAt) {
+  const left = Math.max(0, Math.ceil((Number(endsAt || 0) - Date.now()) / 1000));
+  return `${left}s`;
 }
 
 function playerWeaponTargets(room) {
@@ -2029,7 +2216,7 @@ function renderPlayerWagerOffer(room) {
     <section class="panel player-mini-game live-wager-offer stack">
       <div>
         <p class="screen-kicker">Scommessa live</p>
-        <h2 class="section-title">Punti in gioco: ${offer.stake}</h2>
+        <h2 class="section-title">Token in gioco: ${offer.stake}</h2>
         <p class="subtle">Scommetti sulla prossima risposta: bersaglio casuale x3, bersaglio scelto x2.</p>
       </div>
       <div class="live-wager-actions">
@@ -2238,6 +2425,7 @@ function renderReveal(room, isHost) {
 }
 
 function renderEnded(room, isHost) {
+  const cleanBoard = Array.isArray(room.cleanLeaderboard) ? room.cleanLeaderboard : [];
   return `
     <div class="panel stack">
       <div>
@@ -2245,11 +2433,50 @@ function renderEnded(room, isHost) {
         <p class="subtle">${escapeHtml(room.title)}</p>
       </div>
       ${renderTeamLeaderboard(room)}
-      ${renderPodium(room)}
-      ${renderLeaderboard(room)}
+      <section class="final-boards">
+        <article class="final-board-card stack">
+          <div>
+            <h2 class="mini-title">Classifica ufficiale</h2>
+            <p class="subtle">Risultato con punti quiz, token, scommesse e malus.</p>
+          </div>
+          ${renderPodiumFromBoard(room.leaderboard || [])}
+          ${renderLeaderboardBoard(room.leaderboard || [], room.player && room.player.id)}
+        </article>
+        <article class="final-board-card stack">
+          <div>
+            <h2 class="mini-title">Senza bonus/malus</h2>
+            <p class="subtle">Solo i punti delle risposte, per vedere come sarebbe andata senza eventi live.</p>
+          </div>
+          ${renderPodiumFromBoard(cleanBoard)}
+          ${renderLeaderboardBoard(cleanBoard, room.player && room.player.id)}
+        </article>
+      </section>
+      ${renderFinalTimeline(room, false)}
       ${isHost ? renderResultsDashboard(room) : ""}
       ${isHost ? `<div class="toolbar"><button class="btn ghost" data-action="reset-room">Nuova partita</button></div>` : ""}
     </div>
+  `;
+}
+
+function renderFinalTimeline(room, compact = false) {
+  const items = Array.isArray(room.timeline) ? room.timeline : [];
+  if (!items.length) return "";
+  const visible = compact ? items.slice(-6).reverse() : items.slice().reverse();
+  return `
+    <section class="final-timeline stack">
+      <div>
+        <h2 class="mini-title">Cronaca della gara</h2>
+        <p class="subtle">Scommesse, malus, mini-giochi e cambi di token che hanno spostato la partita.</p>
+      </div>
+      <div class="final-timeline-list">
+        ${visible.map((item) => `
+          <article class="final-timeline-item">
+            <span class="status-pill compact">${escapeHtml(item.title || "Evento")}</span>
+            <p>${escapeHtml(item.text || "")}</p>
+          </article>
+        `).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -2320,7 +2547,11 @@ function renderQuestionSummary(item) {
 }
 
 function renderPodium(room) {
-  const top = room.leaderboard.slice(0, 3);
+  return renderPodiumFromBoard(room.leaderboard || []);
+}
+
+function renderPodiumFromBoard(board) {
+  const top = Array.isArray(board) ? board.slice(0, 3) : [];
   if (!top.length) return `<div class="empty">Nessun giocatore</div>`;
   return `
     <div class="podium">
@@ -2328,7 +2559,8 @@ function renderPodium(room) {
         <div class="podium-place">
           <div class="podium-rank">${index + 1}</div>
           <strong>${escapeHtml(player.nickname)}</strong>
-          <span>${player.score} punti</span>
+          <span>${Number(player.score || 0)} punti</span>
+          <small>${Number(player.tokens || 0)} token</small>
         </div>
       `).join("")}
     </div>
@@ -2430,6 +2662,8 @@ function renderHostMiniGamesEntry(room) {
       ${renderHostWagerStatus(room)}
       ${renderHostFiftyStatus(room)}
       ${renderHostTrioStatus(room)}
+      ${renderHostTapStatus(room)}
+      ${renderHostBalanceStatus(room)}
       ${renderHostWeaponsStatus(room)}
     </div>
   `;
@@ -2458,6 +2692,8 @@ function renderMiniGamesDialog(room) {
           ${tabButton("wagers", "Scommesse")}
           ${tabButton("fifty", "50 e 50")}
           ${tabButton("trio", "Lupo/Agnello/Cavolo")}
+          ${tabButton("tap", "Tap West")}
+          ${tabButton("balance", "In bilico")}
           ${tabButton("weapons", "Armi")}
           ${tabButton("tokens", "Token")}
         </div>
@@ -2466,13 +2702,49 @@ function renderMiniGamesDialog(room) {
             ? renderHostFiftyPanel(room, players)
             : tab === "trio"
               ? renderTrioMiniGamePanel(players, room)
-              : tab === "weapons"
-                ? renderWeaponsMiniGamePanel(players, room)
-                : tab === "tokens"
-                  ? renderTokenMiniGamePanel(players)
-                  : renderHostWagerPanel(room, players)}
+              : tab === "tap"
+                ? renderTapMiniGamePanel(players, room)
+                : tab === "balance"
+                  ? renderBalanceMiniGamePanel(players, room)
+                  : tab === "weapons"
+                    ? renderWeaponsMiniGamePanel(players, room)
+                    : tab === "tokens"
+                      ? renderTokenMiniGamePanel(players)
+                      : renderHostWagerPanel(room, players)}
         </div>
       </article>
+    </section>
+  `;
+}
+
+function renderTapMiniGamePanel(players, room) {
+  const connectedPlayers = players.filter((player) => player.connected);
+  const active = room.tap && room.tap.active;
+  return `
+    <section class="mini-game-card stack">
+      <div>
+        <h3 class="mini-title">Il tap piu veloce del West</h3>
+        <p class="subtle">Tutti partecipano. In 10 secondi vince chi tocca piu volte: primo +2 token, secondo +1 token.</p>
+      </div>
+      <button class="btn gold" data-action="send-tap-start" ${connectedPlayers.length && !active ? "" : "disabled"}>Avvia Tap West</button>
+      ${connectedPlayers.length ? "" : `<p class="subtle">Servono giocatori collegati.</p>`}
+      ${renderHostTapStatus(room)}
+    </section>
+  `;
+}
+
+function renderBalanceMiniGamePanel(players, room) {
+  const connectedPlayers = players.filter((player) => player.connected);
+  const active = room.balance && room.balance.active;
+  return `
+    <section class="mini-game-card stack">
+      <div>
+        <h3 class="mini-title">In bilico</h3>
+        <p class="subtle">Tutti sul tronco per 15 secondi. Il telefono diventa il balance: chi resta piu al centro prende 2 token.</p>
+      </div>
+      <button class="btn gold" data-action="send-balance-start" ${connectedPlayers.length && !active ? "" : "disabled"}>Avvia In bilico</button>
+      ${connectedPlayers.length ? "" : `<p class="subtle">Servono giocatori collegati.</p>`}
+      ${renderHostBalanceStatus(room)}
     </section>
   `;
 }
@@ -2588,10 +2860,10 @@ function renderTokenMiniGamePanel(players) {
 }
 
 function renderHostWagerPanel(room, players) {
-  const availablePlayers = players.filter((player) => Number(player.score || 0) > 0 && player.connected);
+  const availablePlayers = players.filter((player) => Number(player.tokens || 0) > 0 && player.connected);
   const selectedPlayer = availablePlayers.find((player) => player.id === local.liveWagerPlayerId) || availablePlayers[0] || null;
   const selectedPlayerId = selectedPlayer ? selectedPlayer.id : "";
-  const maxStake = selectedPlayer ? Math.max(1, Number(selectedPlayer.score || 0)) : 1;
+  const maxStake = selectedPlayer ? Math.max(1, Number(selectedPlayer.tokens || 0)) : 1;
   const stake = Math.min(maxStake, Math.max(1, Number(local.liveWagerStake) || 100));
   return `
     <div class="live-wager-panel stack">
@@ -2603,11 +2875,11 @@ function renderHostWagerPanel(room, players) {
         <select data-live-wager-player aria-label="Giocatore scommettitore" ${availablePlayers.length ? "" : "disabled"}>
           ${availablePlayers.length
             ? availablePlayers.map((player) => `
-              <option value="${escapeAttr(player.id)}" ${player.id === selectedPlayerId ? "selected" : ""}>${escapeHtml(player.nickname)} - ${player.score} pt</option>
+              <option value="${escapeAttr(player.id)}" ${player.id === selectedPlayerId ? "selected" : ""}>${escapeHtml(player.nickname)} - ${Number(player.tokens || 0)} token</option>
             `).join("")
-            : `<option value="">Nessun giocatore con punti</option>`}
+            : `<option value="">Nessun giocatore con token</option>`}
         </select>
-        <input data-live-wager-stake type="number" min="1" max="${maxStake}" value="${stake}" aria-label="Punti da scommettere" ${selectedPlayer ? "" : "disabled"} />
+        <input data-live-wager-stake type="number" min="1" max="${maxStake}" value="${stake}" aria-label="Token da scommettere" ${selectedPlayer ? "" : "disabled"} />
       </div>
       <button class="btn gold" data-action="send-wager-offer" ${selectedPlayer ? "" : "disabled"}>Invita scommessa</button>
       ${renderHostWagerStatus(room)}
@@ -2621,9 +2893,12 @@ function renderHostWagerStatus(room) {
   const active = Array.isArray(wagers.active) ? wagers.active : [];
   const history = Array.isArray(wagers.history) ? wagers.history : [];
   const items = [
-    ...offers.map((item) => ({ label: "In attesa", text: `${item.bettorNickname} - ${item.stake} pt` })),
-    ...active.map((item) => ({ label: `x${item.multiplier}`, text: `${item.bettorNickname} su ${item.targetNickname} - ${item.stake} pt` })),
-    ...history.slice(0, 3).map((item) => ({ label: item.status === "won" ? "Vinta" : "Persa", text: `${item.bettorNickname} ${item.delta > 0 ? "+" : ""}${item.delta} pt` }))
+    ...offers.map((item) => ({ label: "In attesa", text: `${item.bettorNickname} - ${item.stake} token` })),
+    ...active.map((item) => ({ label: `x${item.multiplier}`, text: `${item.bettorNickname} su ${item.targetNickname} - ${item.stake} token` })),
+    ...history.slice(0, 3).map((item) => {
+      const delta = Number(item.tokenDelta != null ? item.tokenDelta : item.delta || 0);
+      return { label: item.status === "won" ? "Vinta" : "Persa", text: `${item.bettorNickname} ${delta > 0 ? "+" : ""}${delta} token` };
+    })
   ];
   if (!items.length) return "";
   return `
@@ -2717,6 +2992,60 @@ function renderHostTrioStatus(room) {
   `;
 }
 
+function renderHostTapStatus(room) {
+  const tap = room.tap || {};
+  const active = tap.active;
+  const history = Array.isArray(tap.history) ? tap.history : [];
+  const activeItems = active && Array.isArray(active.players)
+    ? active.players.slice().sort((a, b) => Number(b.taps || 0) - Number(a.taps || 0)).slice(0, 3).map((player) => ({
+      label: `${Number(player.taps || 0)} tap`,
+      text: player.nickname
+    }))
+    : [];
+  const historyItems = history.slice(0, 3).map((item) => ({
+    label: "Token",
+    text: tokenWinnersText(item)
+  }));
+  return renderMiniStatusRows([...activeItems, ...historyItems]);
+}
+
+function renderHostBalanceStatus(room) {
+  const balance = room.balance || {};
+  const active = balance.active;
+  const history = Array.isArray(balance.history) ? balance.history : [];
+  const activeItems = active && Array.isArray(active.players)
+    ? active.players.slice().sort((a, b) => Number(a.distance || 1) - Number(b.distance || 1)).slice(0, 3).map((player) => ({
+      label: `${Math.round((1 - Number(player.distance || 1)) * 100)}%`,
+      text: player.nickname
+    }))
+    : [];
+  const historyItems = history.slice(0, 3).map((item) => ({
+    label: "Vinto",
+    text: tokenWinnersText(item)
+  }));
+  return renderMiniStatusRows([...activeItems, ...historyItems]);
+}
+
+function renderMiniStatusRows(items) {
+  if (!items.length) return "";
+  return `
+    <div class="live-wager-list">
+      ${items.map((item) => `
+        <div class="live-wager-row">
+          <span class="status-pill compact">${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(item.text)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function tokenWinnersText(item) {
+  const winners = Array.isArray(item && item.winners) ? item.winners : [];
+  if (!winners.length) return "Nessun token";
+  return winners.map((player) => `${player.nickname} +${player.deltaTokens}`).join(", ");
+}
+
 function renderHostWeaponsStatus(room) {
   const weapons = room.weapons || {};
   const active = Array.isArray(weapons.active) ? weapons.active : [];
@@ -2802,16 +3131,19 @@ function renderHostPlayers(room) {
 }
 
 function renderLeaderboard(room) {
-  if (!room.leaderboard || !room.leaderboard.length) return `<div class="empty">Classifica vuota</div>`;
-  const selfId = room.player && room.player.id;
+  return renderLeaderboardBoard(room.leaderboard || [], room.player && room.player.id);
+}
+
+function renderLeaderboardBoard(board, selfId = "") {
+  if (!Array.isArray(board) || !board.length) return `<div class="empty">Classifica vuota</div>`;
   return `
     <div class="side-list">
-      ${room.leaderboard.map((player, index) => `
+      ${board.map((player, index) => `
         <div class="leader-row ${player.id === selfId ? "self" : ""}">
           <span class="rank">${index + 1}</span>
           ${renderPlayerAvatar(player)}
           <span class="name">${escapeHtml(player.nickname)} ${player.team ? `<span class="team-pill">${escapeHtml(player.team)}</span>` : ""}</span>
-          <span class="score">${player.score}</span>
+          <span class="score">${Number(player.score || 0)}</span>
         </div>
       `).join("")}
     </div>
@@ -3355,6 +3687,8 @@ function handleAction(event) {
   if (action === "send-wager-offer") sendWagerOffer();
   if (action === "send-fifty-start") sendFiftyStart();
   if (action === "send-trio-start") sendTrioStart();
+  if (action === "send-tap-start") sendTapStart();
+  if (action === "send-balance-start") sendBalanceStart();
   if (action === "send-hide-answer-weapon") sendMiniWeapon("hide_answer");
   if (action === "send-invert-tf-weapon") sendMiniWeapon("invert_true_false");
   if (action === "open-mini-games") openMiniGames();
@@ -3367,6 +3701,9 @@ function handleAction(event) {
   if (action === "close-player-weapons") closePlayerWeapons();
   if (action === "set-player-weapon-type") setPlayerWeaponType(target.dataset.playerWeaponType);
   if (action === "send-player-weapon") sendPlayerWeapon();
+  if (action === "tap-west") tapWest(target.dataset.challengeId);
+  if (action === "enable-balance-sensors") enableBalanceSensors(target.dataset.challengeId);
+  if (action === "calibrate-balance") sendBalanceUpdate(target.dataset.challengeId, 0, 0);
   if (action === "ready-fifty") readyFifty(target.dataset.challengeId);
   if (action === "choose-trio") chooseTrio(target.dataset.challengeId, target.dataset.trioChoice);
   if (action === "accept-wager-random") respondWager(target.dataset.wagerId, true, "random");
@@ -3380,7 +3717,13 @@ function handleAction(event) {
 }
 
 function addQuestion() {
-  local.quiz.questions.push({
+  const questions = local.quiz.questions;
+  const insertIndex = Number.isInteger(local.builderQuestionIndex) &&
+    local.builderQuestionIndex >= 0 &&
+    local.builderQuestionIndex < questions.length
+    ? local.builderQuestionIndex
+    : 0;
+  questions.splice(insertIndex, 0, {
     type: "multiple",
     text: "Nuova domanda",
     answers: ["Risposta A", "Risposta B", "Risposta C", "Risposta D"],
@@ -3390,7 +3733,7 @@ function addQuestion() {
     points: 0,
     timeLimit: 20
   });
-  local.builderQuestionIndex = local.quiz.questions.length - 1;
+  local.builderQuestionIndex = insertIndex;
   local.builderEditing = true;
   render();
 }
@@ -4959,13 +5302,14 @@ function sendLiveEvent(payload, onSuccess) {
 
 function sendWagerOffer() {
   const room = local.room;
-  const players = room && Array.isArray(room.players) ? room.players.filter((player) => Number(player.score || 0) > 0 && player.connected) : [];
+  const players = room && Array.isArray(room.players) ? room.players.filter((player) => Number(player.tokens || 0) > 0 && player.connected) : [];
   const selectedPlayer = players.find((player) => player.id === local.liveWagerPlayerId) || players[0];
   if (!selectedPlayer) {
-    showToast("Nessun giocatore con punti");
+    showToast("Nessun giocatore con token");
     return;
   }
-  const stake = Math.max(1, Math.floor(Number(local.liveWagerStake) || 1));
+  const maxStake = Math.max(1, Math.floor(Number(selectedPlayer.tokens || 0)));
+  const stake = Math.min(maxStake, Math.max(1, Math.floor(Number(local.liveWagerStake) || 1)));
   socket.emit("host:wager-offer", {
     playerId: selectedPlayer.id,
     stake
@@ -4997,6 +5341,26 @@ function sendTrioStart() {
       return;
     }
     showToast("Sfida a tre avviata");
+  });
+}
+
+function sendTapStart() {
+  socket.emit("host:tap-start", { durationMs: 10000 }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Tap West non avviato");
+      return;
+    }
+    showToast("Tap West avviato");
+  });
+}
+
+function sendBalanceStart() {
+  socket.emit("host:balance-start", { durationMs: 15000 }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "In bilico non avviato");
+      return;
+    }
+    showToast("In bilico avviato");
   });
 }
 
@@ -5046,7 +5410,7 @@ function closeMiniGames() {
 }
 
 function setMiniGameTab(tab) {
-  const allowed = new Set(["wagers", "fifty", "trio", "weapons", "tokens"]);
+  const allowed = new Set(["wagers", "fifty", "trio", "tap", "balance", "weapons", "tokens"]);
   local.miniGameTab = allowed.has(tab) ? tab : "wagers";
   render();
 }
@@ -5116,6 +5480,59 @@ function sendPlayerWeapon() {
     if (selectedTarget) local.playerWeaponTargetId = selectedTarget.id;
     showToast(response.delivered ? "Malus lanciato" : "Malus attivato");
     render();
+  });
+}
+
+function tapWest(challengeId) {
+  socket.emit("player:tap-west", { challengeId, count: 1 }, (response) => {
+    if (!response || !response.ok) {
+      showToast(response && response.error ? response.error : "Tap non registrato");
+    }
+  });
+}
+
+async function enableBalanceSensors(challengeId) {
+  local.balanceSensorError = "";
+  try {
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      const permission = await DeviceOrientationEvent.requestPermission();
+      if (permission !== "granted") {
+        local.balanceSensorError = "Permesso sensori non concesso. Usa Calibra centro per testare.";
+        render();
+        return;
+      }
+    }
+    if (!balanceMotionListening) {
+      window.addEventListener("deviceorientation", handleBalanceMotion, true);
+      balanceMotionListening = true;
+    }
+    local.balanceSensorEnabled = true;
+    sendBalanceUpdate(challengeId, 0, 0);
+    render();
+  } catch (_error) {
+    local.balanceSensorError = "Sensori non disponibili in questo browser. Usa Calibra centro per testare.";
+    render();
+  }
+}
+
+function handleBalanceMotion(event) {
+  const challenge = local.room && local.room.balanceChallenge;
+  if (!challenge || !local.balanceSensorEnabled) return;
+  const now = Date.now();
+  if (now - balanceLastSentAt < 140) return;
+  balanceLastSentAt = now;
+  const x = Math.max(-1, Math.min(1, Number(event.gamma || 0) / 35));
+  const y = Math.max(-1, Math.min(1, Number(event.beta || 0) / 45));
+  sendBalanceUpdate(challenge.id, x, y, true);
+}
+
+function sendBalanceUpdate(challengeId, x, y, silent = false) {
+  socket.emit("player:balance-update", { challengeId, x, y }, (response) => {
+    if (!response || !response.ok) {
+      if (!silent) showToast(response && response.error ? response.error : "Bilanciamento non registrato");
+      return;
+    }
+    if (!silent) showToast("Bilanciamento registrato");
   });
 }
 
@@ -5505,6 +5922,19 @@ function updateFiftyTimers() {
     render();
     return;
   }
+  if (document.querySelector(".screen-tap-result") && local.room && !recentTapResult(local.room)) {
+    render();
+    return;
+  }
+  if (document.querySelector(".screen-balance-result") && local.room && !recentBalanceResult(local.room)) {
+    render();
+    return;
+  }
+
+  document.querySelectorAll("[data-mini-countdown]").forEach((element) => {
+    const endsAt = Number(element.dataset.endsAt || 0);
+    element.textContent = `${Math.max(0, Math.ceil((endsAt - Date.now()) / 1000))}s`;
+  });
 
   document.querySelectorAll("[data-fifty-countdown]").forEach((element) => {
     const pressStartsAt = Number(element.dataset.pressStartsAt || 0);
