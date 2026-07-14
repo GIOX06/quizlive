@@ -1517,7 +1517,7 @@ function renderScreenBalanceResult(result) {
             <span class="rank">${player.rank}</span>
             ${renderPlayerAvatar(player, "avatar-screen")}
             <strong>${escapeHtml(player.nickname)}</strong>
-            <span>${Math.round((1 - Number(player.distance || 1)) * 100)}% centro ${player.deltaTokens ? `+${player.deltaTokens} token` : ""}</span>
+            <span>${Math.round((1 - Number(player.distance == null ? 1 : player.distance)) * 100)}% centro ${player.deltaTokens ? `+${player.deltaTokens} token` : ""}</span>
           </div>
         `).join("")}
       </div>
@@ -2123,7 +2123,7 @@ function renderPlayerTapChallenge(room) {
 function renderPlayerBalanceChallenge(room) {
   const challenge = room.balanceChallenge;
   if (!challenge) return "";
-  const distance = Number(challenge.distance || 1);
+  const distance = Number(challenge.distance == null ? 1 : challenge.distance);
   const centered = Math.max(0, Math.round((1 - distance) * 100));
   return `
     <section class="panel player-mini-game live-balance-challenge stack">
@@ -3091,8 +3091,8 @@ function renderHostBalanceStatus(room) {
   const active = balance.active;
   const history = Array.isArray(balance.history) ? balance.history : [];
   const activeItems = active && Array.isArray(active.players)
-    ? active.players.slice().sort((a, b) => Number(a.distance || 1) - Number(b.distance || 1)).slice(0, 3).map((player) => ({
-      label: `${Math.round((1 - Number(player.distance || 1)) * 100)}%`,
+    ? active.players.slice().sort((a, b) => Number(a.distance == null ? 1 : a.distance) - Number(b.distance == null ? 1 : b.distance)).slice(0, 3).map((player) => ({
+      label: `${Math.round((1 - Number(player.distance == null ? 1 : player.distance)) * 100)}%`,
       text: player.nickname
     }))
     : [];

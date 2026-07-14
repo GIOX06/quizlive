@@ -2632,7 +2632,7 @@ function resolveBalanceChallenge(room, reason) {
   const ranked = challenge.playerIds
     .map((playerId) => challenge.participants[playerId])
     .filter(Boolean)
-    .sort((a, b) => Number(a.distance || 1) - Number(b.distance || 1) || a.nickname.localeCompare(b.nickname));
+    .sort((a, b) => Number(a.distance == null ? 1 : a.distance) - Number(b.distance == null ? 1 : b.distance) || a.nickname.localeCompare(b.nickname));
   const winner = ranked[0] || null;
   const players = ranked.map((participant, index) => {
     const deltaTokens = winner && participant.playerId === winner.playerId ? 2 : 0;
@@ -2644,7 +2644,7 @@ function resolveBalanceChallenge(room, reason) {
       avatarUrl: participant.avatarUrl || "",
       x: Number(participant.x || 0),
       y: Number(participant.y || 0),
-      distance: Number(participant.distance || 1),
+      distance: Number(participant.distance == null ? 1 : participant.distance),
       samples: Number(participant.samples || 0),
       rank: index + 1,
       deltaTokens,
@@ -3878,7 +3878,7 @@ function serializeBalanceChallenge(challenge) {
         avatarUrl: participant.avatarUrl || "",
         x: Number(participant.x || 0),
         y: Number(participant.y || 0),
-        distance: Number(participant.distance || 1),
+        distance: Number(participant.distance == null ? 1 : participant.distance),
         samples: Number(participant.samples || 0),
         left: Boolean(participant.leftAt)
       };
@@ -3899,7 +3899,7 @@ function serializePlayerBalanceChallenge(room, playerId) {
     endsAt: challenge.endsAt,
     x: Number(participant.x || 0),
     y: Number(participant.y || 0),
-    distance: Number(participant.distance || 1),
+    distance: Number(participant.distance == null ? 1 : participant.distance),
     samples: Number(participant.samples || 0),
     players: challenge.playerIds.length
   };
